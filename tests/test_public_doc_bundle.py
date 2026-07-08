@@ -47,8 +47,11 @@ class PublicDocBundleTests(unittest.TestCase):
         text = life.read_text(encoding="utf-8")
         self.assertIn("Stage → portable anchor", text)
         self.assertNotIn("bot0.py", text)
+        self.assertNotIn("future-state-langgraph-migration", text)
         self.assertIn("STAGE_FRONT_DOOR_DELIVERY", text)
         self.assertIn("active_flow_handler_must_yield", text)
+        self.assertIn("## 10. Is this a LangGraph?", text)
+        self.assertIn("Bounded classifiers → enums", text)
 
     def test_section_15_is_adopter_facing(self):
         tail = SDK.read_text(encoding="utf-8").split("## 15.", 1)[-1]

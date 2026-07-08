@@ -305,8 +305,7 @@ the chat entrypoint delivers front-door answers (`STAGE_FRONT_DOOR_DELIVERY`) **
 ledger-first continuations. New handlers must call `active_flow_handler_must_yield()` — not
 ad-hoc `_plan_mode != "detour"` copies. Ratchet: `test_delivery_order_contract.py`.
 
-**2026-07-07 addendum — readiness is not one thing.** 
-names three readiness flavors across prose → intake → IR → sim → deploy. Only **semantic** intake readiness (how rich is the description?) belongs
+**Readiness is not one thing.** Semantic intake readiness belongs in ▨; shape rubrics are ▣ fail-soft fallback only when the router did not assess — see SDK §11.4. Three readiness flavors across prose → intake → IR → sim → deploy. Only **semantic** intake readiness (how rich is the description?) belongs
 in ▨. Shape rubrics (`apply_strength_rubric`) are **fail-soft fallback** when the router did not assess — they must
 not discard `authoring_maturity` / `missing_segments` from the unified router.
 
@@ -314,4 +313,29 @@ not discard `authoring_maturity` / `missing_segments` from the unified router.
 
 ## 9. Host-specific intake (monorepo detail)
 
-Bot0's prose-intake and readiness merge (`enrich_intake_assessment`, `apply_strength_rubric`, …) live in the monorepo host and workflow modules — not in the portable `reference/` slice. Adopters: keep **semantic readiness in classifiers** (▨) and **gates/transitions in code** (▣); see [SDK §11.4](conversation-control-plane-sdk.md#114-classifier-rubric-ownership-prompt-library-pattern) and [SDK §2.1](conversation-control-plane-sdk.md#21-integration-guardrails-portable-contract).
+Bot0's prose-intake and readiness merge (`enrich_intake_assessment`, `apply_strength_rubric`, …) live in the
+monorepo host — not in the portable `reference/` slice. Adopters: **semantic readiness in classifiers** (▨),
+**gates/transitions in code** (▣); see [SDK §11.4](conversation-control-plane-sdk.md#114-classifier-rubric-ownership-prompt-library-pattern)
+and [SDK §2.1](conversation-control-plane-sdk.md#21-integration-guardrails-portable-contract).
+
+---
+
+## 10. Is this a LangGraph? (honest answer)
+
+**Semantics, not a framework mandate.** The diagrams describe control-plane behavior you can implement
+imperatively (`decide.py` + `ledger.py` in `reference/`) or optionally host as LangGraph nodes later — the
+**contract** (single writer, cognition → execution split, explicit ledger state) stays the same.
+
+| Layer | This SDK | LangGraph (optional) |
+|---|---|---|
+| **Control plane** (who owns the turn?) | Ledger + `decide_turn` precedence | Optional meta-graph host — [SDK §14](conversation-control-plane-sdk.md#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane) |
+| **Perception** | Bounded classifiers → enums | Classifier **nodes** — same contract either way |
+| **Specialist agents** | `ConversationalAgent` under dispatch | Subgraphs / crews — Layer 1 execution |
+| **Checkpoints** | `control_revision` + routing trace | Mid-agent checkpointer — **orthogonal** (run replay ≠ Switch/Stay) |
+
+Load-bearing rules: (1) one writer of control keys (`decide_turn`); (2) ▨ labels, ▣ transitions
+([SDK §2.1](conversation-control-plane-sdk.md#21-integration-guardrails-portable-contract)); (3) explicit ledger
+state, not parallel context flags.
+
+**Compose, don't replace:** LangGraph for **agent internals**; ledger + `decide_turn` for **cross-agent ownership**
+([SDK §14](conversation-control-plane-sdk.md#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane)).
