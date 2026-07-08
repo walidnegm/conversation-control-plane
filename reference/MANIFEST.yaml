@@ -1,14 +1,13 @@
 # Phase 1b extraction manifest — Conversation Control Plane SDK portable slice.
-# Source of truth: Bot0 monorepo (this repo). Destination: github.com/walidnegm/conversation-control-plane
+# Source of truth: Bot0 monorepo. Destination: github.com/walidnegm/conversation-control-plane
 #
-# Run: ./scripts/sync_control_plane_sdk_extract.sh
-# Publish: ./scripts/publish_control_plane_public_repo.sh --push
+# Public bundle is intentionally small: README + SDK contract + lifecycle diagram.
+# Operational runbooks (loop, trace export, scale smoke) stay in the monorepo only.
 
 sdk_version: "0.1.0-extract"
 contract_doc: docs/epics/conversation-control-plane-sdk.md
 public_repo: https://github.com/walidnegm/conversation-control-plane
 
-# Portable modules — copy verbatim (adapter interfaces land in Phase 1b package layout).
 modules:
   - api/services/conversation_control/delivery_order_contract.py
   - api/services/conversation_control/sdk_identity.py
@@ -20,25 +19,20 @@ modules:
   - api/services/conversation_control/handoff_guard.py
   - api/services/conversation_control/post_save_setup_entry.py
 
-# Staging copy from monorepo epics (authoring source).
 docs:
   - docs/epics/conversation-control-plane-sdk.md
   - docs/epics/conversation-turn-lifecycle-diagram.md
-  - docs/epics/conversation-control-plane-applicability.md
-  - docs/epics/conversation-control-plane-loop-playbook.md
-  - docs/epics/conversation-control-plane-trace-export.md
-  - docs/epics/conversation-control-plane-scale-smoke.md
 
-# Public bundle — every file here must ship to GitHub; SDK doc-map links must resolve.
 public_bundle:
+  readme: README.md
   docs:
     - conversation-control-plane-sdk.md
     - conversation-turn-lifecycle-diagram.md
-    - conversation-control-plane-applicability.md
-    - conversation-control-plane-loop-playbook.md
-    - conversation-control-plane-trace-export.md
-    - conversation-control-plane-scale-smoke.md
   replace_section_15: docs/section-15-public.md
+  # Monorepo-only (implementation playbook / docs/epics/) — not published:
+  # - conversation-control-plane-loop-playbook.md  → SDK §3.1
+  # - conversation-control-plane-trace-export.md   → SDK §11.1
+  # - conversation-control-plane-scale-smoke.md    → SDK §3.1 Q1, §11.2
 
 examples:
   - extract/conversation-control-plane/examples/README.md
@@ -47,6 +41,4 @@ examples:
 regression_pins:
   - regression_suite/test_delivery_order_contract.py
   - regression_suite/test_control_plane_sdk_deliverables.py
-  - regression_suite/test_context_pin_hijack_ratchets.py
-  - regression_suite/test_scorecards_discovery_not_ov.py
   - regression_suite/test_public_sdk_publish_bundle.py

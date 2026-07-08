@@ -29,7 +29,7 @@ specialists implement `ConversationalAgent`; they declare `TaskTransition`; they
 | **`ConversationalAgent`** | Specialist contract — `handle_turn` owns domain logic; control plane owns ownership |
 | **Routing trace** | Per-turn record of *why* agent X got the turn — SQL/query friendly (§11.1) |
 
-**Fit check (one screen):** [Applicability one-pager](conversation-control-plane-applicability.md).
+**Fit check (one screen):** [README](../README.md).
 
 **Minimum integration path**
 
@@ -70,11 +70,11 @@ remaining adoption convenience — not a blocker on reading, porting, or regress
 | You are… | Read this |
 |---|---|
 | **Evaluating or porting the ledger** | **This document** — contract, invariants, bootstrap, honest limits (§0.7), external review notes (§0.8) |
-| **One-screen fit / README distill** | [Applicability one-pager](conversation-control-plane-applicability.md) — adopt vs skip, LangGraph compose summary |
-| **Loop or stuck-thread incident** | [Loop & stuck-thread playbook](conversation-control-plane-loop-playbook.md) — symptom → diagnosis → contract fix |
-| **Observability / trace export** | [Trace export sample](conversation-control-plane-trace-export.md) — `Bot0RoutingTrace` + OTel/Langfuse wiring |
-| **Multi-worker scale proof** | [Scale smoke procedure](conversation-control-plane-scale-smoke.md) — turn-claim soak + regression anchors |
-| **New here — start above** | **Getting started** (this section) → applicability one-pager → §1 bootstrap |
+| **One-screen fit / README distill** | [README](../README.md) — adopt vs skip, LangGraph compose summary |
+| **Loop or stuck-thread incident** | [SDK §3.1 — loops & stuck threads](conversation-control-plane-sdk.md#31-three-hard-questions-the-contract-must-answer) — symptom → diagnosis → contract fix |
+| **Observability / trace export** | [SDK §11.1 — routing trace](conversation-control-plane-sdk.md#111-intent-router-layers-l0l4-and-per-turn-routing-trace) — `Bot0RoutingTrace` + OTel/Langfuse wiring |
+| **Multi-worker scale proof** | [SDK §3.1 Q1 — turn claims](conversation-control-plane-sdk.md#q1--concurrency--locks-who-owns-the-turn) — turn-claim soak + regression anchors |
+| **New here — start above** | **Getting started** (this section) → README → §1 bootstrap |
 
 ### 0.0 Naming and attribution (how to refer to this in docs and READMEs)
 
@@ -117,6 +117,75 @@ frameworks excel at *how a specialist runs*; this contract excels at *who owns t
 | **Publishable ledger** | Every turn, control mutation, and handoff is a **DB record** — `active_task`, `suspended_tasks`, `pending_switch`, `_control_revision`, `_turn_claim`, platform events | Server crash mid-thought does not erase state. Audit *why* routing chose X: the proof is in the ledger, not a vanished in-memory checkpoint |
 | **Control plane** | `decide_turn` + `ledger.py` — the **only writer** of control keys; specialists **declare** `TaskTransition`, they never route | The LLM does not fragile-call `route_to_billing()`. It emits a structured handoff *request*; the control plane **enforces** Switch/Stay, precedence, TTL, and single-writer rules |
 | **Strict contract** | `ConversationalAgent`, `TurnPlan`, typed envelopes, five invariants, regression harness | Human teams and auto-coders integrate against **types and precedence**, not tribal knowledge of a tangled graph — fewer silent breaks on every new agent |
+
+### 0.1.1 Three-layer model of an agentic system
+
+Production agent stacks are usually **three layers deep**. Framework marketing often collapses them; this SDK
+names them so you can compose without guessing which store owns which question.
+
+```mermaid
+flowchart TB
+    subgraph L1["Layer 1 — In-agent execution (per specialist)"]
+        LG["LangGraph subgraph / Crew / plain Python"]
+        CP["Checkpoint + tool loop + planning inside one turn"]
+    end
+    subgraph L2["Layer 2 — Multi-agent meta orchestration"]
+        META["Who owns the chat thread? Handoffs, resume, detours"]
+        ALT_A["LangGraph supervisor / swarm / handoff tools"]
+        ALT_B["This SDK — decide_turn + ledger"]
+    end
+    subgraph L3["Layer 3 — Memory substrate"]
+        EXT["Third-party memory — vector DB, Redis, crew memory, hosted session APIs"]
+        LED["Ledger routing memory — active_task.kind + payload"]
+        DOM["Specialist domain stores — artifacts, corpora, private tables"]
+    end
+    User --> META
+    META --> ALT_A
+    META --> ALT_B
+    ALT_B --> LG
+    ALT_A --> LG
+    LG --> CP
+    META --> LED
+    LG --> EXT
+    LG --> DOM
+    LED --> EXT
+```
+
+| Layer | Typical hosts | Owns | Does *not* own |
+|---|---|---|---|
+| **1 — In-agent execution** | LangGraph node/subgraph, Crew task loop, Temporal activity behind an adapter, plain `handle_turn` | Planning, tools, IR pipelines, **mid-turn** checkpoint/resume *inside* one specialist | Which specialist is foreground in the **shared chat thread** |
+| **2 — Multi-agent meta** | LangGraph supervisor/swarm **or** this control plane (`decide_turn` + ledger) | Turn ownership, Switch/Stay handoffs, suspend/resume across specialists, routing audit | Tool-loop mechanics inside a specialist |
+| **3 — Memory** | Postgres ledger slice, vector/RAG vendors, Redis, crew memory, Letta-style session APIs, your OLTP | **Varies by store** — see below | One universal memory blob (anti-pattern) |
+
+**Layer 2 — two valid patterns (compose, don't conflate):**
+
+| Pattern | When it fits | Tradeoff |
+|---|---|---|
+| **Graph-native meta** | Research graphs, rapid topology edits, single product surface per subgraph | Supervisor edges can steal turns unless you add explicit session semantics |
+| **Ledger-native meta (this SDK)** | Long-lived **chat** with several specialists, compliance on routing, multi-worker API | More contract ceremony; execution still pluggable underneath |
+
+Bot0 uses **ledger-native meta** for product chat and **LangGraph (or plain Python) inside** specialists for
+execution — not either/or.
+
+**Layer 3 — memory is plural, not one product:**
+
+| Memory class | Owner | Examples | Routing / control plane uses it? |
+|---|---|---|---|
+| **Routing + working memory** | **Ledger** (`active_task`, `payload`) | Drafting phase, gate flags, `intake_seed`, IR checkpoint mid-flow | **Yes** — canonical for cross-turn routing (§3.1 Q3) |
+| **Classifier hydration** | Code renders ledger facts + bounded recent transcript | `{drafting_context}`, `{active_task}`, `recent_context.py` | **Feeds** routing cognition; not a second source of truth |
+| **Third-party / vendor memory** | External or app-chosen store | Vector RAG, crew snapshots, Redis session, hosted memory APIs | **No** for control keys — specialists may read/write; ledger still owns foreground |
+| **Domain depth** | Specialist + your data model | Workflow pending rows, assessment artifacts, tenant corpora | **No** — loaded selectively per `handle_turn` |
+
+**Rules of thumb (v1 — refine as adapters mature):**
+
+1. **Never** store `active_task` / `pending_switch` only in crew memory or a vector index — control keys stay
+   ledger-single-writer.
+2. **May** use third-party memory for retrieval and long-horizon recall; pass **pointers or summaries** into
+   specialists, not routing authority.
+3. **Same Postgres** can hold LangGraph checkpointer tables, ledger JSONB, and pgvector — different schemas,
+   different questions (§0.4).
+
+Full compose guide: **§14**. Hydration detail: **§3.1 Q3**.
 
 ### 0.2 What the conversation layer adds (on top of execution frameworks)
 
@@ -331,9 +400,9 @@ so adopters can decide without reading internal epics.
 | **Reinvention risk** | Custom session manager vs composing ecosystem tools | **Composable path:** keep LangGraph/Temporal for execution; **port** single-writer + handoff invariants from this contract (§14) |
 | **Rigidity** | Single-writer, bounded classifiers, no regex NL — slows exploratory agents | **By design** for production chat; poor fit for research agents that need loose control flow (see applicability) |
 | **Adoption friction** | Big lift vs `pip install langgraph` | Extraction gate + minimal README + examples (§15); until then, **steal Tier 0–1 patterns** without importing Bot0 |
-| **Loop / stuck-thread risk** | Users report "stuck in builder," orientation loops, handoff ping-pong | Mitigations shipped (§3.1 Q2): precedence, Switch/Stay, `handoff_guard`, TTLs — **not a proof of zero loops**; [loop incident playbook](conversation-control-plane-loop-playbook.md) + property harness (§15); Hypothesis expansion still open |
-| **Scale / enterprise unknowns** | High-throughput, cross-org handoffs, multi-tenant at extreme scale — **proven in Bot0 production shape**, not benchmarked as generic infra | Turn claims + `FOR UPDATE` designed in; [scale smoke procedure](conversation-control-plane-scale-smoke.md) + regression pins; formal load benchmark still backlog |
-| **Visualization deferred** | No LangGraph Studio equivalent in the SDK | Persist traces + ledger fields (§11.1); [trace export sample](conversation-control-plane-trace-export.md) — intentional separation from in-house graph UI |
+| **Loop / stuck-thread risk** | Users report "stuck in builder," orientation loops, handoff ping-pong | Mitigations shipped (§3.1 Q2): precedence, Switch/Stay, `handoff_guard`, TTLs — **not a proof of zero loops**; [SDK §3.1](conversation-control-plane-sdk.md#31-three-hard-questions-the-contract-must-answer) + property harness (§15); Hypothesis expansion still open |
+| **Scale / enterprise unknowns** | High-throughput, cross-org handoffs, multi-tenant at extreme scale — **proven in Bot0 production shape**, not benchmarked as generic infra | Turn claims + `FOR UPDATE` designed in; [SDK §3.1 Q1](conversation-control-plane-sdk.md#q1--concurrency--locks-who-owns-the-turn) + regression pins; formal load benchmark still backlog |
+| **Visualization deferred** | No LangGraph Studio equivalent in the SDK | Persist traces + ledger fields (§11.1); [trace export sample](conversation-control-plane-sdk.md#111-intent-router-layers-l0l4-and-per-turn-routing-trace) — intentional separation from in-house graph UI |
 
 ### Applicability — good fit vs poor fit
 
@@ -964,7 +1033,7 @@ public repo (`CONVERSATION_CONTROL_PLANE_REPO=/path/to/clone`).
 Cut `conversation_control/` (+ typed contracts, regression harness) into the public repository with:
 
 - Explicit adapter interfaces (persistence, LLM invoke, events)
-- License + version pin + README distilled from [applicability one-pager](conversation-control-plane-applicability.md)
+- License + version pin + README distilled from [README](../README.md)
 - Optional `examples/` with one bounded + one unbounded reference agent (thin, not full Bot0 product)
 - CI that runs the harness without the full Bot0 monorepo
 
@@ -1487,11 +1556,12 @@ stay in specialist renderers.
 
 ## 14. Ecosystem layering — LangGraph, CrewAI, Temporal, and the control plane
 
-This section is for teams **already invested in the agent ecosystem** — LangGraph, CrewAI, Temporal, or plain
-Python specialists. Those tools are the shoulders we stand on for **execution**. Multi-specialist **chat
-products** still need an explicit **conversation layer**: who owns the turn, how handoffs work, how resume
-behaves. Bot0 formalized that layer here; you keep your execution stack and add (or port) this contract when
-session lifecycle is load-bearing.
+This section expands **§0.1.1** (three-layer model) for teams **already invested in the agent ecosystem** —
+LangGraph, CrewAI, Temporal, or plain Python specialists. Those tools are shoulders for **Layer 1 execution**
+and sometimes **Layer 2 graph-native meta**. Multi-specialist **chat** products still need an explicit
+**conversation layer** when ledger-native meta is load-bearing: who owns the turn, how handoffs work, how
+resume behaves. Bot0 formalized that layer here; you keep your execution stack and add (or port) this contract
+when session lifecycle is the bottleneck.
 
 > **Complementary storage.** Same Postgres can host both a LangGraph checkpointer and this ledger — they store
 > **different shapes for different questions** (§0.4). Layering is the normal integration path.
@@ -1639,44 +1709,33 @@ Reference map: [turn lifecycle diagram §1](conversation-turn-lifecycle-diagram.
 
 ## 15. Open deliverables + credibility gates
 
-> **Scope.** Adopter-facing package and credibility items only. Bot0 slice status, backlog
-> order, and per-agent inventory live in the monorepo implementation playbook — not in this
-> public bundle.
+> **Scope.** Adopter-facing items only. Bot0 slice status and operational runbooks live in the
+> monorepo implementation playbook — not in this public bundle.
 
 ### Shipped in this repository
 
 | Artifact | Location |
 |---|---|
-| Integration contract | This document |
+| Integration contract | This document (loops §3.1, traces §11.1, scale §3.1 Q1 + §11.2) |
 | One-turn lifecycle diagram | [conversation-turn-lifecycle-diagram.md](conversation-turn-lifecycle-diagram.md) |
-| Adopt vs skip one-pager | [conversation-control-plane-applicability.md](conversation-control-plane-applicability.md) |
+| Adopt vs skip + ecosystem compose | [README.md](../README.md) |
 | Reference control-plane modules | `reference/api/services/conversation_control/` |
 | Portable contract tests | `tests/` |
 | Bounded-agent design stub | [examples/cyber_risk_assessment/](../examples/cyber_risk_assessment/) |
-| Loop incident playbook | [conversation-control-plane-loop-playbook.md](conversation-control-plane-loop-playbook.md) |
-| Trace export sample | [conversation-control-plane-trace-export.md](conversation-control-plane-trace-export.md) |
-| Scale smoke procedure | [conversation-control-plane-scale-smoke.md](conversation-control-plane-scale-smoke.md) |
 
 ### Open (adopter-facing)
 
-- **Phase 1b package** — `pip install conversation-control-plane`, adapter interfaces, imports
-  decoupled from the Bot0 monorepo layout.
-- **New-agent scaffold generator** — today, copy the [§1.1 adopter brief](#11-adopter-brief-copy-to-your-coding-agent)
-  and the [cyber risk assessment stub](../examples/cyber_risk_assessment/); a `create_agent <kind>`
-  generator is planned.
-- **Property-test expansion** — pin §7 cases in your host; arbitrary turn-sequence ↔ ledger parity
-  (Hypothesis + DB round-trip) remains open.
-- **Formal load benchmark** — the [scale smoke procedure](conversation-control-plane-scale-smoke.md)
-  is a runbook + regression anchors today, not a packaged load framework.
-- **Ledger observability UI** — trace export is documented; a standalone inspector / timeline API
-  is deferred (§0.6).
+- **Phase 1b package** — `pip install conversation-control-plane`, adapter interfaces, decoupled imports
+- **New-agent scaffold generator** — copy [§1.1 adopter brief](#11-adopter-brief-copy-to-your-coding-agent) +
+  [cyber risk assessment stub](../examples/cyber_risk_assessment/) until `create_agent <kind>` lands
+- **Property-test expansion** — arbitrary turn-sequence ↔ ledger parity in your host
+- **Formal load benchmark** — turn-claim contract is in §3.1 Q1; packaged soak harness is open
 
 ### Credibility gates (external)
 
-- **Contract stable** — port ledger semantics and `decide_turn` now; regression-pin §5–§7 invariants.
-- **Public bundle self-contained** — document-map links resolve within this repository.
-- **Honest limits** — §0.7 documents loop risk, scale unknowns, and visualization deferral.
+- **Contract stable** — port ledger + `decide_turn`; pin §5–§7 invariants
+- **Three-doc surface** — README + this contract + lifecycle diagram (no sprawl)
+- **Honest limits** — §0.7 (loops, scale, visualization deferral)
 
-**External acceptance gate:** Public repo live at
-[github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane);
-reference code and companions ship here; `pip install` convenience is Phase 1b.
+**External acceptance gate:** Public repo live;
+[`pip install`](https://github.com/walidnegm/conversation-control-plane) convenience is Phase 1b.

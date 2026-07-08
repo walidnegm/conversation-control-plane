@@ -9,9 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 SDK = DOCS / "conversation-control-plane-sdk.md"
 
-PUBLIC_BUNDLE = (
-    "conversation-control-plane-applicability.md",
+PUBLIC_DOCS = (
+    "conversation-control-plane-sdk.md",
     "conversation-turn-lifecycle-diagram.md",
+)
+
+MONOREPO_ONLY_DOCS = (
+    "conversation-control-plane-applicability.md",
     "conversation-control-plane-loop-playbook.md",
     "conversation-control-plane-trace-export.md",
     "conversation-control-plane-scale-smoke.md",
@@ -19,17 +23,24 @@ PUBLIC_BUNDLE = (
 
 
 class PublicDocBundleTests(unittest.TestCase):
-    def test_bundle_files_exist(self):
-        for name in PUBLIC_BUNDLE:
+    def test_small_public_surface(self):
+        for name in PUBLIC_DOCS:
             with self.subTest(name=name):
                 self.assertTrue((DOCS / name).is_file(), msg=name)
+        self.assertTrue((ROOT / "README.md").is_file())
+        for name in MONOREPO_ONLY_DOCS:
+            with self.subTest(omitted=name):
+                self.assertFalse((DOCS / name).exists(), msg=name)
 
-    def test_sdk_doc_map_links_resolve(self):
+    def test_sdk_points_in_bundle_not_companion_files(self):
         text = SDK.read_text(encoding="utf-8")
-        for target in PUBLIC_BUNDLE:
-            with self.subTest(target=target):
-                self.assertIn(target, text)
-                self.assertTrue((DOCS / target).is_file())
+        self.assertIn("../README.md", text)
+        self.assertIn("conversation-turn-lifecycle-diagram.md", text)
+        for name in MONOREPO_ONLY_DOCS:
+            with self.subTest(omitted=name):
+                self.assertNotIn(name, text)
+        self.assertIn("#31-three-hard-questions", text)
+        self.assertIn("#111-intent-router", text)
 
     def test_section_15_is_adopter_facing(self):
         tail = SDK.read_text(encoding="utf-8").split("## 15.", 1)[-1]
