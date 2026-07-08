@@ -305,9 +305,7 @@ the chat entrypoint delivers front-door answers (`STAGE_FRONT_DOOR_DELIVERY`) **
 ledger-first continuations. New handlers must call `active_flow_handler_must_yield()` — not
 ad-hoc `_plan_mode != "detour"` copies. Ratchet: `test_delivery_order_contract.py`.
 
-**Readiness is not one thing.** Semantic intake readiness belongs in ▨; shape rubrics are ▣ fail-soft fallback only when the router did not assess — see SDK §11.4. Three readiness flavors across prose → intake → IR → sim → deploy. Only **semantic** intake readiness (how rich is the description?) belongs
-in ▨. Shape rubrics (`apply_strength_rubric`) are **fail-soft fallback** when the router did not assess — they must
-not discard `authoring_maturity` / `missing_segments` from the unified router.
+**Readiness is not one thing.** Semantic intake readiness belongs in ▨; shape rubrics are ▣ fail-soft fallback only when the router did not assess — see [SDK §11.4](conversation-control-plane-sdk.md#114-classifier-rubric-ownership-prompt-library-pattern).
 
 ---
 
