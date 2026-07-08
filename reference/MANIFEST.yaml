@@ -2,8 +2,7 @@
 # Source of truth: Bot0 monorepo (this repo). Destination: github.com/walidnegm/conversation-control-plane
 #
 # Run: ./scripts/sync_control_plane_sdk_extract.sh
-# Verify: .bot0venv/bin/python -m pytest regression_suite/test_delivery_order_contract.py \
-#           regression_suite/test_control_plane_sdk_deliverables.py::DeliveryOrderContractDeliverableTests -q
+# Publish: ./scripts/publish_control_plane_public_repo.sh --push
 
 sdk_version: "0.1.0-extract"
 contract_doc: docs/epics/conversation-control-plane-sdk.md
@@ -21,17 +20,25 @@ modules:
   - api/services/conversation_control/handoff_guard.py
   - api/services/conversation_control/post_save_setup_entry.py
 
+# Staging copy from monorepo epics (authoring source).
 docs:
   - docs/epics/conversation-control-plane-sdk.md
   - docs/epics/conversation-turn-lifecycle-diagram.md
   - docs/epics/conversation-control-plane-applicability.md
+  - docs/epics/conversation-control-plane-loop-playbook.md
+  - docs/epics/conversation-control-plane-trace-export.md
+  - docs/epics/conversation-control-plane-scale-smoke.md
 
-examples:
-  - examples/README.md
-  - examples/cyber_risk_assessment/README.md
-  - examples/cyber_risk_assessment/agent_stub.py
-  - examples/cyber_risk_assessment/assessment_ir.py
-  - examples/cyber_risk_assessment/decide_integration.md
+# Public bundle — every file here must ship to GitHub; SDK doc-map links must resolve.
+public_bundle:
+  docs:
+    - conversation-control-plane-sdk.md
+    - conversation-turn-lifecycle-diagram.md
+    - conversation-control-plane-applicability.md
+    - conversation-control-plane-loop-playbook.md
+    - conversation-control-plane-trace-export.md
+    - conversation-control-plane-scale-smoke.md
+  replace_section_15: docs/section-15-public.md
 
 examples:
   - extract/conversation-control-plane/examples/README.md
@@ -42,3 +49,4 @@ regression_pins:
   - regression_suite/test_control_plane_sdk_deliverables.py
   - regression_suite/test_context_pin_hijack_ratchets.py
   - regression_suite/test_scorecards_discovery_not_ov.py
+  - regression_suite/test_public_sdk_publish_bundle.py

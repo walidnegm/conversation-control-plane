@@ -57,7 +57,7 @@ on those primitives; this document shows how to **compose** them. Full layering 
 
 | Stage | What you can do today |
 |---|---|
-| **Public home (scaffold)** | [github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane) — README stub; **monorepo reference code is authoritative** until Phase 1b sync |
+| **Public home (scaffold)** | [github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane) — reference code + docs synced; **monorepo remains authoritative** until `pip install` (Phase 1b) |
 | **Contract (now)** | Port ledger semantics and wire `decide_turn` against your conversations store |
 | **Reference code (now)** | Study `api/services/conversation_control/` in the Bot0 monorepo (sync source for the public repo) |
 | **Package (Phase 1b)** | `pip install` / `npm install` — milestone in §15 |
@@ -386,7 +386,7 @@ The remaining defensible edge is narrower: **gate-vs-mid-flight discipline**, **
 | Topic | Tension |
 |---|---|
 | **Naming** | Industry "AI control plane" often means governance (identity, policy, tamper-evident audit) — above orchestration. Our artifact is closer to **turn-ownership / session ledger** semantics. Rename vs educate? |
-| **Public repo** | [github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane) is a **scaffold** (README; code sync = Phase 1b). Marketing language must not outrun the artifact. |
+| **Public repo** | [github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane) ships reference code + docs; **`pip install` = Phase 1b**. Marketing language must not outrun the artifact. |
 | **§15 green checks** | Shipped semantics must be **regression + live-conversation** verifiable — not aspirational. Gaps between doc and product erode credibility faster than an empty repo. |
 | **Strategic fork** | Bot0 = workforce-transformation SaaS; OSS agent-infra SDK = different business (DX, community, competing with well-funded SDK vendors). Alternative: keep as **internal moat** + excellent contract doc; defer OSS until extractable core exists. |
 | **Recommended inversion** | Ship a small installable core (ledger + `decide_turn` + §5 invariants + harness + adapter stubs) **before** expanding marketing surface — artifact first, README second. |
@@ -598,7 +598,6 @@ routing logic, classifiers, or specialist handlers. When local code conflicts wi
 source layer and prefer the principle, not the pattern.
 
 > **Bot0 monorepo engineers:** full repo discipline (LLM factory, prompt library, CI gates) lives in
-> [`AGENTS.md`](../../AGENTS.md) and the Bot0 implementation playbook (monorepo only).
 > §2.1 is the **portable** slice external adopters need.
 
 #### ⛔ NL cognition — code never decides what the user meant
@@ -1640,48 +1639,44 @@ Reference map: [turn lifecycle diagram §1](conversation-turn-lifecycle-diagram.
 
 ## 15. Open deliverables + credibility gates
 
-> **Scope.** Package and **external credibility** items only. Bot0 execution order lives in the
-> Bot0 implementation playbook (monorepo only).
+> **Scope.** Adopter-facing package and credibility items only. Bot0 slice status, backlog
+> order, and per-agent inventory live in the monorepo implementation playbook — not in this
+> public bundle.
 
-### Contract shipped (reference implementation)
+### Shipped in this repository
 
-- [x] Single source for `canonical_agent()` + drift-guard test
-- [x] `active_task.kind` / `payload` through `TurnPlan` (`workflow_build` for builder/editor — `ledger_kind_for_agent`)
-- [x] §11.2 operational parameters — turn claim TTLs in `conversation_staleness` + `simulation_parameters`
-- [x] Shared detour gate — `active_agent_task_blocks_detour` (`dispatch_phase.py`; bot0 read + discovery paths)
-- [x] Discovery detour precedence — `delivery_order_contract.py` (`front_door_detour_supersedes_active_flow`, `active_flow_handler_must_yield`, `plan_owns_front_door_delivery`); `dispatch_phase.discovery_detour_supersedes_active_flow` facade for adopters wiring execute-layer guards
-- [x] Delivery-order ratchets — `test_delivery_order_contract.py`, `test_control_plane_sdk_deliverables.py::DeliveryOrderContractDeliverableTests`, `test_scorecards_discovery_not_ov.py`, `test_context_pin_hijack_ratchets.py`
-- [x] Internal vs marketplace registry separation
-- [x] Inline SSE turn timeout envelope
-- [x] Derive router/orientation agent sets from `AGENT_REGISTRY` (`delegatable_agent_ids`, `workflow_agent_ids`, `registry_route_intent_labels`)
-- [x] Centralize `render_state` entry (`render_control_surface` — orientation surfaces shipped)
-- [x] `ConversationalAgentBase` mixin (`agent_base.py`)
-- [ ] **New-agent scaffold generator (DX gap).** Today a new bounded specialist is built by *reference + copy*: subclass `ConversationalAgentBase`, copy a reference handler (`realization_intake_handler` / `ir_gate_handler`), copy the `decide.py` branch (`realization_intake` pattern), add one `AGENT_REGISTRY` line, wire tools + published prompts. The ledger interaction is transparent (agents declare `TaskTransition`; `decide_turn` writes — never `ledger.py`), but the **wiring is manual**. A `create_agent <kind>` scaffold should stamp: handler stub (subclassing the base) + `decide.py` branch + `AGENT_REGISTRY` entry + `contract` registration + a test skeleton (the seven `decide_turn` cases + one-per-`R*` validator fixture). **Surfaced by the first SDK-shaped agent** (cyber risk assessment); acceptance test: a coding agent builds the handler from the SDK + reference impls *without hand-writing ledger internals*. Until then, the [§1.1 adopter brief](#11-adopter-brief-copy-to-your-coding-agent) + reference impls are the path.
-- [x] Control-state consistency pin (`get_control_state` ≡ context slice — `test_control_plane_sdk_deliverables`)
-- [ ] Full property tests: arbitrary turn sequences → `active_task` ≡ DB (Hypothesis expansion — harness scaffold ✅)
-- [ ] IR pipeline template adoption — retire `catalog_role_create_*` context flags
-- [x] Hot-potato / handoff ping-pong detector (`handoff_guard.py` + `decide_turn` guard)
-- [x] `ConversationalAgent` adapters for `personal_score`, `catalog_role_create`, `workflow_editor` (`resolve_conversational_agent`)
-- [ ] Migrate Recommender/Sim agents onto `ConversationalAgentBase` (already registered; base mixin optional)
-- [ ] Seed unified-router / classifier allowed labels from `tool_registry` + `AGENT_REGISTRY` (capability-registry epic; cognition only)
-- [ ] MCP-style `tools=` built from `tool_registry` at specialist dispatch (not ledger-owned)
-- [x] **Public repository home** — [github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane) (scaffolded; code/docs sync in progress)
-- [ ] **Extraction gate (Phase 1b):** package boundary + `pip install` — public repo live; registry publish and adapter interfaces still open
-- [x] **Trace export (Phase 2):** documented schema + sample OTel/Langfuse/Grafana wiring — [trace export doc](conversation-control-plane-trace-export.md) (§0.6, §11.1); in-house graph UI still deferred
-- [ ] **Ledger observability (Phase 2):** standalone inspector / timeline API beyond Bot0 admin Monitoring panel (§0.6)
-- [ ] Top-down agent review against §5 invariants (process gate, not a code module)
+| Artifact | Location |
+|---|---|
+| Integration contract | This document |
+| One-turn lifecycle diagram | [conversation-turn-lifecycle-diagram.md](conversation-turn-lifecycle-diagram.md) |
+| Adopt vs skip one-pager | [conversation-control-plane-applicability.md](conversation-control-plane-applicability.md) |
+| Reference control-plane modules | `reference/api/services/conversation_control/` |
+| Portable contract tests | `tests/` |
+| Bounded-agent design stub | [examples/cyber_risk_assessment/](../examples/cyber_risk_assessment/) |
+| Loop incident playbook | [conversation-control-plane-loop-playbook.md](conversation-control-plane-loop-playbook.md) |
+| Trace export sample | [conversation-control-plane-trace-export.md](conversation-control-plane-trace-export.md) |
+| Scale smoke procedure | [conversation-control-plane-scale-smoke.md](conversation-control-plane-scale-smoke.md) |
 
-### Credibility gates (public doc + adoption)
+### Open (adopter-facing)
 
-- [ ] **Phase 1b extraction** — code sync to [public repo](https://github.com/walidnegm/conversation-control-plane), adapter interfaces, `pip install` path (primary adoption friction fix)
-- [x] **Public/private doc split enforced** — no backlog/slice status tables in SDK body (playbook owns them); pinned in `test_control_plane_sdk_public_doc_contract.py`
-- [x] **Loop & stuck-thread playbook** — [incident playbook](conversation-control-plane-loop-playbook.md): orientation loop, ping-pong, stale capture, pre-decide bypass, stale turn claim
-- [x] **Applicability one-pager (SDK §14)** — LangGraph compose guide: what you get free, what chat still fights, decision table
-- [x] **Applicability README distill** — [one-screen summary](conversation-control-plane-applicability.md) for post-extraction package README
-- [x] **Property-test harness (scaffold)** — `test_control_plane_property_harness.py` pins §7 cases 1, 3, 7 + IC4 clarifier; Hypothesis + DB round-trip expansion open
-- [x] **Scale smoke artifact (procedure)** — [scale smoke doc](conversation-control-plane-scale-smoke.md) + regression anchors; formal k6/locust benchmark still open
-- [x] **Trace export sample** — [OTel/Langfuse wiring doc](conversation-control-plane-trace-export.md) (visualization deferred §0.7)
+- **Phase 1b package** — `pip install conversation-control-plane`, adapter interfaces, imports
+  decoupled from the Bot0 monorepo layout.
+- **New-agent scaffold generator** — today, copy the [§1.1 adopter brief](#11-adopter-brief-copy-to-your-coding-agent)
+  and the [cyber risk assessment stub](../examples/cyber_risk_assessment/); a `create_agent <kind>`
+  generator is planned.
+- **Property-test expansion** — pin §7 cases in your host; arbitrary turn-sequence ↔ ledger parity
+  (Hypothesis + DB round-trip) remains open.
+- **Formal load benchmark** — the [scale smoke procedure](conversation-control-plane-scale-smoke.md)
+  is a runbook + regression anchors today, not a packaged load framework.
+- **Ledger observability UI** — trace export is documented; a standalone inspector / timeline API
+  is deferred (§0.6).
 
-**Acceptance gate (Bot0 internal):** top-down review of every control-plane agent against §5 invariants +
-§9.1 pattern fit — inventory in .
-**Acceptance gate (external credibility):** Public repo ✅ live at [github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane); `pip install` + full code sync still Phase 1b; loop playbook + applicability distill + trace/scale procedure docs ✅ published (2026-07-06).
+### Credibility gates (external)
+
+- **Contract stable** — port ledger semantics and `decide_turn` now; regression-pin §5–§7 invariants.
+- **Public bundle self-contained** — document-map links resolve within this repository.
+- **Honest limits** — §0.7 documents loop risk, scale unknowns, and visualization deferral.
+
+**External acceptance gate:** Public repo live at
+[github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane);
+reference code and companions ship here; `pip install` convenience is Phase 1b.

@@ -12,7 +12,7 @@ This SDK provides a **DB-authoritative ledger** and control plane that cleanly s
 
 | Path | What it is |
 |---|---|
-| [`docs/`](docs/) | Integration contract, lifecycle diagram, applicability one-pager |
+| [`docs/`](docs/) | Contract, lifecycle, applicability, loop playbook, trace export, scale smoke |
 | [`reference/`](reference/) | Portable reference modules (`decide_turn`, ledger, delivery-order contract, …) |
 | [`examples/`](examples/) | Sanitized integration stubs — copy the shape, bring your own prompts/tools |
 | [`tests/`](tests/) | Portable contract tests you can run without the Bot0 monorepo |
