@@ -1,0 +1,4 @@
+# Synced from Bot0 monorepo — run scripts/publish_control_plane_public_repo.sh
+source_repo: Bot0Platform
+sync_script: scripts/sync_control_plane_sdk_extract.sh
+publish_script: scripts/publish_control_plane_public_repo.sh

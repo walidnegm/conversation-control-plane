@@ -1,0 +1,1 @@
+"""Cyber risk assessment example — SDK-shaped bounded agent stub."""

@@ -1,0 +1,1 @@
+"""Sanitized SDK examples (no Bot0 product internals)."""

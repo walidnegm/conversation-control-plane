@@ -1,0 +1,44 @@
+# Phase 1b extraction manifest — Conversation Control Plane SDK portable slice.
+# Source of truth: Bot0 monorepo (this repo). Destination: github.com/walidnegm/conversation-control-plane
+#
+# Run: ./scripts/sync_control_plane_sdk_extract.sh
+# Verify: .bot0venv/bin/python -m pytest regression_suite/test_delivery_order_contract.py \
+#           regression_suite/test_control_plane_sdk_deliverables.py::DeliveryOrderContractDeliverableTests -q
+
+sdk_version: "0.1.0-extract"
+contract_doc: docs/epics/conversation-control-plane-sdk.md
+public_repo: https://github.com/walidnegm/conversation-control-plane
+
+# Portable modules — copy verbatim (adapter interfaces land in Phase 1b package layout).
+modules:
+  - api/services/conversation_control/delivery_order_contract.py
+  - api/services/conversation_control/sdk_identity.py
+  - api/services/conversation_control/contract.py
+  - api/services/conversation_control/decide.py
+  - api/services/conversation_control/dispatch_phase.py
+  - api/services/conversation_control/discovery_intent.py
+  - api/services/conversation_control/ledger.py
+  - api/services/conversation_control/handoff_guard.py
+  - api/services/conversation_control/post_save_setup_entry.py
+
+docs:
+  - docs/epics/conversation-control-plane-sdk.md
+  - docs/epics/conversation-turn-lifecycle-diagram.md
+  - docs/epics/conversation-control-plane-applicability.md
+
+examples:
+  - examples/README.md
+  - examples/cyber_risk_assessment/README.md
+  - examples/cyber_risk_assessment/agent_stub.py
+  - examples/cyber_risk_assessment/assessment_ir.py
+  - examples/cyber_risk_assessment/decide_integration.md
+
+examples:
+  - extract/conversation-control-plane/examples/README.md
+  - extract/conversation-control-plane/examples/cyber_risk_assessment/
+
+regression_pins:
+  - regression_suite/test_delivery_order_contract.py
+  - regression_suite/test_control_plane_sdk_deliverables.py
+  - regression_suite/test_context_pin_hijack_ratchets.py
+  - regression_suite/test_scorecards_discovery_not_ov.py
