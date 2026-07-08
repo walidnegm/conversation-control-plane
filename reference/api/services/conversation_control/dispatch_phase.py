@@ -173,9 +173,13 @@ def next_step_for_authoring_phase(phase: str | None, pending: dict[str, Any] | N
         if candidates:
             return (
                 "Pick the catalog domain — reply with the **number** "
-                "(e.g. **1**) or the **domain name**."
+                "(e.g. **1**) or the **domain name**. "
+                "Then roles, graph compile, and commit-plan review before save."
             )
-        return "Pick the industry domain — reply with the number or name."
+        return (
+            "Pick the industry domain — reply with the number or name. "
+            "Then roles, graph compile, and commit-plan review before save."
+        )
     if phase == PHASE_OPERATIONAL_DATA:
         return (
             "Paste one **headline metric with a number** "
@@ -337,6 +341,17 @@ def resume_authoring_owns_turn(
 
     if not conversation_id or not (query or "").strip():
         return False
+    try:
+        from api.services.conversation_control.prose_intake_contract import (
+            grounded_glossary_detour_query,
+        )
+
+        if grounded_glossary_detour_query(
+            query, db=db, tenant_id=tenant_id, history=messages,
+        ):
+            return False
+    except Exception:  # noqa: BLE001
+        pass
     if not workflow_authoring_active(context):
         return False
     pending = load_builder_pending_state(db, tenant_id, conversation_id)
@@ -427,8 +442,8 @@ def active_agent_task_blocks_detour(
 WORKFLOW_CONFIRMATION_REPLIES = frozenset({
     "yes", "y", "ok", "okay", "sure", "proceed", "continue",
     "go ahead", "go on", "looks good", "looks right", "correct",
-    "that works", "confirm", "confirmed", "no", "n", "nope",
-    "cancel", "stop", "save",
+    "that works", "confirm", "confirmed", "fine", "good", "great",
+    "no", "n", "nope", "cancel", "stop", "save",
 })
 
 ROLE_PROPOSAL_REPLIES = frozenset({
@@ -436,8 +451,19 @@ ROLE_PROPOSAL_REPLIES = frozenset({
 })
 
 
+_GATE_REPLY_ALIASES = {
+    "lets proceed": "proceed",
+    "let's proceed": "proceed",
+    "lets continue": "continue",
+    "let's continue": "continue",
+    "lets go": "proceed",
+    "let's go": "proceed",
+}
+
+
 def normalize_short_gate_reply(query: str) -> str:
-    return (query or "").strip().lower().rstrip(".!?")
+    reply = (query or "").strip().lower().rstrip(".!?")
+    return _GATE_REPLY_ALIASES.get(reply, reply)
 
 
 _LEDGER_KINDS_PREEMPT_POST_SAVE_STATUS = frozenset({
@@ -651,6 +677,7 @@ def operational_data_gate_owns_provision_turn(
     conversation_id: str | None,
     query: str,
     context: object = None,
+    messages: list | None = None,
 ) -> bool:
     """True when the open top-line KPI gate should stay on workflow_builder."""
     from api.services.conversation_control.authoring_gate_turn import (
@@ -663,6 +690,7 @@ def operational_data_gate_owns_provision_turn(
         conversation_id=conversation_id,
         query=query,
         context=context,
+        messages=messages,
     )
 
 
@@ -691,6 +719,7 @@ def discovery_cognition_suppressed(
     query: str,
     *,
     context: object = None,
+    messages: list | None = None,
 ) -> bool:
     """Skip discovery/orientation LLM when an active task owns a finite gate reply."""
     if discovery_orientation_suppressed(
@@ -703,6 +732,7 @@ def discovery_cognition_suppressed(
         conversation_id=conversation_id,
         query=query,
         context=context,
+        messages=messages,
     ):
         return True
     ctx = context if isinstance(context, dict) else {}
@@ -817,6 +847,7 @@ def synthesize_gate_continue_route(
     query: str,
     *,
     context: object = None,
+    messages: list | None = None,
 ):
     """Code-owned route for finite gate continues — avoids a redundant classify."""
     if domain_gate_owns_pick_turn(
@@ -840,6 +871,7 @@ def synthesize_gate_continue_route(
         conversation_id=conversation_id,
         query=query,
         context=context,
+        messages=messages,
     ):
         from api.services.bot0_intent_router import IntentRoute
 
@@ -850,7 +882,7 @@ def synthesize_gate_continue_route(
             confidence=1.0,
         )
     if not discovery_cognition_suppressed(
-        db, tenant_id, conversation_id, query, context=context,
+        db, tenant_id, conversation_id, query, context=context, messages=messages,
     ):
         return None
     ctx = context if isinstance(context, dict) else {}

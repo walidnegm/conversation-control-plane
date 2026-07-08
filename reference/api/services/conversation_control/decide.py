@@ -524,33 +524,25 @@ def decide_turn(
     if _active_kind == "drafting":
         active_task_obj = ActiveTask(**{k: v for k, v in current_active.items()
                                         if k in ("agent", "phase", "awaiting", "pending_ref", "kind", "payload")})
-        perceived = None
-        try:
-            perceived = _perceive_relative_intent(
-                db, tenant_id, query=query,
-                active_task=current_active, suspended_tasks=suspended,
-                messages=messages, unified_signal=unified_signal,
-            )
-        except Exception:  # noqa: BLE001 — perception must never explode routing
-            logger.debug("drafting intent classifier failed → keep drafting", exc_info=True)
-
-        intent = getattr(perceived, "intent", None)
-        target = _canonical(getattr(perceived, "target_task", "") or "")
-        confidence = float(getattr(perceived, "confidence", 0.0) or 0.0)
-
         _draft_payload = (current_active or {}).get("payload") or {}
         _carried_draft = _draft_payload.get("draft")
-        if not (
-            intent == "handoff"
-            and target == "workflow_builder"
-            and confidence >= 0.5
-        ) and isinstance(_carried_draft, dict) and _carried_draft.get("steps"):
+        intent: str | None = None
+        target = ""
+        confidence = 0.0
+        if isinstance(_carried_draft, dict) and _carried_draft.get("steps"):
             try:
-                from api.services.conversation_control.classifier import (
-                    classify_drafting_turn,
+                from api.services.conversation_control.prose_intake_contract import (
+                    resolve_carried_draft_turn_kind,
                 )
-                _draft_turn, _aff_conf = classify_drafting_turn(
-                    db, tenant_id, query=query, messages=messages,
+
+                _draft_turn, _aff_conf = resolve_carried_draft_turn_kind(
+                    db,
+                    tenant_id,
+                    query=query,
+                    unified=unified_signal,
+                    messages=messages,
+                    active_task=current_active,
+                    payload=_draft_payload,
                 )
                 if _draft_turn in ("interpret", "build") and _aff_conf >= 0.5:
                     intent = "handoff"
@@ -558,8 +550,25 @@ def decide_turn(
                     confidence = _aff_conf
             except Exception:  # noqa: BLE001
                 logger.debug(
-                    "drafting interpret affirmation fallback skipped", exc_info=True,
+                    "drafting interpret fast-path skipped", exc_info=True,
                 )
+
+        perceived = None
+        intent_source = "heuristic"
+        if intent != "handoff":
+            try:
+                perceived = _perceive_relative_intent(
+                    db, tenant_id, query=query,
+                    active_task=current_active, suspended_tasks=suspended,
+                    messages=messages, unified_signal=unified_signal,
+                )
+            except Exception:  # noqa: BLE001 — perception must never explode routing
+                logger.debug("drafting intent classifier failed → keep drafting", exc_info=True)
+
+            intent = getattr(perceived, "intent", None)
+            target = _canonical(getattr(perceived, "target_task", "") or "")
+            confidence = float(getattr(perceived, "confidence", 0.0) or 0.0)
+            intent_source = str(getattr(perceived, "source", None) or "heuristic")
 
         if intent == "abandon":
             complete_task(db, tenant_id, conversation_id, agent="bot0")
@@ -579,9 +588,13 @@ def decide_turn(
             drafting_fork_reply_in_progress as _fork_reply_in_progress,
         )
 
+        _has_carried_draft_steps = (
+            isinstance(_carried_draft, dict) and bool(_carried_draft.get("steps"))
+        )
         _fresh_drafting_domain = (
             (intent == "new_task" or (workflow_draft_request and len(q) > 10))
             and not _fork_reply_in_progress(_draft_payload, q)
+            and not _has_carried_draft_steps
         )
         if _fresh_drafting_domain:
             # Trust the LLM classifier's "intent" (which now has strong instructions for cost+agent+describe = bot0, not drafting).
@@ -640,6 +653,35 @@ def decide_turn(
             )
             _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent,
                                 live_route_layer, "drafting handoff")
+            return plan
+
+        if intent != "detour" and db is not None and tenant_id and (query or "").strip():
+            try:
+                from api.services.bot0_product_knowledge import (
+                    retrieval_grounds_concept_query,
+                )
+
+                if retrieval_grounds_concept_query(
+                    db, query, tenant_id=tenant_id, messages=messages,
+                ):
+                    intent = "detour"
+                    confidence = max(confidence, 0.85)
+                    intent_source = "retrieval_grounding"
+            except Exception:  # noqa: BLE001
+                logger.debug("drafting concept detour backstop skipped", exc_info=True)
+
+        _detour_conf = float(confidence or 0.0)
+        if intent == "detour" and _detour_conf >= 0.5:
+            plan = TurnPlan(
+                agent="bot0",
+                mode="detour",
+                task=active_task_obj,
+                reason=f"drafting detour ({intent_source})",
+            )
+            _maybe_log_conflict(
+                db, tenant_id, conversation_id, plan, live_route_intent,
+                live_route_layer, "drafting detour",
+            )
             return plan
 
         plan = TurnPlan(agent="bot0", mode="drafting", task=active_task_obj,

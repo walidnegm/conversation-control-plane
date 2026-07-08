@@ -17,6 +17,9 @@ SDK_SPEC_ROLE = "integration contract"
 SDK_DELIVERY_ORDER_MODULE = (
     "api/services/conversation_control/delivery_order_contract.py"
 )
+SDK_CHAT_DISPATCH_CONTRACT_MODULE = (
+    "api/services/conversation_control/chat_dispatch_contract.py"
+)
 SDK_EXTRACT_MANIFEST = "extract/conversation-control-plane/MANIFEST.yaml"
 SDK_EXTRACT_SYNC_SCRIPT = "scripts/sync_control_plane_sdk_extract.sh"
 

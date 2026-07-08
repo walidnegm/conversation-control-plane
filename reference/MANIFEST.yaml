@@ -9,6 +9,7 @@ contract_doc: docs/epics/conversation-control-plane-sdk.md
 public_repo: https://github.com/walidnegm/conversation-control-plane
 
 modules:
+  - api/services/conversation_control/chat_dispatch_contract.py
   - api/services/conversation_control/delivery_order_contract.py
   - api/services/conversation_control/sdk_identity.py
   - api/services/conversation_control/contract.py
@@ -40,6 +41,8 @@ examples:
   - extract/conversation-control-plane/examples/cyber_risk_assessment/
 
 regression_pins:
+  - regression_suite/test_chat_dispatch_contract.py
   - regression_suite/test_delivery_order_contract.py
   - regression_suite/test_control_plane_sdk_deliverables.py
   - regression_suite/test_public_sdk_publish_bundle.py
+  - regression_suite/test_decide_turn_control_plane.py

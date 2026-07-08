@@ -177,6 +177,15 @@ def _empty_discovery_result() -> dict[str, str]:
     }
 
 
+def _discovery_turn_cache() -> dict[str, Any] | None:
+    try:
+        from api.services.conversation_control.authoring_gate_turn import _turn_cache
+
+        return _turn_cache()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def classify_discovery_request(
     db: Any,
     tenant_id: str | None,
@@ -192,6 +201,12 @@ def classify_discovery_request(
     """
     if not (query or "").strip() or db is None or not tenant_id:
         return _empty_discovery_result()
+    cache = _discovery_turn_cache()
+    cache_key = f"discovery:{tenant_id}:{(query or '').strip().lower()}"
+    if cache is not None and cache_key in cache:
+        cached = cache[cache_key]
+        if isinstance(cached, dict):
+            return dict(cached)
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -233,8 +248,14 @@ def classify_discovery_request(
         raw = (getattr(resp, "content", "") or "").strip()
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if not m:
-            return _empty_discovery_result()
-        return _normalize_result(json.loads(m.group()))
+            empty = _empty_discovery_result()
+            if cache is not None:
+                cache[cache_key] = empty
+            return empty
+        result = _normalize_result(json.loads(m.group()))
+        if cache is not None:
+            cache[cache_key] = result
+        return result
     except Exception as exc:  # noqa: BLE001 — discovery must never block routing
         logger.warning(
             "discovery classifier failed; treating as none (%s: %s)",
@@ -242,7 +263,10 @@ def classify_discovery_request(
             str(exc)[:200],
             exc_info=True,
         )
-        return _empty_discovery_result()
+        empty = _empty_discovery_result()
+        if cache is not None:
+            cache[cache_key] = empty
+        return empty
 
 
 def is_discovery_detour_kind(kind: str | None) -> bool:

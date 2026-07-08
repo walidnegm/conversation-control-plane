@@ -788,6 +788,24 @@ status or active-flow echo — ledger `active_task.kind` + transcript eligibilit
 `test_scorecards_discovery_not_ov.py` · `test_conversation_orchestration_review_fixes.py`
 (`PreDecideShortCircuitGateTests`).
 
+#### Grounded glossary / concept gate (mid-authoring detour — CAQ-15)
+
+Definitional product-concept asks (**"what is a scorecard"**, **"how do you solve bottlenecks"**)
+must not be stolen by active drafting, outcome_value_setup, resume/orientation, or scorecards
+inventory while the user is mid-authoring. Retrieval grounds the answer; code renders it.
+
+| Layer | Owner | Rule |
+|---|---|---|
+| **Signal** | `prose_intake_contract.grounded_glossary_detour_query` | `retrieval_grounds_concept_query` + definitional shape; exempt from `drafting_intake_blocks_concept_gate` |
+| **Authority** | `apply_grounded_glossary_authority` (after resume authority) | Forces `task_intent=detour`, clears mis-routed `discovery_kind` / orientation |
+| **Scorecards demotion** | `apply_scorecards_discovery_authority` | Definitional scorecard ≠ starred-run inventory |
+| **Delivery** | `_try_post_decide_concept_gate_answer` | Post-`decide_turn`, before prose intake / active-flow continue |
+| **Render** | `package_glossary_concept_answer` | Code-owned `glossary_concept` block + **deterministic** intro (no narrator refusal above grounded card) |
+
+Row in `DETOUR_DELIVERY_ORDER_TABLE`: `concept_gate` (`post_decide_front_door`, before
+`scorecards_discovery`). **Do not** fix glossary steals with prompt exceptions — extend authority
++ delivery ladder + regression (`test_glossary_detour_routing.py`).
+
 #### Your integration substrate (you provide; SDK does not prescribe vendor)
 
 | Concern | Portable rule |

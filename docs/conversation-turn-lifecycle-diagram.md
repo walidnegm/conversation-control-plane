@@ -305,6 +305,11 @@ the chat entrypoint delivers front-door answers (`STAGE_FRONT_DOOR_DELIVERY`) **
 ledger-first continuations. New handlers must call `active_flow_handler_must_yield()` — not
 ad-hoc `_plan_mode != "detour"` copies. Ratchet: `test_delivery_order_contract.py`.
 
+**2026-07-08 addendum — grounded glossary / concept gate (CAQ-15).** [SDK §2.1 grounded glossary](conversation-control-plane-sdk.md#grounded-glossary--concept-gate-mid-authoring-detour--caq-15):
+retrieval-grounded definitional asks deliver via `concept_gate` on the post-decide ladder
+(`DETOUR_DELIVERY_ORDER_TABLE` row `concept_gate`) **before** resume/orientation, scorecards
+inventory, and prose intake. Render: `glossary_concept` block + code-owned intro.
+
 **Readiness is not one thing.** Semantic intake readiness belongs in ▨; shape rubrics are ▣ fail-soft fallback only when the router did not assess — see [SDK §11.4](conversation-control-plane-sdk.md#114-classifier-rubric-ownership-prompt-library-pattern).
 
 ---
