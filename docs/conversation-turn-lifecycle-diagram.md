@@ -11,15 +11,8 @@ related:
 
 # Conversation Turn Lifecycle — the ledger-pinned flow
 
-**Canonical architecture (4 of 4).** Part of the four-document set with the [SDK](conversation-control-plane-sdk.md),
-Bot0 implementation playbook (monorepo only), and
-. Index:
-.
+**What this is.** A single map of one chat turn through **your host entrypoint** (HTTP handler, SSE `chat`, worker) and the portable `conversation_control/` package. Bot0's reference host is `api/services/host chat module (monorepo)::chat` — **monorepo only**, not shipped here. The diagram shows where perception, `decide_turn`, detours, and ledger writes belong.
 
-**What this is.** A single, code-accurate map of one chat turn through `api/services/bot0.py::chat` and the
-`conversation_control/` package. It shows *exactly* where intent classification, routing, decisioning, detouring,
-and hot-potato handling happen — and where the **ledger** is read and written, which is what makes the flow a
-real capability rather than a stateless prompt chain.
 
 **Honest framing.** This documents the flow **as it is**, not the idealized "one router → `decide_turn`" version
 in the [SDK contract](conversation-control-plane-sdk.md). The pre-decide **gauntlet** is real: several fast-paths
@@ -27,15 +20,6 @@ and detours can short-circuit before `decide_turn` runs. Retiring that competiti
 authoritative decision) is the  work;
 this diagram is the honest baseline it works against.
 
-**Code anchors** (2026-07-07): `chat()` [bot0.py:6071](../../api/services/bot0.py#L6071) · guardrail
-[:6131](../../api/services/bot0.py#L6131) · pre-decide gauntlet [:6333–6430](../../api/services/bot0.py#L6333) ·
-unified router + authority passes [:6461–6505](../../api/services/bot0.py#L6461) · `decide_turn`
-[:7447](../../api/services/bot0.py#L7447) · prose intake / readiness path [:8183](../../api/services/bot0.py#L8183) ·
-post-decide detours [:7520–7608](../../api/services/bot0.py#L7520). Ledger
-[ledger.py:274](../../api/services/conversation_control/ledger.py#L274) · hot-potato
-[handoff_guard.py](../../api/services/conversation_control/handoff_guard.py) · intake maturity
-[intake_maturity.py](../../api/services/conversation_control/intake_maturity.py) · enrich intake
-[workflow_intake.py](../../api/services/conversation_control/workflow_intake.py).
 
 **Cognition / execution on this map (2026-07-07).** ▨ blocks emit labels (intent, `user_wants`,
 `authoring_maturity`, gaps). ▣ blocks validate enums and run transitions. **Semantic readiness** (how good is
@@ -283,25 +267,26 @@ fingerprint of the gauntlet competing with the authoritative decision.
 
 ---
 
-## 7. Stage → code anchor
+## 7. Stage → portable anchor
 
-| Stage | Where | Kind |
+> **Bot0 reference:** the monorepo diagram maps these stages to `api/services/host chat module (monorepo)::chat` line anchors
+> for internal debugging. Adopters implement the **same stage order** in their host entrypoint; only
+> `conversation_control/` modules in `reference/` are portable.
+
+| Stage | Portable anchor | Kind |
 |---|---|---|
 | Turn claim / release | `ledger.claim_turn` / `release_turn` / `renew_turn_claim` | ▣ serialize |
-| Guardrail | [bot0.py:6131](../../api/services/bot0.py#L6131) `check_message` | ▨ safety |
-| Pre-decide gauntlet | [bot0.py:6333–6406](../../api/services/bot0.py#L6333) (`_try_catalog_handoff` → `_try_prose_intake_early_enqueue`) | ▣/▨ ⚡ |
-| Unified router | [bot0.py:6461](../../api/services/bot0.py#L6461) `classify_unified_turn` | ▨ perception |
-| Router authority passes | [bot0.py:6476–6505](../../api/services/bot0.py#L6476) `apply_*_authority` | ▣ execution on signal |
-| Intent router L0–L4 | `bot0_intent_router.py` (`_structural_builder_route_or_llm_veto`) | ▣/▨ perception |
-| Prose intake + readiness | [bot0.py:8183](../../api/services/bot0.py#L8183); `enrich_intake_assessment` | ▨ labels → ▣ gates |
-| Finite picks + reset | pending picks [bot0.py:6834–6903](../../api/services/bot0.py#L6834); reset `reset_commands.py` | ▣ ⚡ |
-| **decide_turn** | [bot0.py:7432](../../api/services/bot0.py#L7432) → `decide.py::decide_turn` | ◆ authoritative |
-| **Front-door delivery** | [bot0.py](../../api/services/bot0.py) post-`decide_turn` · `delivery_order_contract.py` | ◆/▣ — **before** active-flow continue |
-| Active-flow continue | `realization_intake` / `outcome_value_setup` handlers | ▣ — gated by `active_flow_handler_must_yield()` |
-| Post-decide detours | orientation demotion · discovery demotion · concept gate · prose intake | ▨/▣ |
-| Ledger control keys | [ledger.py:274](../../api/services/conversation_control/ledger.py#L274) | ▣ state |
-| Hot-potato guard | [handoff_guard.py](../../api/services/conversation_control/handoff_guard.py) `would_ping_pong` | ▣ |
-| Routing trace | `route_data.routing` (`Bot0RoutingTrace`) | observability |
+| Guardrail | **Your** HTTP/chat boundary (auth, rate limit, safety) | ▨ safety |
+| Pre-decide gauntlet | **Your** application layer (optional finite picks / gates) | ▣/▨ ⚡ |
+| Unified router signal | **Your** bounded classifier → enums | ▨ perception |
+| Router authority passes | `apply_unified_router_authorities` pattern (host-owned) | ▣ execution on signal |
+| **decide_turn** | `decide.decide_turn` | ◆ authoritative |
+| **Front-door delivery** | `delivery_order_contract` + host dispatch | ◆/▣ — **before** active-flow continue |
+| Active-flow continue | Specialist `handle_turn` paths | ▣ — gated by `active_flow_handler_must_yield()` |
+| Post-decide detours | Host discovery/orientation handlers | ▨/▣ |
+| Ledger control keys | `ledger.py` | ▣ state |
+| Hot-potato guard | `handoff_guard.py` | ▣ |
+| Routing trace | `route_data.routing` per [SDK §11.1](conversation-control-plane-sdk.md#111-intent-router-layers-l0l4-and-per-turn-routing-trace) | observability |
 
 ---
 
@@ -327,97 +312,6 @@ not discard `authoring_maturity` / `missing_segments` from the unified router.
 
 ---
 
-## 9. Prose intake + readiness gauntlet (post-`decide_turn`)
+## 9. Host-specific intake (monorepo detail)
 
-Opens when `_workflow_prose_intake_active` is true **after** `decide_turn` (typically `effective_intent != workflow_builder`,
-`workflow_draft_request` or structural paste gate). This is **not** the same as pre-decide `prose_intake_early_enqueue`
-(▣ structural shape/length only — async enqueue accelerator).
-
-```mermaid
-flowchart TD
-  GATE["▣ _workflow_prose_intake_active<br/>structural paste gate — NOT semantic readiness"]
-  GATE -->|false| SKIP["fall through to specialist dispatch"]
-  GATE -->|true| COG
-
-  subgraph COG["Cognition — already on UnifiedTurnSignal from §1"]
-    U1["▨ user_wants — draft_help | use_as_is | …"]
-    U2["▨ authoring_maturity — M0..M5"]
-    U3["▨ missing_segments — gap prose"]
-    U4["▨ intake_readiness hint"]
-  end
-  COG --> AUTH2
-
-  subgraph AUTH2["▣ Code authority on signal (pre-merge)"]
-    A1["apply_workflow_prose_intake_authority<br/>workflow_draft_request; no commit_ready force"]
-    A2["apply_drafting_signal_authority<br/>draft_help → drafting lane"]
-  end
-  AUTH2 --> ASSESS
-
-  subgraph ASSESS["▣ Assessment merge + enrich (single source)"]
-    M1["assessment_from_unified_signal (S4 fast-path)"]
-    M2["assess_workflow_intake (optional full hop)"]
-    M3["merge_intake_assessments — router maturity wins"]
-    M4["enrich_intake_assessment — LLM gaps/maturity authoritative"]
-    M5["apply_strength_rubric — fallback ONLY when LLM did not assess"]
-    M1 --> M3
-    M2 --> M3
-    M3 --> M4
-    M4 -->|no LLM assess| M5
-  end
-  ASSESS --> EXEC
-
-  subgraph EXEC["▣ Execution gates — no NL guessing"]
-    E1["should_block_auto_interpret — draft_help blocks IR handoff"]
-    E2["intake_should_offer_fork — user_wants + maturity"]
-    E3["intake_prefers_direct_interpret — use_as_is / structure_now only"]
-    E4["begin_task kind=drafting OR interpret handoff"]
-  end
-  EXEC -->|fork / coaching| SHORT
-  EXEC -->|handoff| WB["workflow_builder async"]
-  EXEC -->|sparse elicit| SHORT
-
-  note1["Rubric prose lives in conversation_unified_router<br/>prompt library — not Python execution"]
-```
-
-| Step | Module | Cognition vs execution |
-|---|---|---|
-| Paste is workflow-shaped | `_workflow_prose_intake_active` | ▣ structural gate (length/shape) |
-| User intent this turn | `UnifiedTurnSignal.user_wants` | ▨ classifier rubric → ▣ `safe_user_wants` |
-| Content maturity | `authoring_maturity` + `missing_segments` | ▨ rubric → ▣ `readiness_from_authoring_maturity` |
-| Override product detour | `apply_workflow_prose_intake_authority` | ▣ clears how-to; sets `workflow_draft_request` |
-| Block auto-IR | `should_block_auto_interpret` | ▣ policy on LLM label |
-| Fallback rubric | `apply_strength_rubric` | ▣ only when `assess_source != llm` |
-
-Regression pins: `test_cognition_execution_readiness_gauntlet.py`, `test_intake_maturity_routing_contract.py`.
-
----
-
-## 10. Is this a LangGraph? (honest answer)
-
-**The diagrams describe semantics, not a framework choice.** Bot0's control plane is already a **state machine**
-(§4 ledger `stateDiagram`) plus a **deterministic dispatcher** (`decide_turn` flowchart in §3). It was built
-imperatively — `bot0.chat()` gauntlet, `decide.py`, `ledger.py` — through production incidents, not by drawing
-LangGraph first.
-
-| Layer | Today | LangGraph? |
-|---|---|---|
-| **Control plane** (who owns the turn?) | Ledger JSONB + `decide_turn` precedence | *Optional future* meta-graph host ([future-state-langgraph-migration.md](future-state-langgraph-migration.md) **target**, not required) |
-| **Perception** | Bounded classifiers → enums | Classifier **nodes** — same contract either way |
-| **Specialist agents** | Heterogeneous (while-loop, FSM, StateGraph) | Workflow builder already uses LangGraph **internally**; advisor uses while-loop |
-| **Checkpoints** | `_control_revision` + DB context + routing trace | LangGraph checkpointer answers a *different* question (run replay), not Switch/Stay precedence |
-
-**Provocation you named is partly right:** we did assemble graph-shaped behavior backwards — gauntlet layers,
-ledger states, readiness gates — and the diagrams make that visible. **That does not mean the control plane must
-become a LangGraph StateGraph to be correct.** The load-bearing contract is:
-
-1. **One writer** of control keys (`decide_turn`).
-2. **Cognition → execution split** (▨ labels, ▣ transitions) — [SDK §2.1](conversation-control-plane-sdk.md#21-integration-guardrails-portable-contract).
-3. **Explicit state** on the ledger, not implicit flags.
-
-LangGraph could **host** the meta-graph later (supervisor node ≈ `decide_turn`, classifier node ≈ unified router)
-while preserving the same precedence rules as product IP. Until then, these mermaid diagrams *are* the state
-graph — expressed as documentation + regression pins, not as `StateGraph` edges. Adding LangGraph without
-collapsing the gauntlet would duplicate the two-state-system bug (ledger vs graph checkpoint).
-
-**Rule of thumb:** LangGraph for **agent internals** and optional **runtime plumbing**; ledger + `decide_turn`
-for **cross-agent ownership** — compose, don't replace ([SDK §14](conversation-control-plane-sdk.md#14-ecosystem-layering-compose-dont-replace)).
+Bot0's prose-intake and readiness merge (`enrich_intake_assessment`, `apply_strength_rubric`, …) live in the monorepo host and workflow modules — not in the portable `reference/` slice. Adopters: keep **semantic readiness in classifiers** (▨) and **gates/transitions in code** (▣); see [SDK §11.4](conversation-control-plane-sdk.md#114-classifier-rubric-ownership-prompt-library-pattern) and [SDK §2.1](conversation-control-plane-sdk.md#21-integration-guardrails-portable-contract).

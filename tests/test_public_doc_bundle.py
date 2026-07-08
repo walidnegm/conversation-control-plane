@@ -42,6 +42,14 @@ class PublicDocBundleTests(unittest.TestCase):
         self.assertIn("#31-three-hard-questions", text)
         self.assertIn("#111-intent-router", text)
 
+    def test_lifecycle_has_no_bot0_entrypoint_anchors(self):
+        life = DOCS / "conversation-turn-lifecycle-diagram.md"
+        text = life.read_text(encoding="utf-8")
+        self.assertIn("Stage → portable anchor", text)
+        self.assertNotIn("bot0.py", text)
+        self.assertIn("STAGE_FRONT_DOOR_DELIVERY", text)
+        self.assertIn("active_flow_handler_must_yield", text)
+
     def test_section_15_is_adopter_facing(self):
         tail = SDK.read_text(encoding="utf-8").split("## 15.", 1)[-1]
         self.assertIn("Adopter-facing", tail)

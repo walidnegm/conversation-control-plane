@@ -29,6 +29,7 @@ public_bundle:
     - conversation-control-plane-sdk.md
     - conversation-turn-lifecycle-diagram.md
   replace_section_15: docs/section-15-public.md
+  sanitize_lifecycle: true  # §7 bot0.py anchors → portable reference/ modules
   # Monorepo-only (implementation playbook / docs/epics/) — not published:
   # - conversation-control-plane-loop-playbook.md  → SDK §3.1
   # - conversation-control-plane-trace-export.md   → SDK §11.1
