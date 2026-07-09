@@ -42,6 +42,30 @@ different questions**. Checkpoints answer “what was graph state at step N?” 
 
 ---
 
+## Writing a specialist (builder contract)
+
+Use this when you add a **multi-turn** agent (builder, cyber assessment, cost, intake, …). One-shot tools may
+skip a ledger kind; **follow-ups on the same entity must not**.
+
+| Rule | Owner | Do | Don't |
+|---|---|---|---|
+| **Register a kind** | Your code | Closed enum string on `active_task.kind` | Free-text kinds from RAG / embeddings |
+| **Start the stream** | Your code | `begin_task` / `update_phase` when multi-turn work starts | Treat “tool succeeded last turn” as ownership |
+| **Pin identity** | Ledger payload | Typed ids (`workflow_id`, `project_id`, `run_id`, …) | Ambient `last_read_*` as sole authority after pin |
+| **Phase owns dispatch** | Host + [§2.1 multi-turn stream](docs/conversation-control-plane-sdk.md#21-multi-turn-stream-contract-every-sole-continue-kind) | Entity resolve only in open/pick phases | Re-resolve by name on every continue turn |
+| **LLM owns continue meaning** | Bounded classifier / specialist | Sizing, verify, refine labels | Regex/wordlists as sole arbiter of meaning |
+| **Finite grammar when armed** | Code | Bare `1` / `yes` only if `pending_question` / menu was set | Every digit steals any list in the thread |
+| **Handoffs** | `TaskTransition` | Declare begin / continue / complete / detour | Specialists write control keys |
+
+**Four multi-turn invariants** (portable): phase owns dispatch · pin owns identity · LLM owns continue meaning ·
+finite grammar only when armed. Reference helpers: `reference/.../multi_turn_stream_contract.py`.
+
+**Worked example:** [examples/cyber_risk_assessment/](examples/cyber_risk_assessment/) — design stub only
+(not production product code). Copy the **shape** (`kind`, phases, `TaskTransition`, decide branch), not private
+engines or UI.
+
+---
+
 ## Compose — don't rip and replace
 
 LangGraph (and peers) give you real wins: checkpointing, subgraph interrupts, Studio-style debugging, crew
@@ -104,6 +128,7 @@ compose story when chat reliability is the bottleneck.
 - **Deterministic routing** via `decide_turn` (single writer)
 - **`ConversationalAgent`** protocol for specialists
 - **Delivery-order contract** — front-door discovery detours beat stale context pins
+- **Multi-turn stream contract** — phase / pin / LLM continue / finite picks ([SDK §2.1](docs/conversation-control-plane-sdk.md#21-multi-turn-stream-contract-every-sole-continue-kind))
 - Portable regression harness — LLM proposes, control plane enforces
 
 ---
@@ -112,10 +137,10 @@ compose story when chat reliability is the bottleneck.
 
 | Shipped | Still open (Phase 1b) |
 |---|---|
-| SDK docs + lifecycle + operational companions | `pip install conversation-control-plane` |
-| Reference modules under `reference/` | Adapter interfaces + decoupled imports |
-| Delivery-order contract + portable tests | LangGraph/CrewAI adapter packages |
-| Cyber risk assessment **design stub** | Production specialist implementations |
+| SDK docs + lifecycle + three-layer stack | `pip install conversation-control-plane` |
+| Reference modules under `reference/` (incl. multi-turn stream helpers) | Adapter interfaces + decoupled imports |
+| Delivery-order + multi-turn stream contracts | LangGraph/CrewAI adapter packages |
+| Cyber risk assessment **design stub** | Production specialist implementations (stay in your host product) |
 
 The **integration contract is stable** — port and test against it now.
 
@@ -125,20 +150,21 @@ The **integration contract is stable** — port and test against it now.
 
 | Example | Pattern | Status |
 |---|---|---|
-| [`examples/cyber_risk_assessment/`](examples/cyber_risk_assessment/) | Bounded setup + async specialist ([SDK §9.1](docs/conversation-control-plane-sdk.md)) | Design stub |
+| [`examples/cyber_risk_assessment/`](examples/cyber_risk_assessment/) | Bounded setup + async specialist ([SDK §9.1](docs/conversation-control-plane-sdk.md) + multi-turn stream) | **Design stub only** |
 
-Sanitized stubs only — no tenant data, no internal backlogs. Copy **ledger `kind`**, **`TaskTransition`**, and
-the **`decide_turn` branch** pattern.
+**Privacy:** sanitized stubs only — no tenant data, no internal backlogs, no production scoring engines or
+product UI. Copy **ledger `kind`**, **phases**, **`TaskTransition`**, and the **`decide_turn` branch** pattern.
 
 ---
 
 ## Quick start
 
-1. **This README** — niche + compose decision (above)
-2. [SDK contract](docs/conversation-control-plane-sdk.md) — Getting started + §5 invariants
+1. **This README** — niche + compose decision + *Writing a specialist* (above)
+2. [SDK contract](docs/conversation-control-plane-sdk.md) — Getting started · §2.1 multi-turn stream · §5 invariants
 3. Port `decide_turn` + ledger slice to your `conversations` store (JSONB control slice is fine)
 4. `pip install -e ".[dev]"` then `pytest tests/ -q`
-5. Pin §6–§7 regression cases in your host app
+5. Pin §6–§7 regression cases; for multi-turn kinds, pin “no re-resolve after pin”
+6. Optionally study [cyber stub](examples/cyber_risk_assessment/) for a bounded specialist shape
 
 ---
 

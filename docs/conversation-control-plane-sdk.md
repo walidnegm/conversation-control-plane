@@ -271,7 +271,15 @@ races. New multi-turn product surfaces get a **registered kind** (or explicit ph
 **Anti-pattern (do not generate):** treat “tool was used last turn” or “RAG grounded this phrase” as
 sole-continue. That is **transcript/RAG authority** — forbidden for control keys (§0.1.1 Layer 3).
 History feeds **classifier hydration**; **ledger kind + pins** seal multi-turn ownership.
-Bot0 multi-turn substrate detail: [chat-complete-multi-turn-task-contract.md](chat-complete-multi-turn-task-contract.md).
+
+**Portable continue pattern (all sole-continue kinds):** once a kind is active and an entity is pinned,
+**every subsequent turn** on that stream must follow the same dispatch discipline — phase-gated resolve,
+ledger pins only, LLM for continue meaning, finite grammar for armed picks. Do **not** invent a
+per-agent re-open path. Full contract: **[§2.1 Multi-turn stream contract](#21-multi-turn-stream-contract-every-sole-continue-kind)**.
+Bot0 epic + pilot: 
+· code `multi_turn_stream_contract.py`.
+**Multi-turn continue:** see §2.1 Multi-turn stream contract (portable).
+`SOLE_CONTINUE_KINDS`, glue-vs-principles scorecard, ratchet plan.
 
 **Risk catalog learning (not TCO, not cyber assessment *perform*):**
 
@@ -584,7 +592,7 @@ section is the adoption entry point.*
 You are integrating the Conversation Control Plane SDK (reference implementation by Bot0.ai) into our chatbot.
 
 READ FIRST: docs/conversation-control-plane-sdk.md — Getting started + §1 bootstrap.
-READ ALSO: SDK §2.1 integration guardrails (portable contract rules).
+READ ALSO: SDK §2.1 integration guardrails + §2.1 Multi-turn stream contract (every sole-continue kind).
 CITATION: Conversation Control Plane SDK (reference implementation by Bot0.ai).
 
 CONTRACT:
@@ -593,17 +601,20 @@ CONTRACT:
 - Only decide_turn writes control keys (active_task, suspended_tasks, pending_switch).
 - LLM classifiers emit structured labels; code owns transitions and user-visible numbers.
 - Cross-turn memory for routing lives in the ledger (kind + payload), not ad-hoc context flags.
+- Multi-turn work uses one portable stream pattern: phase-gated resolve, ledger pins only,
+  LLM for continue meaning, finite grammar only when a pick is armed — no per-agent glue.
 
 YOUR TASK:
 1. Map our agents to §9.1 integration patterns + ConversationalAgent (agent_id, task_kind, handle_turn, classify_phase).
 2. Wire our chat entrypoint: message → guardrails → unified router signal → decide_turn → dispatch.
 3. Remove competing pre-decide_turn returns that short-circuit routing (one router → decide_turn; see §7 summary).
 4. Port or wrap ledger.py APIs against our conversations store (JSONB control slice is fine).
-5. Add regression tests for: continue-resumes, no auto-switch, terminal completion clears active_task.
-6. Do NOT add regex/keyword NL routing — bounded classifiers only (§2.1).
-7. LLM proposes labels; code owns transitions, math, and user-visible tables (§2.1 authority boundary).
+5. For each sole-continue kind: closed phase enum, pin fields, phase_allows_entity_resolve gate, continue cognition path (§2.1 multi-turn stream bootstrap).
+6. Add regression tests for: continue-resumes, no auto-switch, terminal completion clears active_task, no re-resolve after pin.
+7. Do NOT add regex/keyword NL routing — bounded classifiers only (§2.1).
+8. LLM proposes labels; code owns transitions, math, and user-visible tables (§2.1 authority boundary).
 
-REFERENCE CODE: api/services/conversation_control/
+REFERENCE CODE: api/services/conversation_control/ (incl. multi_turn_stream_contract.py)
 HARD QUESTIONS: Read §3.1 — concurrency locks, hot-potato handoffs, context hydration.
 VERIFICATION: §5 invariants + §15 checklist must pass before merge.
 ```
@@ -651,6 +662,7 @@ flowchart TB
 | 6 | **Terminal completion** — every finished task calls `complete_task` | §5 + §7 summary |
 | 7 | **Register + test** — seven canonical regression cases (§6 summary) | §6 summary |
 | 8 | **Envelopes** — wire turn timeout + session staleness on your transport | §11 |
+| 9 | **Multi-turn streams** — for each sole-continue kind: closed phase enum, pin fields, phase-gated entity resolve, LLM continue path, finite-grammar picks only when armed | [§2.1 multi-turn stream](#21-multi-turn-stream-contract-every-sole-continue-kind) |
 
 ### 1.4 What you bring vs what the SDK provides
 
@@ -671,6 +683,7 @@ flowchart TB
 | `decide.py` | Port precedence logic; pin classifier outputs in tests |
 | `unified_turn_router.py` | Port or replace with your router if enum-compatible |
 | `turn_timeout.py`, `session_staleness.py` | Copy envelope modules; wire at transport boundary |
+| `multi_turn_stream_contract.py` | Copy phase/pin gates; map your `SOLE_CONTINUE_KINDS` + phase tables |
 | Specialist agents | **Do not port Bot0 agents** — reimplement `ConversationalAgent` for your domain |
 
 ### 1.6 Adoption anti-patterns (engineering doctrine — do not generate these)
@@ -702,11 +715,14 @@ authority** (state, contracts, math, rendering, irreversible transitions). **Not
 | A6 | Scattered `apply_*_authority` | **S** | No single transition contract | Order-dependent bugs; overrides drift | `apply_unified_router_authorities()` | same |
 | A7 | Concept gate before authority | **M**+**S** | Router gets garbage-in | Glossary steals drafting openers | Rubric first; `drafting_intake_blocks_concept_gate` backstop | `drafting-intake-maturity-routing.md` |
 | A8 | Agents write control keys | **S** | Hot-potato loops | Ping-pong handoffs; stale `agent_type` | `TaskTransition`; ledger API only | SDK §5 |
-| A9 | LLM authoritative numbers/tables | **E** | Hallucination on critical path | Score corruption; table says 17%, narration 15% | Extract → validate → code render → LLM explains | AGENTS.md authority boundary |
+| A9 | LLM authoritative numbers/tables | **E** | Hallucination on critical path | Score corruption; table says 17%, narration 15% | Extract → validate → code render → LLM explains |  authority boundary |
 | A10 | Second state machine per feature | **S** | Competing phase models | "Where were we?" wrong after detour | Ledger `kind` + gate taxonomy | `authoring_gate_turn` |
 | A11 | Shape treated as intent | **M** | Format ≠ meaning | Bullets → forced interpret; table → wrong extract | Shape is evidence; LLM labels; code validates | playbook §7 readiness kinds |
 | A12 | Shape rubric overrides LLM readiness | **M** | Form over semantics | Table looks right; logic wrong | LLM readiness primary; rubric fail-soft only | `test_cognition_execution_readiness_gauntlet.py` |
 | A13 | Context-pin / delivery-order hijack | **S** | Execute layer beats router enum | Scorecards ask echoes realization step; O&V status on orientation; pin alone hijacks | `decide_turn` supersede + `active_flow_handler_must_yield()` before ledger-first handlers | `test_delivery_order_contract.py` |
+| A14 | Re-resolve after pin (greenfield on continue) | **S**+**E** | Stream forgets who it pinned | “Working on X” then “Which workflow?”; name substring re-opens list | Phase gate: entity resolve only in open/pick phases; continue uses pin + cognition | `multi_turn_stream_contract.py`, `test_multi_turn_stream_contract.py` |
+| A15 | Ambient `last_read_*` as sole authority | **S** | Mirror becomes identity | Generic how-to steals cost/project continue; wrong entity after detour | Ledger payload pins only; ambient may seed **only** when phase allows + not bare howto | same + `test_context_pin_hijack_ratchets.py` |
+| A16 | Per-agent multi-turn glue (no shared contract) | **S** | Every specialist invents stickiness | Cost fixed; cyber/realization/scorecards still re-open | One portable stream contract; adopt-on-touch all `SOLE_CONTINUE_KINDS` | [§2.1 multi-turn stream](#21-multi-turn-stream-contract-every-sole-continue-kind) |
 
 ---
 
@@ -725,6 +741,7 @@ authority** (state, contracts, math, rendering, irreversible transitions). **Not
 | Blockchain / external audit lanes | §0.5 |
 | Bootstrap / integration playbook | §1 |
 | Integration guardrails (portable contract) | §2.1 |
+| Multi-turn stream continue pattern (all kinds) | §2.1 multi-turn stream |
 | What the control plane is (infrastructure layer) | §3 |
 | Concurrency, hot-potato loops, context hydration | §3.1 |
 | Root bug class (two parallel state systems) | §4 |
@@ -913,6 +930,134 @@ Row in `DETOUR_DELIVERY_ORDER_TABLE`: `concept_gate` (`post_decide_front_door`, 
 `scorecards_discovery`). **Do not** fix glossary steals with prompt exceptions — extend authority
 + delivery ladder + regression (`test_glossary_detour_routing.py`).
 
+#### Multi-turn stream contract (every sole-continue kind) {#21-multi-turn-stream-contract-every-sole-continue-kind}
+
+**This is the portable pattern for multi-turn agent work — not a cost-out special case.**
+
+Every multi-turn product surface (cost, cyber, drafting, realization, project, scorecards, risk catalog,
+outcome/value, …) is a **stream**: a registered `active_task.kind`, a closed **phase** enum, and typed
+**entity pins** in `payload`. Tools and classifier labels run *under* that stream; they do not replace it.
+
+Without this contract, each agent invents its own stickiness (flags, ambient `last_read_*`, re-resolve by
+name, wordlists). Failures look different per paint job but share one disease: **continue turns re-enter
+greenfield dispatch**.
+
+##### Four invariants (every turn on a sole-continue stream)
+
+| # | Invariant | Means | Forbidden |
+|---|---|---|---|
+| **1** | **Phase owns dispatch** | After the entity is pinned, do not re-run entity resolve / list openers / ambient seed as if the stream just opened | `resolve_*` + “which X?” while phase ∈ continue set |
+| **2** | **Pin owns identity** | Authoritative entity ids live only on `active_task.payload` (`workflow_id`, `project_id`, `run_id`, …) | Ambient `last_read_*` as *sole* authority for “which entity they meant this turn” |
+| **3** | **LLM owns continue meaning** | Sizing, verify chips, refine, detour vs continue labels — bounded classifier / assessor with ledger hydration | Regex/wordlist as sole arbiter of what the user meant on a continue turn |
+| **4** | **Finite grammar only when armed** | Bare `1` / `yes` / path digits are code-owned **only** when `pending_question` / ordinal stream / path menu was set this session | Treating every digit as inventory pick while a different stream is live |
+
+Escape from sole-continue is **classifier-owned**: `task_intent ∈ {detour, new_task, abandon, handoff}`
+(plus product supersede via exclusive turn owner / delivery-order — §2.1 discovery detour). Code does not
+keyword-guess “user changed topic.”
+
+##### Turn shape (portable)
+
+```text
+User message on sole-continue stream
+  → safety + unified router (hydrate ledger: kind, phase, pins)
+  → decide_turn / exclusive owner (kind sticky unless detour/new_task/abandon)
+  → stream phase gate:
+        phase ∈ ENTITY_RESOLVE phases  → resolve / pick / open list (code)
+        phase ∈ CONTINUE phases        → pin from ledger + LLM assessor / tools under stream
+        pending finite pick armed      → code ordinal / path digit only
+  → code-owned render (numbers, tables, next chips)
+  → ledger phase / pin updates only via decide_turn transitions
+```
+
+**One-shot tools** (list, read, marketplace browse) may complete without a kind. The moment the product
+needs **follow-up on the same entity** (“more on 2”, “volume is 10k”, “verify that”), code **must**
+`begin_task` / update phase + pins — transcript + “we already called a tool” is not ownership (§0.1.2).
+
+##### Phase tables (reference shape — port your kinds)
+
+Reference implementation: `api/services/conversation_control/multi_turn_stream_contract.py`.
+
+| Helper | Role |
+|---|---|
+| `stream_kind` / `stream_phase` | Read sole-continue kind + phase from context mirror of ledger |
+| `phase_allows_entity_resolve(kind, phase, has_ledger_pin=…)` | **Gate:** True only in open/pick phases; False once continue phase or pin+unknown phase |
+| `context_may_seed_entity_resolve(…, generic_howto=…)` | Ambient last_read / inventory seed; **False** for bare product how-to without list pick |
+| `ledger_entity_pins` / `has_ledger_entity_pin` | Typed pins from payload only |
+| `continue_must_use_cognition` | Continue phase → LLM/assessor path required |
+| `task_intent_allows_supersede` | Classifier escapes |
+
+Illustrative phase sets (Bot0 reference — adopters map their own closed enums):
+
+| Kind (example) | Entity-resolve phases | Continue phases (no re-resolve) |
+|---|---|---|
+| `cost_out` | `open`, `entity_pick` | `anchored`, `sizing`, `estimated` |
+| `cyber_risk_assessment` | `anchor` | `discover`, `project`, `verify`, `score`, … |
+| `drafting` | `awaiting_domain`, `awaiting_details` | `drafting`, `refining`, `ready_to_build` |
+| `realization_intake` | `open`, `entity_pick`, `anchor` | `collecting`, `confirming`, `export` |
+| `scorecard_interrogate` | `active` (pick run) | `detail`, `complete` |
+
+**Unknown phase + pin → fail closed (no re-resolve).** Prefer explicit continue sets over “empty phase means open.”
+
+##### Cognition vs execution on a continue turn
+
+| Concern | Owner | Mechanism |
+|---|---|---|
+| “Still on this cost / cyber / draft?” | Classifier + ledger | `task_intent=continue` + sole-continue kind sticky |
+| “Which workflow/project/run?” | **Code** | Payload pin; multi-hit → code pick list (never display-name sole hit when ambiguous) |
+| “What do they want next?” (size, verify, refine) | **LLM** assessor / fork classifier | Hydrate pins + last-shown chips + short recent context; enum / structured fields out |
+| Path menu `1`/`2` or IR `yes` | **Code** | Finite grammar only if menu/gate was armed |
+| User-visible numbers / tables | **Code** | Tool result → renderer; strip LLM tables |
+
+**Do not** grow synonym lists for “estimate”, “volume”, “verify” on continue turns — feed structured memory
+and let the assessor label. See also 
+(three memory bands: durable control, turn projection, transcript).
+
+##### Bootstrap for each new multi-turn agent / kind
+
+When adding a sole-continue stream (or adopting an incomplete peer), complete **all** of:
+
+1. **Register kind** in the closed sole-continue set + exclusive-owner map (not free-text from RAG).
+2. **Closed phase enum** + document which phases allow entity resolve vs continue cognition.
+3. **Typed pin fields** on `payload` (ids only; names are display mirrors).
+4. **Phase gate at dispatch** — call the portable helpers (or port them); no greenfield resolve on continue.
+5. **Continue path** — one assessor / tool loop under the stream; no parallel “ambient last_read → open card.”
+6. **Finite picks** — arm `pending_question` / ordinal purpose when showing a numbered list; resolve digits only then.
+7. **Terminal complete** — `complete_task` clears kind; do not leave sticky flags without a kind.
+8. **Tests** — pin: (a) open → resolve → pin, (b) continue does **not** re-ask identity, (c) detour escapes,
+   (d) bare how-to does **not** steal via last_read, (e) armed `1` hits the right stream.
+
+**Bot0 pilot:** `cost_out` + `cost_out_turn.py` (consumes `multi_turn_stream_contract`). **Adopt-on-touch:**
+any edit to cyber / realization / drafting / project / scorecards / risk-catalog continue handlers must
+route through the same gates — do not ship a second private stickiness model.
+
+##### Anti-patterns specific to streams (do not generate)
+
+| Anti-pattern | Symptom | Fix |
+|---|---|---|
+| Re-resolve by name after pin | “Keynote” substring re-opens workflow list mid-sizing | Phase gate + pin |
+| `last_read_workflow_id` alone drives continue | Generic “how do I cost a workflow?” anchors wrong id | `context_may_seed_entity_resolve` + eligibility helpers |
+| Word-boundary-free substring on catalog text | `process` matches inside `processes` → false list hit | Structural gates only; LLM for meaning |
+| Sticky flag without `active_task.kind` | Follow-up `1` goes to inventory, not cost | Always write kind + phase when stream starts |
+| Per-agent “just this one short-circuit” | Cost fixed; peer streams still flaky | Portable contract + adopt-on-touch |
+| Tool success ⇒ ownership | Transcript says we listed risks; next turn steals to glossary | `begin_task(kind=…)` with pins |
+
+##### Related contracts (compose; do not collapse)
+
+| Contract | Owns | Stream contract owns |
+|---|---|---|
+| Exclusive turn owner (#10i) | *This message’s* delivery leaf | *Follow-up* turns after pin |
+| Delivery-order / discovery detour | Front-door supersede when labels say detour | Stickiness when labels say continue |
+| Ordinal / pending_question | Which numbered list is armed | Whether resolve is allowed at all this phase |
+| Multi-step IR pipeline (§12) | Elicitation stages inside a setup kind | Outer phase/pin/continue gate around that IR |
+| Memory projection (turn_memory) | What to hydrate into classifiers | Authority of pins vs transcript |
+
+**Canonical Bot0 epics:** 
+· 
+· **** (Getting to A — adopt-on-touch + ratchets).
+**Ratchets:** `test_multi_turn_stream_contract.py` · `test_cost_out_turn_phase_dispatch.py` ·
+`test_delivery_order_contract.py` · `test_context_pin_hijack_ratchets.py`
+· (planned) `test_sdk_grade_a_stream_adoption.py`.
+
 #### Your integration substrate (you provide; SDK does not prescribe vendor)
 
 | Concern | Portable rule |
@@ -940,7 +1085,7 @@ Bot0 implementation playbook (monorepo only) for the reference mapping.
 1. **This SDK's five invariants + §2.1 guardrails** beat convenience copies in specialist code.
 2. **Typed contracts beat prose** — if a boundary breaks three times, write the schema + validator + test
    before the fourth patch.
-3. **Bot0 monorepo:** `AGENTS.md` is the full authority for repo-specific enforcement.
+3. **Bot0 monorepo:** `` is the full authority for repo-specific enforcement.
 
 ---
 
@@ -1596,6 +1741,11 @@ responsibility** alongside the ledger — same as registering classifiers before
 ---
 
 ## 12. Multi-turn setup — IR pipeline template
+
+**Compose with §2.1 multi-turn stream first.** The stream contract owns *outer* turn ownership: kind, phase,
+entity pin, when resolve vs continue cognition is legal. This section owns *inner* setup elicitation once a
+setup kind is active (typed IR, validators, Stage 0–7). Do not implement IR stages while still re-resolving
+identity every turn — that is A14, not an IR bug.
 
 Multi-turn setup flows must not spawn parallel context-flag state machines. Use ledger `kind` + `payload`
 holding a typed IR and validator-driven elicitation.

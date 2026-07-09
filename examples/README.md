@@ -1,11 +1,10 @@
-# Examples — Conversation Control Plane SDK
+# Examples
 
-Thin, **sanitized** samples for adopters. They are not the full Bot0 product — no tenant
-data, no internal backlogs, no marketplace wiring.
+Sanitized **design stubs** only. No tenant data, no private product engines.
 
-| Example | SDK pattern | Status |
+| Example | Pattern | Status |
 |---|---|---|
-| [`cyber_risk_assessment/`](cyber_risk_assessment/) | Bounded setup + async specialist (§9.1) | **Design stub** — first SDK-shaped agent Bot0 is building toward |
+| [`cyber_risk_assessment/`](cyber_risk_assessment/) | Bounded multi-turn specialist + async job ([SDK §9.1](../docs/conversation-control-plane-sdk.md) + [§2.1 multi-turn stream](../docs/conversation-control-plane-sdk.md#21-multi-turn-stream-contract-every-sole-continue-kind)) | Design stub |
 
-Copy the **integration shape** (ledger `kind`, `TaskTransition`, `decide_turn` branch,
-typed IR). Implement your own prompts, tools, and persistence adapters.
+**Copy:** ledger `kind`, phases, `TaskTransition`, `decide_turn` branch, multi-turn pin/phase gates.  
+**Do not copy:** anything that would appear only in a private monorepo (scoring formulas, backlogs, real agents).

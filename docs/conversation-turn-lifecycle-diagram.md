@@ -30,6 +30,12 @@ that read/write that state and pick the delivery leaf — one meta-layer, not tw
 **Rule:** host short-circuits that ignore sealed `task_intent` / exclusive owner (e.g. early cost sole-continue)
 are **control-plane delivery bugs**, not agent tool-choice bugs.
 
+**Multi-turn sole-continue (does not change this diagram’s stage order):** once
+`active_task.kind` is a sole-continue stream and an entity is **pinned**, later turns stay on the same
+path — **phase-gated** entity resolve, **ledger pins** for identity, **LLM** for continue meaning
+([SDK §2.1 multi-turn stream](conversation-control-plane-sdk.md#21-multi-turn-stream-contract-every-sole-continue-kind)).
+This is dispatch discipline inside active-flow continue, not a second state machine.
+
 
 **Cognition / execution on this map (2026-07-07).** ▨ blocks emit labels (intent, `user_wants`,
 `authoring_maturity`, gaps). ▣ blocks validate enums and run transitions. **Semantic readiness** (how good is

@@ -217,6 +217,8 @@ EXCLUSIVE_TURN_OWNER_PRIORITY: tuple[str, ...] = (
     "draft",
     "cyber_risk",
     "realization",
+    "outcome_value",
+    "scorecard",
     "surface_read",
     "advisor",
     "product_concept",
@@ -231,6 +233,8 @@ ACTION_EXCLUSIVE_OWNERS = frozenset({
     "draft",
     "cyber_risk",
     "realization",
+    "outcome_value",
+    "scorecard",
     "surface_read",
     "advisor",
 })

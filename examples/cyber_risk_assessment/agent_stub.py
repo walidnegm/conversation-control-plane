@@ -28,7 +28,14 @@ class AgentTurnResult:
 
 
 class CyberRiskAssessmentAgent:
-    """Bounded specialist — terminal COMPLETE clears stickiness."""
+    """Bounded specialist — terminal COMPLETE clears stickiness.
+
+    Design stub only: no production scoring, no tenant data. Host must:
+    - ``begin_task(kind=cyber_risk_assessment)`` when starting
+    - pin entity ids on the payload after resolve
+    - gate continue turns (no greenfield re-resolve) — see multi_turn_stream_contract
+    - write control keys only via ``decide_turn`` / ledger APIs
+    """
 
     agent_id = "cyber_risk_assessment"
     task_kind: Literal["bounded", "unbounded"] = "bounded"
@@ -47,8 +54,13 @@ class CyberRiskAssessmentAgent:
         thread_id: Optional[str] = None,
     ) -> AgentTurnResult:
         """Execute one turn — returns transition intent; decide_turn writes ledger."""
-        payload = (context or {}).get("active_task", {}).get("payload") or {}
+        active = (context or {}).get("active_task") or {}
+        payload = active.get("payload") if isinstance(active, dict) else {}
+        if not isinstance(payload, dict):
+            payload = {}
         ir = CyberRiskAssessmentIR.model_validate(payload.get("ir") or {})
+        # Pin display only — never re-resolve identity from ambient last_read here.
+        pinned_wf = str(payload.get("workflow_id") or "").strip()
 
         if ir.phase == AssessmentPhase.COMPLETE:
             return AgentTurnResult(
@@ -60,15 +72,18 @@ class CyberRiskAssessmentAgent:
         if ir.phase == AssessmentPhase.ANCHOR and (query or "").strip():
             ir.phase = AssessmentPhase.DISCOVER
 
-        next_phase = ir.next_phase()
         transition = TaskTransition(
             intent="continue",
             phase=ir.phase.value,
             awaiting="in_progress",
         )
+        pin_note = f" (pinned `{pinned_wf}`)" if pinned_wf else ""
         return AgentTurnResult(
             answer={
-                "answer": f"Cyber assessment stub — phase **{ir.phase.value}**.",
+                "answer": (
+                    f"Cyber assessment **stub** — phase **{ir.phase.value}**{pin_note}. "
+                    "Not production product code."
+                ),
                 "sources": ["cyber_risk_assessment_stub"],
                 "blocks": [],
             },

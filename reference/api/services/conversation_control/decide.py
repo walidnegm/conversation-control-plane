@@ -349,9 +349,15 @@ def decide_turn(
             )
             return plan
         else:
-            clear_pending_question(
-                db, tenant_id, conversation_id, reason="superseded",
+            # Systemic: ordinal_stream_contract owns same-turn open vs supersede.
+            from api.services.conversation_control.ordinal_stream_contract import (
+                should_supersede_pending_on_non_pick as _should_super_pq,
             )
+
+            if _should_super_pq(current_pending_q, query, db=db):
+                clear_pending_question(
+                    db, tenant_id, conversation_id, reason="superseded",
+                )
 
     # --- Step 2.75: referential artifact binding (CAQ unified) ---
     # When the ledger holds an active artifact (draft, etc.), short referential

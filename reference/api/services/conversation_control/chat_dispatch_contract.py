@@ -26,6 +26,7 @@ class ChatDispatchContractError(Exception):
 PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "pending_question_pick",
     "pending_workflow_pick",
+    "pending_entity_pick",
     "ordinal_read",
     "reset",
     "catalog_role",
@@ -47,6 +48,12 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     # Greenfield multi-turn starts (must call sole_continue_blocks_greenfield_start)
     "cyber_risk_assessment_start",
     "cyber_risk_assessment_intake",
+    # Cost-out multi-turn leaf (phase-gated owner in cost_out_turn.py)
+    "cost_out_anchor",
+    "cost_out_sizing",
+    "cost_out_fork",
+    "cost_out_sparse",
+    "cost_out_estimate",
 })
 
 # S4 collapse — post-decide deliveries (decide_turn runs first).
@@ -59,6 +66,12 @@ POST_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "project_interrogation",
     "workflow_simulation_entry",
     "post_save_status",
+    "inventory_entity_resolve",
+    "cost_out_anchor",
+    "cost_out_sizing",
+    "cost_out_fork",
+    "cost_out_sparse",
+    "cost_out_estimate",
 })
 
 # S4/S6 — must never skip decide_turn (routing trace must say post-decide delivery).
@@ -70,6 +83,7 @@ POST_DECIDE_ONLY_DISPATCHES: FrozenSet[str] = frozenset({
     "project_interrogation",
     "workflow_simulation_entry",
     "authoring_gate_proceed",
+    "inventory_entity_resolve",
 })
 
 
