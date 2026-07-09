@@ -77,8 +77,11 @@ try:
         active_task_kind as active_task_kind,
         is_sole_continue_kind as is_sole_continue_kind,
     )
-except Exception:  # noqa: BLE001 — public extract / standalone use
-    pass
+except ImportError:
+    # Public extract / standalone: use module-local kind registry above.
+    _USING_LOCAL_KIND_REGISTRY = True
+else:
+    _USING_LOCAL_KIND_REGISTRY = False
 
 # Phases where *entity resolve / pick* is allowed (kind → frozenset).
 # Anything not listed is treated as "continue" (no ambient re-resolve).
