@@ -138,7 +138,27 @@ def decide_turn(
             cost_estimate_request = bool(live_route.get("cost_estimate_request"))
 
     # Live agent cost preview — LLM-owned signal on IntentRoute (not a keyword gate).
+    # Multi-turn: kind=cost_out continues without clearing; otherwise open cost_out.
     if cost_estimate_request:
+        from api.services.conversation_control.task_pin_contract import (
+            COST_OUT_KIND,
+            ensure_cost_out_task,
+        )
+
+        if (
+            isinstance(current_active, dict)
+            and current_active.get("kind") == COST_OUT_KIND
+        ):
+            active_task_obj = ActiveTask(**{
+                k: v for k, v in current_active.items()
+                if k in ("agent", "phase", "awaiting", "pending_ref", "kind", "payload")
+            })
+            return TurnPlan(
+                agent="bot0",
+                mode="continue",
+                task=active_task_obj,
+                reason="cost_out sole-continue (active_task.kind=cost_out)",
+            )
         if current_active:
             try:
                 complete_task(
@@ -149,10 +169,19 @@ def decide_turn(
                 )
             except Exception:  # noqa: BLE001
                 pass
+        try:
+            ensure_cost_out_task(
+                db,
+                tenant_id,
+                conversation_id,
+                phase="open",
+            )
+        except Exception:  # noqa: BLE001
+            pass
         return TurnPlan(
             agent="bot0",
             mode="answer",
-            reason="LLM classified live agent cost estimate; cleared prior task for costing tool",
+            reason="LLM classified live agent cost estimate; opened cost_out task",
         )
 
     # S2 coherence epic: demote discovery to ledger task.
@@ -513,6 +542,67 @@ def decide_turn(
         _maybe_log_conflict(
             db, tenant_id, conversation_id, plan, live_route_intent,
             live_route_layer, "realization_intake continue",
+        )
+        return plan
+
+    # --- Step 3.4c: ledger-tracked cyber risk assessment ---
+    if _active_kind == "cyber_risk_assessment":
+        active_task_obj = ActiveTask(**{
+            k: v for k, v in current_active.items()
+            if k in ("agent", "phase", "awaiting", "pending_ref", "kind", "payload")
+        })
+        perceived = None
+        intent = None
+        intent_source = "heuristic"
+        try:
+            perceived = _perceive_relative_intent(
+                db, tenant_id, query=query,
+                active_task=current_active, suspended_tasks=suspended,
+                messages=messages, unified_signal=unified_signal,
+            )
+            intent, intent_source = perceived.intent, perceived.source
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "cyber_risk_assessment classifier failed → continue",
+                exc_info=True,
+            )
+
+        if intent == "abandon":
+            complete_task(db, tenant_id, conversation_id, agent="bot0")
+            plan = TurnPlan(
+                agent="bot0",
+                mode="command",
+                reason=f"cyber_risk_assessment abandoned ({intent_source})",
+            )
+            _maybe_log_conflict(
+                db, tenant_id, conversation_id, plan, live_route_intent,
+                live_route_layer, "cyber_risk_assessment abandoned",
+            )
+            return plan
+
+        _detour_conf = float(getattr(perceived, "confidence", 0.0) or 0.0)
+        if intent == "detour" and _detour_conf >= 0.5:
+            plan = TurnPlan(
+                agent="bot0",
+                mode="detour",
+                task=active_task_obj,
+                reason=f"cyber_risk_assessment detour ({intent_source})",
+            )
+            _maybe_log_conflict(
+                db, tenant_id, conversation_id, plan, live_route_intent,
+                live_route_layer, "cyber_risk_assessment detour",
+            )
+            return plan
+
+        plan = TurnPlan(
+            agent="bot0",
+            mode="active_task",
+            task=active_task_obj,
+            reason="cyber risk assessment in progress",
+        )
+        _maybe_log_conflict(
+            db, tenant_id, conversation_id, plan, live_route_intent,
+            live_route_layer, "cyber_risk_assessment continue",
         )
         return plan
 

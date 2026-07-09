@@ -124,6 +124,93 @@ def recent_post_save_setup_offered(
     return False
 
 
+# Short clarification after a code-owned scorecard / monetization message —
+# structural turn ownership, not free-text NL routing.
+_CLARIFY_LAST_ASSISTANT_RE = re.compile(
+    r"^(?:tell me more(?: about(?: what you mean| that| this)?)?|"
+    r"what do you mean(?: by that)?|"
+    r"what does that mean|"
+    r"why did you (?:do|set|say) that|"
+    r"explain that|"
+    r"huh\??|"
+    r"confused)\s*[.?!]*$",
+    re.IGNORECASE,
+)
+
+_MONETIZATION_ASSISTANT_MARKERS = (
+    "capacity monetization",
+    "as the capacity monetization type",
+    "monetization type",
+    "saved **cost center**",
+    "set **capacity monetization**",
+    "workflow_type",
+)
+
+
+def looks_like_clarify_last_assistant(query: str) -> bool:
+    """True for short 'what do you mean' deictics (finite shape, not NL intent)."""
+    q = (query or "").strip()
+    if not q or len(q) > 80:
+        return False
+    return bool(_CLARIFY_LAST_ASSISTANT_RE.match(q))
+
+
+def last_assistant_was_monetization_setup(
+    messages: list[dict[str, Any]] | list[tuple[str, str]] | None,
+) -> bool:
+    for msg in reversed(_messages_as_dicts(messages)[-4:]):
+        if msg.get("role") != "assistant":
+            continue
+        text = (msg.get("content") or "").lower()
+        return any(m in text for m in _MONETIZATION_ASSISTANT_MARKERS)
+    return False
+
+
+def build_post_save_monetization_clarification(
+    messages: list[dict[str, Any]] | list[tuple[str, str]] | None,
+) -> str | None:
+    """Re-explain the last capacity-monetization save in plain language."""
+    if not last_assistant_was_monetization_setup(messages):
+        return None
+    last = ""
+    for msg in reversed(_messages_as_dicts(messages)[-4:]):
+        if msg.get("role") == "assistant":
+            last = str(msg.get("content") or "").strip()
+            break
+    if not last:
+        return None
+
+    from api.services.workflow_type_catalog import WORKFLOW_TYPE_SPECS
+
+    matched = None
+    low = last.lower()
+    for spec in WORKFLOW_TYPE_SPECS:
+        if spec.value.replace("_", " ") in low or spec.label.lower() in low:
+            matched = spec
+            break
+    if matched is None:
+        return (
+            "Sorry that was abrupt — I had just written a **Capacity monetization** "
+            "field on the saved workflow (how Bot0 turns freed capacity into $ on the "
+            "scorecard). That was **not** a full scorecard walkthrough.\n\n"
+            "If you were trying to open or inspect a workflow from a list (e.g. **#1**), "
+            "say so and I'll go back to that. If you want the monetization options "
+            "explained, reply **1–4** after I show the menu, or ask \"what are the "
+            "capacity monetization types?\""
+        )
+    return (
+        f"Sorry for the abrupt save — I set **Capacity monetization** to "
+        f"**{matched.label}** on that workflow.\n\n"
+        f"**What that means:** {matched.one_liner}\n\n"
+        f"{matched.explanation}\n\n"
+        f"**Typical for:** {matched.examples}\n\n"
+        "That field only affects how the scorecard monetizes capacity — it is **not** "
+        "a full scorecard report, and it was **not** starting a risk assessment or "
+        "new draft. If you meant list item **#1** instead of monetization option 1, "
+        "tell me and we'll treat the next pick as a workflow choice."
+    )
+
+
 def post_save_setup_owns_turn(
     db: Any,
     tenant_id: str,
@@ -133,7 +220,13 @@ def post_save_setup_owns_turn(
     messages: list[dict[str, Any]] | list[tuple[str, str]] | None,
     conversation_id: str | None,
 ) -> tuple[bool, str | None]:
-    """Return (owns, workflow_id) when this turn should patch the saved scorecard."""
+    """Return (owns, workflow_id) when this turn should patch the saved scorecard.
+
+    Narrow ownership (conv_5c5cf36f): bare ``1`` after a **workflow pick** must
+    not be treated as Capacity Monetization menu item 1 (cost center). Digits
+    and 1–4 type picks only own when we **recently offered** post-save setup, or
+    when a longer metric paste arrives after that offer.
+    """
     q = (query or "").strip()
     if not q or not db or not tenant_id:
         return False, None
@@ -143,6 +236,25 @@ def post_save_setup_owns_turn(
         return False, None
     if _builder_mid_authoring_open(db, tenant_id, conversation_id):
         return False, None
+
+    # Ledger workflow / scorecard pick beats post-save digit ownership.
+    try:
+        from api.services.conversation_control.pending_question import (
+            read_pending_question,
+        )
+
+        pending = read_pending_question(context if isinstance(context, dict) else None)
+        if isinstance(pending, dict):
+            kind = str(pending.get("kind") or "").strip().lower()
+            if kind in {
+                "workflow_pick",
+                "scorecard_pick",
+                "list_pick",
+                "entity_pick",
+            }:
+                return False, None
+    except Exception:  # noqa: BLE001
+        pass
 
     wf_id = resolve_post_save_workflow_id(context, messages)
     if not wf_id:
@@ -171,6 +283,12 @@ def post_save_setup_owns_turn(
             return False, None
     except Exception:  # noqa: BLE001
         pass
+
+    # Only claim digit/menu turns when post-save setup was just offered.
+    # Without this, any "1" after a list/workflow_pick silently patches
+    # workflow_type=cost_center (monetization option 1) — wrong activity.
+    if not recent_post_save_setup_offered(messages):
+        return False, None
 
     from api.services.workflow_scorecard_fields import parse_workflow_type_pick
 
@@ -331,6 +449,21 @@ def post_save_workflow_status_eligible(
     ctx = context if isinstance(context, dict) else {}
     active = ctx.get("active_task") or {}
     if isinstance(active, dict) and (active.get("kind") or "") == "outcome_value_setup":
+        # S8: require a real workflow pin on the O&V payload (not bare thread pin).
+        from api.services.conversation_control.task_pin_contract import (
+            OUTCOME_VALUE_KIND,
+            payload_dict,
+            workflow_pin,
+        )
+
+        if (active.get("kind") or "") == OUTCOME_VALUE_KIND:
+            pin = workflow_pin(ctx) or str(
+                payload_dict(active).get("workflow_id")
+                or (payload_dict(active).get("ir") or {}).get("workflow_id")
+                or "",
+            ).strip()
+            if not pin:
+                return False
         return True
     return recent_post_save_setup_offered(messages)
 
@@ -438,9 +571,12 @@ def build_post_save_workflow_status_response(
 
 
 __all__ = [
+    "build_post_save_monetization_clarification",
     "build_post_save_setup_response",
     "build_post_save_workflow_status_response",
     "collect_workflow_scorecard_allowed_numbers",
+    "last_assistant_was_monetization_setup",
+    "looks_like_clarify_last_assistant",
     "post_save_setup_owns_turn",
     "post_save_workflow_status_eligible",
     "resolve_post_save_workflow_id",

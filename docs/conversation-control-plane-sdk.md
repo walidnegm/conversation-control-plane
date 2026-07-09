@@ -114,8 +114,8 @@ frameworks excel at *how a specialist runs*; this contract excels at *who owns t
 
 | Pillar | What it is | Why it matters |
 |---|---|---|
-| **Publishable ledger** | Every turn, control mutation, and handoff is a **DB record** — `active_task`, `suspended_tasks`, `pending_switch`, `_control_revision`, `_turn_claim`, platform events | Server crash mid-thought does not erase state. Audit *why* routing chose X: the proof is in the ledger, not a vanished in-memory checkpoint |
-| **Control plane** | `decide_turn` + `ledger.py` — the **only writer** of control keys; specialists **declare** `TaskTransition`, they never route | The LLM does not fragile-call `route_to_billing()`. It emits a structured handoff *request*; the control plane **enforces** Switch/Stay, precedence, TTL, and single-writer rules |
+| **Publishable ledger** | Every turn, control mutation, and handoff is a **DB record** — `active_task`, `suspended_tasks`, `pending_switch`, `_control_revision`, `_turn_claim`, platform events | Server crash mid-thought does not erase state. Audit *why* routing chose X: the proof is in the ledger, not a vanished in-memory checkpoint. **Not a second product** — it is the control plane’s state of record (see §0.1.2 one-liner) |
+| **Control plane** | `decide_turn` + `ledger.py` — the **only writer** of control keys; specialists **declare** `TaskTransition`, they never route | The LLM does not fragile-call `route_to_billing()`. It emits a structured handoff *request*; the control plane **enforces** Switch/Stay, precedence, TTL, and single-writer rules. **Includes** the ledger — rules + state together |
 | **Strict contract** | `ConversationalAgent`, `TurnPlan`, typed envelopes, five invariants, regression harness | Human teams and auto-coders integrate against **types and precedence**, not tribal knowledge of a tangled graph — fewer silent breaks on every new agent |
 
 ### 0.1.1 Three-layer model of an agentic system
@@ -186,6 +186,113 @@ execution — not either/or.
    different questions (§0.4).
 
 Full compose guide: **§14**. Hydration detail: **§3.1 Q3**.
+
+### 0.1.2 Who owns what — front door, multi-agent ownership, memory (expectations)
+
+**One-liner (control plane ↔ ledger):**  
+*The ledger is the control plane’s state of record; the control plane is the rules and code that
+read/write that state and pick the delivery leaf. Together they are one multi-agent chat meta-layer —
+not two products.*
+
+**Keep these silos from re-merging.** Bot0 product chat is a multi-agent system with a
+**ledger-native meta layer**. The table is the contract for humans and auto-coders.
+
+| Concern | Owner | What it is | Does *not* own |
+|---|---|---|---|
+| **Front door** | `bot0` **agent** + `bot0.chat()` entry | HTTP/SSE entry, guardrails shell, tool loop when delivery owner is `default`, product Q&A (`list_risks`, marketplace, …) | Writing `active_task` / `pending_switch` (single-writer ledger); inventing multi-turn stream ownership |
+| **Multi-agent turn ownership** | **Control plane** | Unified router labels → sealed authorities → **`select_exclusive_turn_owner`** → `decide_turn` → `TurnPlan` | How a specialist implements tools/IR mid-turn |
+| **Sole-continue streams** | **Ledger** `active_task.kind` | e.g. `cost_out`, `cyber_risk_assessment`, `drafting` — own follow-ups until `task_intent` is detour / new_task / abandon | Answering product detours (risk catalog learning, glossary) while still "sticky" if labels say detour |
+| **Delivery leaves** | **Control plane + front-door dispatch** | Exclusive owner ids: `cost_out`, `draft`, `cyber_risk`, `discovery`, `concept_gate`, `default`, … | Specialist private state machines |
+| **Specialist execution** | **Agent architecture** | Builder StateGraph, advisor tool-loop, cyber subgraph, personal_score phases | Cross-agent foreground ownership in shared chat |
+| **Routing / working memory** | **Ledger only** | `active_task.kind` + `payload`, pins, gates | Vector RAG, prompt body text |
+| **Classifier hydration** | **Code** (from ledger + bounded transcript) | `{active_task}`, `{drafting_context}`, recent context | Authority — must not invent pins |
+| **Product / domain memory** | **Specialist + domain DB** | Risk catalog rows, workflow pending, assessments, tenant corpora | Turn ownership |
+| **Retrieval memory** | **Corpora / RAG** | `product_knowledge`, embeddings | Control keys |
+| **Safety shell** | **Guardrails** (pre/post turn) | ABUSIVE / NSFW / INJECTION; topicality soft for free-form bot0 | Exclusive owner (must not hard-steal delivery from sealed labels) |
+
+**Turn pipeline (product chat) — one path, two architecture docs:**
+
+```text
+User message
+  → safety shell (guardrails)                    [entry shell — not ledger]
+  → unified router + authorities                 [control plane — cognition → enums]
+  → select_exclusive_turn_owner                  [control plane — delivery]
+  → decide_turn / TurnPlan                       [control plane — agent id]
+  → specialist handle_turn OR bot0 tool loop     [agent architecture]
+  → ledger write via decide_turn / declared transitions only
+```
+
+**Critical expectation (multi-agent):**  
+An early short-circuit in the front-door host (e.g. "cost sole-continue before exclusive owner")
+that **ignores sealed `task_intent=detour`** is a **control-plane delivery bug**, not an "agent
+picked the wrong tool" bug. Cognition labels without exclusive-owner discipline are insufficient.
+
+#### Corpus vs tools vs `kind` — three layers, one principle
+
+**One-liner:** *Corpus answers what the product **is**; tools answer what code can **do** this turn;
+`active_task.kind` answers what **this conversation is currently doing** across turns. Only the last
+is multi-turn ownership. Transcript, RAG hits, and “we already called a tool” are not ownership.*
+
+These three are often collapsed into “intelligence.” They must stay separate or glossary / product
+essays re-steal action and catalog follow-ups (similarity ≈ intent; history without a ledger kind).
+
+| Layer | Answers | Owner artifacts | Dynamic how? | Does *not* decide |
+|---|---|---|---|---|
+| **Product corpus** | Facts: what is X, how does a feature work | `product_knowledge`, TSX explainers, RAG / concept_gate packaging | Content evolves with product docs | Who owns the **next** reply when a multi-turn stream is live |
+| **Tools** | Capabilities: list, detail, cost, assess… | `tool_registry` + code dispatch (`list_risks`, `get_risk_detail`, …) | Registry grows; selection ranks per turn | Sole-continue stickiness by itself — a successful tool call does **not** open a kind |
+| **`active_task.kind`** | Work **stream** mid-flight until complete / detour / new_task | Ledger + `SOLE_CONTINUE_KINDS` + typed **pins** in payload | **Which** kind is active and pins change per conversation; the **registry of kinds** is a closed enum (extend by adding a kind, not free-text) | Product encyclopedias; inventing identity from display names |
+
+**How they compose (step-wise, not “corpus picks kind”):**
+
+1. **Cognition (LLM)** — router / classifier labels start / continue / detour (and action flags). May be
+   hydrated with ledger facts + bounded recent transcript. **May not** invent pins or seal delivery alone.
+2. **Execution — start** — code **begins** `active_task.kind` when a multi-turn stream needs ownership;
+   may pin entity ids after resolve or after a tool returns authoritative ids.
+3. **Execution — continue** — sole-continue + exclusive owner: concept_gate / discovery lose while that
+   kind owns and `task_intent` is not detour / new_task / abandon. Tools run **under** the stream.
+4. **Corpus** — only when no action/stream owns the turn, or the user explicitly detours to pure
+   definitional product learning. Retrieval never overrides a live sole-continue kind.
+
+**Kinds are intentionally “static” names.** Like state-machine states: `cost_out`, `drafting`,
+`cyber_risk_assessment`, … are a **finite registry** so delivery gates and tests stay closed. What is
+dynamic is *whether* a kind is active, its **phase**, and **pins** (`workflow_id`, `risk_ids`, …). A
+product corpus must **not** invent free-text kinds from embeddings — that reintroduces fuzzy multi-winner
+races. New multi-turn product surfaces get a **registered kind** (or explicit phases on an existing one).
+
+**Tools ≠ kind (correlated, not identical):**
+
+| | Tools | Kind |
+|---|---|---|
+| Cardinality | Many, composable per turn | At most one sole-continue stream foreground |
+| Horizon | One call / one result | Turns N…N+k |
+| After a successful call | Result may live in transcript | Kind exists **only if code wrote** `begin_task` / phase + pins |
+| One-shot vs stream | One-shot list/read may never need a kind | Multi-turn follow-up (“more on id X”) needs kind + pin |
+
+**Anti-pattern (do not generate):** treat “tool was used last turn” or “RAG grounded this phrase” as
+sole-continue. That is **transcript/RAG authority** — forbidden for control keys (§0.1.1 Layer 3).
+History feeds **classifier hydration**; **ledger kind + pins** seal multi-turn ownership.
+Bot0 multi-turn substrate detail: [chat-complete-multi-turn-task-contract.md](chat-complete-multi-turn-task-contract.md).
+
+**Risk catalog learning (not TCO, not cyber assessment *perform*):**
+
+- **Start / open ask** (e.g. *“Show me the latest risks for agents”*): seal as RISK_CATALOG_LEARNING
+  labels — `cost_estimate_request=false`, `task_intent=detour` when leaving another stream,
+  exclusive owner **`default`** (Bot0 + `list_risks` / `get_risk_detail`). Do **not** sole-continue
+  `cost_out` or open TCO intake.
+- **Multi-turn (shipped):** successful `list_risks` / `get_risk_detail` begin or update ledger
+  ``kind=risk_catalog_learning`` with pins `recent_risk_ids` / `risk_id` (phase `browsing`|`detail`).
+  Sole-continue maps to exclusive owner **`default`** (blocks concept_gate/discovery while
+  `task_intent` is continue). Follow-ups like *“tell me more about ENT-10”* stay orchestrator/tools.
+- **Packaging backstop:** structural catalog risk_id tokens (`PREFIX-N`) make
+  `concept_packaging_query_eligible` false (optional pin/DB resolve) — finite-grammar id shape, not
+  phrase laundry lists. Reg: `test_risk_catalog_learning_multiturn.py`.
+
+**Naming:** "AI control plane" in industry often means *governance* (identity, policy). This SDK's
+**conversation control plane** means *chat session ownership + ledger*. Do not conflate with IAM.
+
+Bot0 monorepo map: 
+§0.5 · Bot0 implementation playbook (monorepo only) §0.1 ·
+[turn lifecycle](conversation-turn-lifecycle-diagram.md).
 
 ### 0.2 What the conversation layer adds (on top of execution frameworks)
 

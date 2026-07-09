@@ -20,6 +20,16 @@ and detours can short-circuit before `decide_turn` runs. Retiring that competiti
 authoritative decision) is the  work;
 this diagram is the honest baseline it works against.
 
+**Ownership (2026-07-09).** Who manages memory vs front door vs multi-agent ownership is **not** siloed in this
+diagram alone — see [SDK §0.1.2](conversation-control-plane-sdk.md#012-who-owns-what--front-door-multi-agent-ownership-memory-expectations)
+and .
+
+**One-liner:** *The ledger is the control plane’s state of record; the control plane is the rules and code
+that read/write that state and pick the delivery leaf — one meta-layer, not two products.*
+
+**Rule:** host short-circuits that ignore sealed `task_intent` / exclusive owner (e.g. early cost sole-continue)
+are **control-plane delivery bugs**, not agent tool-choice bugs.
+
 
 **Cognition / execution on this map (2026-07-07).** ▨ blocks emit labels (intent, `user_wants`,
 `authoring_maturity`, gaps). ▣ blocks validate enums and run transitions. **Semantic readiness** (how good is

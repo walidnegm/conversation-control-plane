@@ -107,6 +107,24 @@ DETOUR_DELIVERY_ORDER_TABLE: tuple[DetourDeliveryRow, ...] = (
         ),
         authority_module="unified_turn_router.apply_attachment_capability_authority",
     ),
+    # Greenfield multi-turn *starts* only. Must yield when ledger already owns
+    # the kind (sole_continue_blocks_greenfield_start) — otherwise verify/save
+    # turns re-enter start and loop (conv_069561ce cyber).
+    DetourDeliveryRow(
+        detour_id="cyber_risk_assessment_start",
+        timing="pre_decide",
+        runs_after="attachment_capability",
+        runs_before=STAGE_DECIDE_TURN,
+        suppresses_labels=(
+            "product_concept_kind",
+            "discovery_kind",
+            "concept_gate",
+        ),
+        authority_module=(
+            "bot0._try_resolve_cyber_risk_assessment_turn + "
+            "task_pin_contract.sole_continue_blocks_greenfield_start"
+        ),
+    ),
     DetourDeliveryRow(
         detour_id="concept_gate",
         timing="post_decide_front_door",
@@ -191,13 +209,217 @@ def _discovery_kind_candidates(
     return out
 
 
+# Exclusive post-router owners — at most ONE may deliver a user-visible reply.
+# Priority is load-bearing (first match wins). New multi-turn work streams register
+# here; do not append parallel late handlers in bot0.chat().
+EXCLUSIVE_TURN_OWNER_PRIORITY: tuple[str, ...] = (
+    "cost_out",
+    "draft",
+    "cyber_risk",
+    "realization",
+    "surface_read",
+    "advisor",
+    "product_concept",
+    "discovery",
+    "concept_gate",
+    "default",
+)
+
+# Owners that must never yield to front-door discovery / glossary detours.
+ACTION_EXCLUSIVE_OWNERS = frozenset({
+    "cost_out",
+    "draft",
+    "cyber_risk",
+    "realization",
+    "surface_read",
+    "advisor",
+})
+
+
+@dataclass(frozen=True)
+class ExclusiveTurnOwner:
+    """Single delivery owner for one user turn after authority sealing."""
+
+    owner_id: str
+    reason: str = ""
+
+
+def select_exclusive_turn_owner(
+    signal: Any = None,
+    *,
+    query: str = "",
+    packaging_eligible: bool | None = None,
+    active_task: Any = None,
+    context: Any = None,
+) -> ExclusiveTurnOwner:
+    """Pick exactly one delivery owner from a post-authority UnifiedTurnSignal.
+
+    Priority (first match wins) — never run concept_gate / intent_clarify /
+    product howto when a higher action owner is set.
+
+    Multi-turn sole-continue: when ledger ``active_task.kind`` is a sole-continue
+    stream (e.g. ``cost_out``) and task_intent is not detour/new_task/abandon,
+    that kind owns delivery even if this turn's labels omitted cost_estimate_request
+    (chat-complete multi-turn contract — follow-up stickiness).
+    """
+    # Ledger multi-turn ownership (turns N…N+k) — before label-only races.
+    # Strong action labels still win when they start a different stream.
+    task_intent = (
+        str(getattr(signal, "task_intent", None) or "continue").strip().lower()
+        if signal is not None
+        else "continue"
+    )
+    try:
+        from api.services.conversation_control.task_pin_contract import (
+            exclusive_owner_for_active_kind,
+        )
+
+        ctx = context if isinstance(context, dict) else {}
+        if active_task is not None and isinstance(active_task, dict):
+            ctx = {**ctx, "active_task": active_task}
+        sole_owner = exclusive_owner_for_active_kind(ctx, task_intent=task_intent)
+        # New strong action labels may supersede sole-continue (user switched goal).
+        strong_new = False
+        if signal is not None:
+            if bool(getattr(signal, "cost_estimate_request", False)):
+                strong_new = sole_owner != "cost_out"
+            if bool(getattr(signal, "workflow_draft_request", False)):
+                strong_new = True
+            rk_probe = str(getattr(signal, "read_kind", None) or "none").strip().lower()
+            if rk_probe in ("cyber_risk_assessment", "realization_intake"):
+                # Same stream continue is fine; different stream is strong_new.
+                if sole_owner == "cost_out":
+                    strong_new = True
+                elif sole_owner == "cyber_risk" and rk_probe != "cyber_risk_assessment":
+                    strong_new = True
+                elif sole_owner == "realization" and rk_probe != "realization_intake":
+                    strong_new = True
+        if sole_owner and not strong_new and task_intent not in (
+            "detour",
+            "new_task",
+            "abandon",
+            "handoff",
+        ):
+            return ExclusiveTurnOwner(sole_owner, f"active_task sole-continue kind")
+        # cost_estimate_request while cost_out active → still cost_out
+        if sole_owner == "cost_out" and signal is not None and bool(
+            getattr(signal, "cost_estimate_request", False),
+        ):
+            return ExclusiveTurnOwner("cost_out", "cost_out continue|cost_estimate_request")
+    except Exception:  # noqa: BLE001
+        pass
+
+    if signal is None:
+        return ExclusiveTurnOwner("default", "no signal")
+
+    if bool(getattr(signal, "cost_estimate_request", False)):
+        return ExclusiveTurnOwner("cost_out", "cost_estimate_request")
+
+    builder = str(getattr(signal, "builder_entry", None) or "none").strip().lower()
+    if bool(getattr(signal, "workflow_draft_request", False)) or builder not in (
+        "",
+        "none",
+    ):
+        return ExclusiveTurnOwner("draft", "workflow_draft_request|builder_entry")
+
+    rk = str(getattr(signal, "read_kind", None) or "none").strip().lower()
+    if rk == "cyber_risk_assessment":
+        return ExclusiveTurnOwner("cyber_risk", "read_kind=cyber_risk_assessment")
+    if rk == "realization_intake":
+        return ExclusiveTurnOwner("realization", "read_kind=realization_intake")
+
+    try:
+        from api.services.conversation_control.read_intent import (
+            PROJECT_SURFACE_READ_KINDS,
+            WORKFLOW_SURFACE_READ_KINDS,
+            WORKFLOW_SURFACE_SIMULATION_KINDS,
+        )
+
+        surface = (
+            *WORKFLOW_SURFACE_READ_KINDS,
+            *WORKFLOW_SURFACE_SIMULATION_KINDS,
+            *PROJECT_SURFACE_READ_KINDS,
+        )
+        if rk in surface:
+            return ExclusiveTurnOwner("surface_read", f"read_kind={rk}")
+    except Exception:  # noqa: BLE001
+        if rk not in ("", "none"):
+            return ExclusiveTurnOwner("surface_read", f"read_kind={rk}")
+
+    route = str(getattr(signal, "route_intent", None) or "bot0").strip().lower()
+    if route == "advisor":
+        return ExclusiveTurnOwner("advisor", "route_intent=advisor")
+
+    product = str(getattr(signal, "product_concept_kind", None) or "none").strip().lower()
+    if product not in ("", "none"):
+        return ExclusiveTurnOwner("product_concept", f"product_concept_kind={product}")
+
+    disc = str(getattr(signal, "discovery_kind", None) or "none").strip().lower()
+    if disc not in ("", "none") and is_front_door_detour_kind(disc):
+        return ExclusiveTurnOwner("discovery", f"discovery_kind={disc}")
+
+    packaging_ctx: dict = context if isinstance(context, dict) else {}
+    if active_task is not None and isinstance(active_task, dict):
+        packaging_ctx = {**packaging_ctx, "active_task": active_task}
+
+    if packaging_eligible is None and (query or "").strip():
+        try:
+            from api.services.bot0_product_knowledge import concept_packaging_query_eligible
+
+            packaging_eligible = concept_packaging_query_eligible(
+                query,
+                product_concept_kind=product,
+                context=packaging_ctx,
+            )
+        except Exception:  # noqa: BLE001
+            packaging_eligible = False
+    if packaging_eligible:
+        return ExclusiveTurnOwner("concept_gate", "definitional packaging eligible")
+
+    return ExclusiveTurnOwner("default", "orchestrator/plan default")
+
+
+def exclusive_owner_allows_front_door_discovery(owner: ExclusiveTurnOwner | str) -> bool:
+    oid = owner.owner_id if isinstance(owner, ExclusiveTurnOwner) else str(owner)
+    return oid == "discovery"
+
+
+def exclusive_owner_allows_concept_gate(owner: ExclusiveTurnOwner | str) -> bool:
+    oid = owner.owner_id if isinstance(owner, ExclusiveTurnOwner) else str(owner)
+    return oid == "concept_gate"
+
+
+def exclusive_owner_allows_product_concept(owner: ExclusiveTurnOwner | str) -> bool:
+    oid = owner.owner_id if isinstance(owner, ExclusiveTurnOwner) else str(owner)
+    return oid == "product_concept"
+
+
 def front_door_detour_supersedes_active_flow(
     *,
     discovery: dict[str, str] | None = None,
     unified_signal: Any = None,
     plan: Any = None,
 ) -> bool:
-    """True when a router-owned front-door detour must beat an active guided flow."""
+    """True when a router-owned front-door detour must beat an active guided flow.
+
+    Action exclusive owners (cost / draft / cyber / surface / advisor) never yield
+    to discovery — seals the multi-winner race.
+    """
+    if unified_signal is not None:
+        owner = select_exclusive_turn_owner(unified_signal)
+        if owner.owner_id in ACTION_EXCLUSIVE_OWNERS:
+            return False
+        if owner.owner_id in ("product_concept", "concept_gate", "default"):
+            # Only discovery owner may supersede active flow via front door.
+            if owner.owner_id != "discovery" and not any(
+                is_front_door_detour_kind(k)
+                for k in _discovery_kind_candidates(
+                    discovery=discovery,
+                    unified_signal=unified_signal,
+                    plan=plan,
+                )
+            ):
+                return False
     return any(
         is_front_door_detour_kind(k)
         for k in _discovery_kind_candidates(
@@ -268,4 +490,11 @@ __all__ = [
     "front_door_detour_supersedes_active_flow",
     "is_front_door_detour_kind",
     "plan_owns_front_door_delivery",
+    "select_exclusive_turn_owner",
+    "ExclusiveTurnOwner",
+    "ACTION_EXCLUSIVE_OWNERS",
+    "EXCLUSIVE_TURN_OWNER_PRIORITY",
+    "exclusive_owner_allows_concept_gate",
+    "exclusive_owner_allows_front_door_discovery",
+    "exclusive_owner_allows_product_concept",
 ]

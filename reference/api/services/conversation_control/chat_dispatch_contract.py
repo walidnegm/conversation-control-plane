@@ -44,6 +44,9 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "realization_gap_intake_failed",
     "workflow_diagram_authoring",
     "attachment_capability",
+    # Greenfield multi-turn starts (must call sole_continue_blocks_greenfield_start)
+    "cyber_risk_assessment_start",
+    "cyber_risk_assessment_intake",
 })
 
 # S4 collapse — post-decide deliveries (decide_turn runs first).

@@ -500,8 +500,13 @@ def set_pending_question(
     original_workflow_ref: str = "",
     original_query: str = "",
     source_message_id: Optional[str] = None,
+    purpose: str = "",
 ) -> dict[str, Any]:
-    """Record a bot0 detour disambiguation that owns the next pick reply."""
+    """Record a bot0 detour disambiguation that owns the next pick reply.
+
+    ``purpose`` isolates ordinals across multi-turn streams (cost vs inventory vs
+    scorecards) — see ``task_pin_contract.PURPOSE_*``.
+    """
     from api.services.conversation_control.pending_question import build_pending_question
 
     payload = build_pending_question(
@@ -512,6 +517,7 @@ def set_pending_question(
         original_workflow_ref=original_workflow_ref,
         original_query=original_query,
         source_message_id=source_message_id,
+        purpose=purpose,
     )
     _set_jsonb_key(
         db,
@@ -665,8 +671,19 @@ def begin_task(
         "pending_ref": pending_ref,
         "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
-    if kind is not None:
-        task["kind"] = kind
+    from api.services.conversation_control.task_phase_registry import (
+        normalize_task_fields,
+    )
+
+    validation = normalize_task_fields(
+        agent=agent,
+        phase=phase,
+        awaiting=awaiting,
+        kind=kind,
+    )
+    effective_kind = validation.normalized_kind if validation.normalized_kind else kind
+    if effective_kind is not None:
+        task["kind"] = effective_kind
     if payload is not None:
         task["payload"] = payload
     _set_jsonb_key(
@@ -679,12 +696,24 @@ def begin_task(
     _sync_agent_type_column(
         db, conversation_id=conversation_id, tenant_id=tenant_id, agent=agent,
     )
+    details: dict[str, Any] = {"agent": agent, "phase": phase, "awaiting": awaiting}
+    if effective_kind:
+        details["kind"] = effective_kind
+    if not validation.ok:
+        details["task_phase_invalid"] = validation.message
+        _emit(
+            db,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            event="task_phase_invalid",
+            details=details,
+        )
     _emit(
         db,
         tenant_id=tenant_id,
         conversation_id=conversation_id,
         event="task_began",
-        details={"agent": agent, "phase": phase, "awaiting": awaiting},
+        details=details,
     )
     return task
 
@@ -900,14 +929,41 @@ def update_phase(
         # Defensive — caller should have validated via resolve_pending first
         task = {"agent": agent}
 
+    from api.services.conversation_control.task_phase_registry import (
+        normalize_task_fields,
+    )
+
+    effective_kind = kind if kind is not None else task.get("kind")
+    validation = normalize_task_fields(
+        agent=agent,
+        phase=phase,
+        awaiting=awaiting,
+        kind=effective_kind if isinstance(effective_kind, str) else None,
+    )
     task["phase"] = phase
     task["awaiting"] = awaiting
     if pending_ref is not None:
         task["pending_ref"] = pending_ref
-    if kind is not None:
+    if validation.normalized_kind:
+        task["kind"] = validation.normalized_kind
+    elif kind is not None:
         task["kind"] = kind
     if payload is not None:
         task["payload"] = payload
+    if not validation.ok:
+        _emit(
+            db,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            event="task_phase_invalid",
+            details={
+                "agent": agent,
+                "phase": phase,
+                "awaiting": awaiting,
+                "kind": task.get("kind"),
+                "message": validation.message,
+            },
+        )
     _set_jsonb_key(db, conversation_id=conversation_id, tenant_id=tenant_id, key="active_task", value=task)
     # T2: keep the summary column aligned on continuation turns too.
     _sync_agent_type_column(

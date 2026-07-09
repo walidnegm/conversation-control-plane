@@ -52,17 +52,14 @@ _PHASE_DISPLAY = {
 
 
 def workflow_authoring_active(context: object) -> bool:
-    """True when workflow_builder/editor owns the conversation turn."""
+    """True when workflow_builder/editor owns the conversation turn (ledger only)."""
     if not isinstance(context, dict):
         return False
-    active_agent = str(
-        ((context.get("active_task") or {}).get("agent") or "")
-    ).strip()
-    agent_type = str(context.get("agent_type") or "").strip()
-    return (
-        active_agent in _WORKFLOW_AUTHORING_AGENTS
-        or agent_type in _WORKFLOW_AUTHORING_AGENTS
+    from api.services.conversation_control.task_phase_registry import (
+        ledger_foreground_agent,
     )
+
+    return ledger_foreground_agent(context) in _WORKFLOW_AUTHORING_AGENTS
 
 
 def builder_pending_pk(tenant_id: str, conversation_id: str) -> str:
@@ -466,11 +463,28 @@ def normalize_short_gate_reply(query: str) -> str:
     return _GATE_REPLY_ALIASES.get(reply, reply)
 
 
-_LEDGER_KINDS_PREEMPT_POST_SAVE_STATUS = frozenset({
-    "drafting",
-    "realization_intake",
-    "workflow_pick",
-})
+# Prefer task_pin_contract.KINDS_PREEMPT_POST_SAVE_OV_STATUS (S8) — kept as
+# alias for older imports.
+def _ledger_kinds_preempt_post_save_status() -> frozenset[str]:
+    try:
+        from api.services.conversation_control.task_pin_contract import (
+            KINDS_PREEMPT_POST_SAVE_OV_STATUS,
+        )
+
+        return KINDS_PREEMPT_POST_SAVE_OV_STATUS | frozenset({"workflow_pick"})
+    except Exception:  # noqa: BLE001
+        return frozenset({
+            "drafting",
+            "realization_intake",
+            "workflow_pick",
+            "cost_out",
+            "cyber_risk_assessment",
+            "project_workspace",
+            "scorecard_interrogate",
+        })
+
+
+_LEDGER_KINDS_PREEMPT_POST_SAVE_STATUS = _ledger_kinds_preempt_post_save_status()
 
 
 def post_save_status_orientation_suppressed(
@@ -490,6 +504,9 @@ def post_save_status_orientation_suppressed(
     from api.services.conversation_control.discovery_intent import (
         DISCOVERY_DETOUR_KINDS,
     )
+    from api.services.conversation_control.task_pin_contract import (
+        post_save_ov_status_blocked_by_sole_continue,
+    )
 
     disc_kind = ((discovery or {}).get("kind") or "").strip()
     if disc_kind in DISCOVERY_DETOUR_KINDS:
@@ -504,6 +521,10 @@ def post_save_status_orientation_suppressed(
         return True
 
     ctx = context if isinstance(context, dict) else {}
+    # S8 sole-continue substrate — cost/cyber/project/draft/realization, etc.
+    if post_save_ov_status_blocked_by_sole_continue(ctx):
+        return True
+
     active = ctx.get("active_task") or {}
     if not isinstance(active, dict):
         return False
@@ -511,7 +532,7 @@ def post_save_status_orientation_suppressed(
     kind = (active.get("kind") or "").strip()
     if kind == "outcome_value_setup":
         return False
-    if kind in _LEDGER_KINDS_PREEMPT_POST_SAVE_STATUS:
+    if kind in _ledger_kinds_preempt_post_save_status():
         return True
 
     agent = (active.get("agent") or "").strip()
