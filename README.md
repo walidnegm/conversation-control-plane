@@ -285,20 +285,30 @@ Longer bootstrap (only if needed): SDK [§1.1 adopter brief](docs/conversation-c
 
 ---
 
-## Adopt when / skip when
+## When the value prop is strong enough to adopt
 
-**Adopt when**
+Honest fit check — **this is not for everyone.**
 
-- Several conversational agents share **one thread**
-- Users say “pick up where we left off,” “switch,” or detour mid-task
-- You need **why did routing choose X?** without deserializing a graph checkpoint
-- Multi-worker chat needs **turn serialization**
+### Adopt when
 
-**Skip when**
+You have (or anticipate) **multiple agents/specialists** with handoffs, phases, approvals, or long-lived tasks.  
+You value **SQL queries for ops/debugging** over proprietary workflow UIs.  
+You’re hitting **concurrency, stuck sessions, or audit** issues (“why did this route to X?”).  
+You want to **mix execution styles** (Python today, LangGraph tomorrow, Temporal for long work) without rewriting control logic.  
+Your app **already uses Postgres** (or similar SQL) for chat history.
 
-- Single-agent tool loop, no cross-agent stickiness
-- Batch automation with no resume language
-- You want graph Studio / rapid topology edits more than ledger discipline
+**Adoption cost: moderate.** You add a thin host loop  
+`claim → decide_turn → execute → apply_transition → release`.  
+Agents return structured transitions; they **do not** import the ledger. The control plane has **0 inherent LLM calls**.
+
+### When it’s not worth it yet
+
+- **Simple single-agent or graph-only flows** — LangGraph (or a plain tool loop) is enough.  
+- **You’re all-in on Temporal for everything** — don’t add a second authority plane unless chat ownership is a distinct pain.  
+- **Early prototype stage** — this is overkill until multi-specialist stickiness shows up.  
+- **You prefer minimal dependencies** and a fully polished package — this repo is still **early** (public contract stable; PyPI / full host adapters are Phase 1b; formal load numbers and Day-2 UI productization are open).
+
+If you’re unsure: start with the [On-ramp](#on-ramp--how-to-think-about-this-sdk) kickoff and the cyber `host_sketch.py` dialogue. If that shape feels like busywork for your product, **skip**.
 
 ---
 
