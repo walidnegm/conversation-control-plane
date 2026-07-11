@@ -11,14 +11,15 @@ related:
 
 # Conversation Turn Lifecycle — the ledger-pinned flow
 
-**What this is.** A single map of one chat turn through **your host entrypoint** (HTTP handler, SSE `chat`, worker) and the portable `conversation_control/` package. Bot0's reference host is `api/services/host chat module (monorepo)::chat` — **monorepo only**, not shipped here. The diagram shows where perception, `decide_turn`, detours, and ledger writes belong.
+**What this is.** A single, code-grounded map of one chat turn for Bot0: HTTP/SSE entry
+(`api/routers/host chat module (monorepo)`) → `api/services/host chat module (monorepo)::chat` → `conversation_control/`. It shows where
+perception, short-circuits, `decide_turn`, delivery, and ledger writes happen.
 
-
-**Honest framing.** This documents the flow **as it is**, not the idealized "one router → `decide_turn`" version
-in the [SDK contract](conversation-control-plane-sdk.md). The pre-decide **gauntlet** is real: several fast-paths
-and detours can short-circuit before `decide_turn` runs. Retiring that competition (detours → ledger tasks, one
-authoritative decision) is the work;
-this diagram is the honest baseline it works against.
+**Honest framing.** This documents the flow **as it is**, not the idealized "one router → `decide_turn`"
+version in the [SDK contract](conversation-control-plane-sdk.md). Reality is a **gauntlet interleaved with
+perception**: finite/code-owned paths can answer **before** `decide_turn`; S4 made the **unified router** the
+main perception hop; **post-router** prose enqueue is preferred over pre-router early enqueue. Line anchors
+drift — prefer **function names** over line numbers when debugging.
 
 **Ownership (2026-07-09).** Who manages memory vs front door vs multi-agent ownership is **not** siloed in this
 diagram alone — see [SDK §0.1.2](conversation-control-plane-sdk.md#012-who-owns-what--front-door-multi-agent-ownership-memory-expectations)
@@ -66,6 +67,20 @@ idempotency, and appends a journal row in the same transaction as the projection
 (`ledger_journal.py` + `begin_task` / `complete_task` / `finish_active_task`). COMPLETE and ABANDON
 are **distinct event types** — not one “clear stickiness” blob.
 
+**Code anchors** (verified 2026-07-11 against monorepo):
+
+| Stage | Where (prefer symbolsymbols** over lines) |
+|---|---|
+| Turn claim / release | `api/routers/host chat module (monorepo)` → `ledger.claim_turn` / `release_turn` (not inside `chat`) |
+| `chat` entry | `bot0.chat` ~L10550 — ledger overlay via `get_control_state` |
+| Early finite / FE | `_try_catalog_handoff_dispatch` · domain/IR/authoring gate helpers · early scorecard/entity picks |
+| Perception | `classify_unified_turn` + `apply_unified_router_authorities` (~L11141+) |
+| Post-router enqueue | `_try_prose_intake_post_router_enqueue_dispatch` (preferred; early is legacy alias) |
+| More pre-decide | cyber / improve / reset / ordinal / cost sole-continue recoveries |
+| **decide_turn** | `decide.decide_turn` via `bot0.chat` ~L12373 — may **write** ledger mid-call |
+| Exclusive owner + front door | `select_exclusive_turn_owner` · `front_door_detour_supersedes_active_flow` (~L12512+) |
+| Ledger APIs | `ledger.begin_task` / `update_phase` / `complete_task` / `finish_active_task` + journal |
+| Hot-potato | `handoff_guard.would_ping_pong` (inside `decide_turn`) |
 
 **Cognition / execution on this map (2026-07-07).** ▨ blocks emit labels (intent, `user_wants`,
 `authoring_maturity`, gaps). ▣ blocks validate enums and run transitions. **Semantic readiness** (how good is
@@ -78,87 +93,71 @@ readiness** (SQL counts, IR validators, finite step-list shape) stays ▣ throug
 
 ## 1. The turn lifecycle (top to bottom)
 
-Legend: **▨ = LLM cognition** · **▣ = code / finite-grammar / ledger-state** · **⚡ = short-circuit exit (skips
-`decide_turn`)** · **◆ = the single authoritative decision**.
+Legend: **▨ = LLM cognition** · **▣ = code / finite-grammar / ledger-state** · **⚡ = short-circuit (may skip
+`decide_turn`)** · **◆ = authoritative dispatch decision**.
+
+> **Accuracy notes (2026-07-11):** (1) **`claim_turn` / `release_turn` live on the HTTP/SSE router**, not
+> inside `chat`. (2) Pre-decide short-circuits are **interleaved** with unified-router perception — not one
+> pure block of gates then one pure router. (3) **Primary** rich-prose async path is
+> **`prose_intake_post_router_enqueue`** (after unified router); early enqueue is a legacy alias.
+> (4) **`decide_turn` may write the ledger** (begin/suspend/switch/complete) during the call — not only after
+> the specialist returns. (5) S4: **unified router** is the main perception hop; L0–L4 intent router is not a
+> guaranteed second serial LLM on every turn (`decide_turn` reuses `UnifiedTurnSignal` when present).
 
 ```mermaid
 flowchart TD
- MSG["User message — SSE /chat"] --> CLAIM
+ MSG["User message — HTTP/SSE /chat"] --> CLAIM
 
- CLAIM{"▣ claim_turn<br/>one _turn_claim per conversation"}
+ CLAIM{"▣ claim_turn — router boundary<br/>api/routers/host chat module (monorepo)<br/>one _turn_claim per conversation"}
  CLAIM -->|busy| REJECT["⚡ 409 conversation_turn_in_flight<br/>reject, don't queue"]
- CLAIM -->|claimed| GRD
+ CLAIM -->|claimed| CHAT
 
- GRD{"▨ Guardrail — check_message"}
- GRD -->|blocked| GBLK["⚡ safety refusal"]
- GRD -->|ok| GA
-
- subgraph GA["Pre-decide gauntlet — each may ⚡ short-circuit (finite-grammar / ledger-state / own bounded LLM)"]
+ subgraph CHAT["bot0.chat — service entry"]
  direction TB
- G1["▣ catalog_handoff — FE button payload"]
- G2["▣ domain_gate_pick — finite pick + ledger phase"]
- G3["▨ ir_gate_role_proposal — classify_propose_roles"]
- G4["▣ authoring_gate_proceed — finite yes/no/accept at gate"]
- G5["▨ ir_confirm — classify_ir_gate_turn"]
- G6["▣ prose_intake_early_enqueue — structural shape/length"]
- G1 --> G2 --> G3 --> G4 --> G5 --> G6
- end
- GA -->|a gate owns the turn| SHORT
- GA -->|none owns| PERC
-
- subgraph PERC["Perception — cognition (▨) then code authority (▣)"]
- R1["▨ unified router — classify_unified_turn<br/>→ UnifiedTurnSignal<br/>(user_wants, authoring_maturity, missing_segments)"]
- AUTH["▣ authority passes on signal<br/>prose_intake · drafting_signal · product_concept · gate_proceed · IR review"]
- R2["▣/▨ intent router L0–L4 — bot0_intent_router<br/>→ IntentRoute"]
- R1 --> AUTH --> R2
- end
- PERC --> PICK
-
- subgraph PICK["Finite-grammar picks + reset (▣, LLM-arbitrated on miss)"]
- K1["▣ reset gate — literal set OR hint + LLM reset_request"]
- K2["▣ pending picks — scorecard / discovery / workflow — #id or number"]
- K3["▣ gate-continue route synth — code-owned IntentRoute"]
- K1 --> K2 --> K3
- end
- PICK -->|resolved| SHORT
+ LOAD["▣ load + overlay ledger control keys<br/>get_control_state → context"]
+ EARLY["⚡ Early finite / FE / ledger-armed picks<br/>catalog_handoff · domain/IR/authoring gates<br/>scorecard/entity pick · post_save setup…"]
+ PERC["▨ Unified router — classify_unified_turn<br/>→ UnifiedTurnSignal"]
+ AUTH["▣ apply_unified_router_authorities<br/>+ select_exclusive_turn_owner signals"]
+ POST_R["⚡ Post-router accelerators<br/>prose_intake_post_router_enqueue<br/>cyber / improve / diagram / attach…"]
+ PICK["▣ Reset · ordinal · more finite picks<br/>literal reset · list ordinals · cost recoveries"]
+ DECIDE["◆ decide_turn — authoritative dispatcher<br/>continue-resumes · Switch/Stay · hot-potato<br/>may WRITE ledger here → TurnPlan"]
+ POST["Post-decide delivery ladder<br/>exclusive owner · front_door detours<br/>active-flow continue · concept_gate · prose intake"]
+ DISP["Specialist / code delivery<br/>handle_turn or bot0 tools / code path"]
+ LOAD --> EARLY
+ EARLY -->|answered| SHORT
+ EARLY -->|fall through| PERC
+ PERC --> AUTH --> POST_R
+ POST_R -->|answered / enqueued| SHORT
+ POST_R -->|else| PICK
+ PICK -->|answered| SHORT
  PICK -->|else| DECIDE
-
- DECIDE{"◆ decide_turn — AUTHORITATIVE DISPATCHER<br/>precedence · continue-resumes · Switch/Stay · hot-potato guard<br/>SINGLE WRITER of control keys → TurnPlan"}
  DECIDE --> POST
-
- subgraph POST["Post-decide ladder — SDK §2.1 discovery detour precedence"]
- P0["◆ STAGE_FRONT_DOOR_DELIVERY<br/>scorecards · orientation · discovery detours<br/>delivery_order_contract · decide_turn supersede"]
- P0a["▣ active-flow continue<br/>realization_intake · outcome_value_setup<br/>only if active_flow_handler_must_yield is false"]
- P1["▣ authoring gates · product how-tos<br/>same yield guard"]
- P2["▨ orientation demotion · generic discovery demotion"]
- P3["▨ concept gate — grounded glossary/how-to"]
- P4["▣/▨ prose intake lane — §9 readiness gauntlet"]
- P0 --> P0a --> P1 --> P2 --> P3 --> P4
- end
- POST -->|prose intake owns turn| SHORT
+ POST -->|detour / sole-continue answer| SHORT
  POST -->|else| DISP
+ end
 
- DISP["▨ Dispatch specialist<br/>ConversationalAgent.handle_turn → AgentTurnResult / TaskTransitionRequest<br/>(task_id · command_id · transition only)"]
  DISP --> LED
-
- LED["▣ Ledger write — single writer<br/>L1 projection: active_task / suspended_tasks / pending_switch<br/>+ _control_revision++ · platform event<br/>L2 journal: conversation_control_events (task_id · command_id · seq)"]
+ DECIDE -.->|also writes on transitions| LED
+ LED["▣ Ledger APIs — single writer surface<br/>L1 projection + L2 journal<br/>task_id · command_id · COMPLETE≠ABANDON"]
  LED --> REL
- SHORT["⚡ short-circuit answer"] --> REL
- REL["▣ release_turn — finally<br/>+ persist 3-hop routing trace on the message"]
+ SHORT["⚡ answer without full specialist loop"] --> REL
+ REL["▣ release_turn — router finally<br/>+ persist routing trace on the message"]
 ```
 
-**Reading it:** perception (guardrail + unified router + intent router) only *proposes*. The gauntlet and the
-finite picks can answer the turn themselves (⚡) — that's the competition. When none of them own the turn,
-`decide_turn` (◆) is the one place that reads the ledger, applies precedence, and **writes** the control keys.
-Every path — short-circuit or full — ends by releasing the claim and persisting the routing trace.
+**Reading it:** finite/code-owned paths and some accelerators can ⚡ answer without `decide_turn`. Perception
+**proposes** labels; `decide_turn` (◆) is still the sole **authoritative** dispatcher and the intended single
+writer of control keys. Specialists **declare** transitions; host/ledger APIs apply them. Every path should
+end in **release_turn** + a routing trace.
 
 ---
 
-## 2. Perception — the intent router (L0–L4)
+## 2. Perception — unified router (primary) + legacy L0–L4
 
-Cheapest signal first; the LLM (L3) is the arbiter for anything genuinely ambiguous. Layers are precedence
-stages inside `bot0_intent_router.py`, surfaced in every routing trace as `layer`.
+**S4 (current):** normal turns run **`classify_unified_turn` → `apply_unified_router_authorities`** and pass
+`UnifiedTurnSignal` into `decide_turn` (no second full intent-classifier hop for relative continue meaning).
 
+**Legacy L0–L4** (`bot0_intent_router.py`) still exists for some paths/traces and as historical/fallback
+cognition. Layers are cheapest-first; L3 is the ambiguous NL arbiter when that router runs.
 ```mermaid
 flowchart TD
  Q["User message + context"] --> L0
@@ -222,13 +221,13 @@ flowchart TD
  RESUME --> DISPATCH
  PROP --> DISPATCH
  HP --> DISPATCH
- DISPATCH["TurnPlan.agent → dispatch + ledger write"]
+ DISPATCH["TurnPlan.agent → host delivery ladder<br/>ledger already written for transitions in decide_turn"]
 ```
 
 Precedence in one line: **reset > switch-reply > continue-resumes > hot-potato-guard > propose-switch >
 same-agent dispatch.** "Continue resumes" beating a flaky handoff classifier is the load-bearing invariant
-(§5/§6 of the SDK contract).
-
+(§5 of the SDK contract). After `decide_turn`, **host** exclusive-owner / front-door / active-flow delivery
+runs (diagram §1 POST) — that is not a second writer of control keys.
 ---
 
 ## 4. The ledger state model (what "ledger-pinned" means)
