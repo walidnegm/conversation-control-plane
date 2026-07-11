@@ -55,7 +55,7 @@ def workflow_authoring_active(context: object) -> bool:
     """True when workflow_builder/editor owns the conversation turn (ledger only)."""
     if not isinstance(context, dict):
         return False
-    from api.services.conversation_control.task_phase_registry import (
+    from conversation_control_plane.task_phase_registry import (
         ledger_foreground_agent,
     )
 
@@ -275,7 +275,7 @@ def authoring_snapshot_ledger_payload(
     snap = project_authoring_snapshot(pending)
     if not snap:
         return None
-    from api.services.conversation_control.authoring_gate_contract import (
+    from conversation_control_plane.authoring_gate_contract import (
         authoring_gate_ledger_slice,
     )
 
@@ -315,7 +315,7 @@ def sync_authoring_snapshot_to_ledger(
         return None
     agent = str(active.get("agent") or "workflow_builder").strip()
     try:
-        from api.services.conversation_control.ledger import update_phase
+        from conversation_control_plane.ledger import update_phase
 
         _ledger_phase = str(
             payload.get("phase")
@@ -354,14 +354,14 @@ def resume_authoring_owns_turn(
     messages: list | None = None,
 ) -> bool:
     """True when an active builder session should answer with orientation/status."""
-    from api.services.conversation_control.authoring_gate_turn import (
+    from conversation_control_plane.authoring_gate_turn import (
         resume_authoring_owns_turn as _contract_resume_authoring_owns_turn,
     )
 
     if not conversation_id or not (query or "").strip():
         return False
     try:
-        from api.services.conversation_control.prose_intake_contract import (
+        from conversation_control_plane.prose_intake_contract import (
             grounded_glossary_detour_query,
         )
 
@@ -381,7 +381,7 @@ def resume_authoring_owns_turn(
         if phase in _AUTHORING_GATE_PHASES:
             return False
         try:
-            from api.services.conversation_control.orientation import (
+            from conversation_control_plane.orientation import (
                 classify_orientation_request,
             )
 
@@ -514,7 +514,7 @@ _GATE_REPLY_ALIASES = {
 def normalize_short_gate_reply(query: str) -> str:
     # Collapse apostrophes / whitespace so "let's proceed" matches alias keys.
     try:
-        from api.services.conversation_control.finite_confirm_grammar import (
+        from conversation_control_plane.finite_confirm_grammar import (
             normalize_confirm_control_text,
         )
         reply = normalize_confirm_control_text(query or "")
@@ -527,7 +527,7 @@ def normalize_short_gate_reply(query: str) -> str:
 # alias for older imports.
 def _ledger_kinds_preempt_post_save_status() -> frozenset[str]:
     try:
-        from api.services.conversation_control.task_pin_contract import (
+        from conversation_control_plane.task_pin_contract import (
             KINDS_PREEMPT_POST_SAVE_OV_STATUS,
         )
 
@@ -561,10 +561,10 @@ def post_save_status_orientation_suppressed(
     Realization deploy walkthrough, drafting, catalog-role, scorecard list asks, and
     workflow authoring must reach ``compose_orientation_response`` or discovery detours.
     """
-    from api.services.conversation_control.discovery_intent import (
+    from conversation_control_plane.discovery_intent import (
         DISCOVERY_DETOUR_KINDS,
     )
-    from api.services.conversation_control.task_pin_contract import (
+    from conversation_control_plane.task_pin_contract import (
         post_save_ov_status_blocked_by_sole_continue,
     )
 
@@ -761,7 +761,7 @@ def operational_data_gate_owns_provision_turn(
     messages: list | None = None,
 ) -> bool:
     """True when the open top-line KPI gate should stay on workflow_builder."""
-    from api.services.conversation_control.authoring_gate_turn import (
+    from conversation_control_plane.authoring_gate_turn import (
         operational_data_gate_owns_provision_turn as _contract_kpi_gate_owns_turn,
     )
 
@@ -782,7 +782,7 @@ def discovery_detour_supersedes_active_flow(
     plan: object | None = None,
 ) -> bool:
     """True when a router-owned front-door detour must beat an active guided flow."""
-    from api.services.conversation_control.delivery_order_contract import (
+    from conversation_control_plane.delivery_order_contract import (
         front_door_detour_supersedes_active_flow,
     )
 
@@ -838,7 +838,7 @@ def authoring_gate_proceed_owns_turn(
     messages: list | None = None,
 ) -> bool:
     """True when an open authoring gate should advance via workflow_builder."""
-    from api.services.conversation_control.authoring_gate_turn import (
+    from conversation_control_plane.authoring_gate_turn import (
         authoring_gate_proceed_owns_turn as _contract_gate_proceed_owns_turn,
     )
 
@@ -969,7 +969,7 @@ def synthesize_gate_continue_route(
     ctx = context if isinstance(context, dict) else {}
     active = ctx.get("active_task")
     agent_raw = active.get("agent") if isinstance(active, dict) else None
-    from api.services.conversation_control.contract import canonical_agent
+    from conversation_control_plane.contract import canonical_agent
     from api.services.bot0_intent_router import IntentRoute
 
     agent = canonical_agent(agent_raw) or agent_raw

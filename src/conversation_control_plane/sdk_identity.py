@@ -2,7 +2,7 @@
 
 Follows common open-source patterns: a published integration contract (spec) plus a
 reference implementation maintained by the vendor. Package slugs are reserved for
-Phase 1b extraction — not published until that gate clears.
+a future registry publish — not on PyPI/npm yet.
 """
 from __future__ import annotations
 
@@ -23,11 +23,11 @@ SDK_CHAT_DISPATCH_CONTRACT_MODULE = (
 SDK_EXTRACT_MANIFEST = "extract/conversation-control-plane/MANIFEST.yaml"
 SDK_EXTRACT_SYNC_SCRIPT = "scripts/sync_control_plane_sdk_extract.sh"
 
-# Public SDK home — adopters cite this repo; code/docs sync from monorepo Phase 1b.
+# Public SDK home — adopters cite this repo; code/docs sync from the monorepo.
 SDK_PUBLIC_REPO = "https://github.com/walidnegm/conversation-control-plane"
 SDK_PUBLIC_REPO_SLUG = "walidnegm/conversation-control-plane"
 
-# Reserved for Phase 1b — not consumable as standalone packages yet.
+# Reserved package names — not on registries yet (clone + editable install works).
 SDK_PYPI_PACKAGE = "conversation-control-plane"
 SDK_NPM_PACKAGE = "@bot0/conversation-control-plane"
 

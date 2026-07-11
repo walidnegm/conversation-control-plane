@@ -1,11 +1,34 @@
 # Conversation Control Plane SDK
 
-*Conversation Control Plane SDK* — reference implementation by [Bot0.ai](https://bot0.ai)
+*Conversation turn-ownership ledger* (package: `conversation-control-plane`) — reference implementation by [Bot0.ai](https://bot0.ai)
 
-> **The production state layer for multi-agent chat — without the infra headache.**
+> **Who owns the chat thread** — resume, handoff, gates, multi-worker safety — in the SQL store you already run.  
+> Not a LangGraph/Temporal replacement. Keep those for **how** agents think.
 
-You keep LangGraph, CrewAI, AutoGen, Temporal, or a plain Python loop for **how agents think**.  
-This SDK owns **who owns the conversation** — resume, handoff, detour, gates, and multi-worker safety — in the Postgres (or SQL store) you already run.
+### Quickstart (5 minutes)
+
+```bash
+git clone https://github.com/walidnegm/conversation-control-plane.git
+cd conversation-control-plane
+pip install -e ".[dev]"
+pytest tests/ -q
+python examples/e2e_host_loop.py
+```
+
+```python
+from conversation_control_plane import (
+    TurnPlan, TaskTransition, strip_control_keys, get_kind_spec, decide_turn,
+)
+
+# Host loop idea: claim → decide_turn → agent.handle → apply_transition → release
+# Specialists return TaskTransition; strip_control_keys on agent context_updates.
+```
+
+Lookup: [design principles](#on-ramp--how-to-think-about-this-sdk) · [SDK contract](docs/conversation-control-plane-sdk.md) · [lifecycle diagram](docs/conversation-turn-lifecycle-diagram.md)
+
+**Naming:** we call this a *conversation control plane* for short. In plain terms it is a
+**conversation turn-ownership ledger** (who owns the thread, gates, resume) — not an IAM/governance
+“control plane,” and not an agent runtime. No product-wide rename planned; this note is the framing.
 
 ---
 
@@ -81,19 +104,23 @@ Same Postgres can host a LangGraph checkpointer **and** this ledger — differen
 - Checkpointer → “what was graph state at step N?”
 - Ledger → “why did this **turn** route to agent X, and what task is foreground?”
 
-**Rule:** classifiers propose labels; **`decide_turn` enforces**. Specialists return `TaskTransition` only — they never write `active_task` / `pending_switch`.
+**Rule (convention + boundary strip):** classifiers propose labels; **`decide_turn` / host** should be the only writers of control keys. Specialists return `TaskTransition`; `strip_control_keys` removes control keys from agent `context_updates`. This is **not** a hard runtime sandbox — an agent that imports the ledger can still write; treat that as a host policy violation.
 
-### Zero inherent LLM calls
+### Authority path is deterministic (not “zero LLM in the whole folder”)
 
-The **control plane itself does not call a model.** Ledger writes, `decide_turn`, turn claims, phase/pin gates, COMPLETE vs ABANDON — all **deterministic code**.
+**Honest framing:** the **authority hot path** — ledger writes, turn claims, revision fencing,
+phase/pin gates, COMPLETE vs ABANDON journal types, and the pure branches of `decide_turn` — is
+**deterministic code**. It does **not** call a model to decide who owns the thread.
 
-| Layer | Typical LLM use |
+| Layer | LLM? |
 |---|---|
 | Semantic interpretation (your classifiers / tools) | Optional — feeds **enums** into the plane |
-| **Conversation Control Plane (this SDK)** | **0 LLM calls** |
+| **Authority hot path (this package)** | **No model call** |
+| Host product classifiers (Bot0 monorepo) | Optional, **outside** this package |
 | Specialist execution (LangGraph / agent loop) | Optional — your product |
 
-You can drive turns from a UI button, finite menu, test harness, or `host_sketch.py` with **no LLM at all**. Authority is not another prompt.
+You can drive turns from a UI button, finite menu, test harness, or `examples/e2e_host_loop.py`
+with **no LLM at all**. Authority is not another prompt.
 
 ---
 
@@ -109,7 +136,7 @@ Community adoption lives or dies on three questions. Here is the contract answer
 
 | Mechanism | Behavior |
 |---|---|
-| **Turn claim** | At most one live turn per conversation (`_turn_claim`). Second send → busy / reject-don't-queue |
+| **Turn claim** | At most one live turn per conversation (`_turn_claim`). Second send → busy / reject-don't-queue. **Default fail-closed** on infrastructure errors (`TurnClaimInfrastructureError`); opt-in `fail_open_on_error=True` only for deliberate degraded hosts |
 | **Optimistic revision** | `_control_revision` + optional `expected_version` fence (`StaleControlRevisionError`) |
 | **Short critical section** | Read projection → **LLM/specialist work off DB** → short TX: fence · `command_id` · projection · journal · commit |
 | **Row locks** | `SELECT … FOR UPDATE` only on multi-key lifecycle writes — not for the duration of the LLM call |
@@ -125,11 +152,9 @@ Community adoption lives or dies on three questions. Here is the contract answer
 
 See also monorepo scale smoke (procedure, not a load framework) when developing against the reference host.
 
-### 2. Day-2 operations — visibility without Temporal’s Web UI
+### 2. Day-2 operations — SQL-native visibility
 
-**Criticism:** “Engineers love Temporal’s UI. Where do I click to see a stuck session?”
-
-Because control state is **SQL-native**, ops visibility is a query — not a proprietary runtime.
+Control state is **SQL-native**, so ops visibility is a query — not a proprietary runtime.
 
 | What you can read today | API / shape |
 |---|---|
@@ -187,55 +212,53 @@ finally:
 
 ---
 
----
-
 ## On-ramp — how to think about this SDK
 
-The **SDK document is the spec** (lookup). This README is the **on-ramp**: lessons, setup, and a kickoff
-prompt that gets the model thinking in the right shape. Optional code under `examples/` saves tokens when
-useful — coding agents can generate a specialist from the lessons alone.
+The **SDK document is the spec** (lookup). This README is the **on-ramp**: design principles, setup,
+and a kickoff prompt that puts coding agents in the right shape. Optional code under `examples/`
+saves tokens when useful — agents can generate a specialist from the principles alone.
 
-### Lessons learnt (load-bearing)
+### Design principles (stable)
 
-These are the failures this contract exists to prevent. Internalize them before writing code.
+These held under production multi-agent chat. Build against them; do not invent a second authority path.
 
-| Lesson | Wrong instinct | Right shape |
-|---|---|---|
-| **This is not the agent** | Rewrite LangGraph/CrewAI into “our SDK” | Keep Layer 1 execution; add ledger for **who owns the thread** |
-| **0 inherent LLM calls** | “Control plane = another prompt / router model” | Plane is **deterministic code**; models only optional **around** it |
-| **Cognition ≠ execution** | Regex/wordlists or free LLM prose decide routing | LLM proposes **enums**; code owns transitions and side effects |
-| **Single writer** | Specialist or tool writes `active_task` | Agent returns `TaskTransition`; **only** host/`decide_turn` writes control keys |
-| **Projection is thin** | Dump full domain artifacts into conversation context JSON | Pins + phase + `pending_ref`; domain depth in a **specialist store** |
-| **Identity is pinned** | Re-resolve “the workflow” from ambient `last_read_*` every turn | After pin, **payload ids** are authority; phase gates greenfield resolve |
-| **COMPLETE ≠ ABANDON** | Cancel clears with the same path as success | Distinct journal reasons / event types |
-| **Locks are per conversation** | Fear “Postgres can’t scale chat” | Short TX + turn claim; LLM work **off** the row lock; many rows in parallel |
-| **Finite grammar only when armed** | Every `1` or “yes” steals any list in the thread | Numbered picks / approve only if a menu or gate was **set** |
-| **Compose, don’t rip-and-replace** | Temporal/LangGraph *or* this ledger | Graph/checkpoint for mid-turn; ledger for cross-turn ownership |
+| Principle | Contract |
+|---|---|
+| **This is not the agent** | Keep Layer 1 execution (LangGraph, Crew, tools, Temporal). The ledger owns **who holds the thread**. |
+| **Authority path is deterministic** | Ledger / claim / COMPLETE≠ABANDON / pure `decide_turn` branches call **no model**. Host classifiers sit optional **around** the plane. |
+| **Cognition ≠ execution** | LLM proposes **enums** / structured labels. Code owns transitions, side effects, and user-visible structure. |
+| **Single writer** | Agent returns `TaskTransition`. **Only** host / `decide_turn` writes control keys (`active_task`, …). |
+| **Projection is thin** | Pins + phase + `pending_ref`. Domain depth lives in a **specialist store**, not conversation context JSON. |
+| **Identity is pinned** | After pin, **payload ids** are authority. Phase gates greenfield resolve; ambient `last_read_*` is not sole identity. |
+| **COMPLETE ≠ ABANDON** | Success and cancel are distinct journal reasons / event types — never the same clear path. |
+| **Locks are per conversation** | Short TX + turn claim; LLM work **off** the row lock. Many conversations progress in parallel. |
+| **Finite grammar only when armed** | Numbered picks / approve only if a menu or gate was **set** for this turn. |
+| **Compose, don’t rip-and-replace** | Graph / checkpoint for mid-turn execution; ledger for cross-turn ownership. Use both when both questions matter. |
 
 **Four multi-turn invariants:** phase owns dispatch · pin owns identity · LLM owns continue meaning · finite grammar only when armed.
 
 ### Writing a specialist (checklist)
 
-| Rule | Do | Don't |
-|---|---|---|
-| **Register a kind** | Closed enum + `KindSpec` phases | Free-text kinds from RAG |
-| **Start the stream** | `begin_task` — host assigns `task_id` | “Tool succeeded” as ownership |
-| **Pin identity** | Typed ids on thin payload | Ambient `last_read_*` as sole authority after pin |
-| **Phase owns dispatch** | Entity resolve only in open/pick phases | Re-resolve by name on every continue |
-| **Handoffs** | Declare begin / continue / complete / abandon | Agent imports `ledger.py` |
-| **Thin projection** | Pins + phase + `pending_ref` | Fat domain blobs (drafts, graphs, full specs) in control payload |
+| Step | Shape |
+|---|---|
+| **Register a kind** | Closed enum + `KindSpec` phases — not free-text kinds from RAG |
+| **Start the stream** | `begin_task` — host assigns `task_id` (not “tool succeeded” as ownership) |
+| **Pin identity** | Typed ids on the thin payload |
+| **Phase owns dispatch** | Entity resolve only in open / pick phases — not re-resolve by name on every continue |
+| **Handoffs** | Declare begin / continue / complete / abandon; agent never imports `ledger.py` |
+| **Thin projection** | Pins + phase + `pending_ref` only |
 
-Helpers: `reference/api/services/conversation_control/multi_turn_stream_contract.py`.  
+Helpers: `src/conversation_control_plane/multi_turn_stream_contract.py`.  
 Optional shape reference: [examples/cyber_risk_assessment/](examples/cyber_risk_assessment/) (scaffold, not product scoring).
 
 ### Minimal setup
 
 1. Map your chat store to a **control slice** (`active_task`, `suspended_tasks`, `pending_switch`, `_control_revision`, optional journal table).  
-2. Port **`decide_turn` + ledger** writers from `reference/` (or reimplement against the SDK contract).  
+2. `pip install -e ".[dev]"` then import from `conversation_control_plane` (or reimplement against the SDK contract).  
 3. Host loop: `claim_turn` → router labels → `decide_turn` → `handle_turn` → `apply_transition` → `release_turn`.  
 4. Register each multi-turn **KindSpec**; first sticky turn **begin**; keep domain working state off-projection.  
 5. Pin five tests: continue resumes · complete clears · abandon ≠ complete · no auto-switch · **no re-resolve after pin**.  
-6. Optional: `cd examples/cyber_risk_assessment && python3 host_sketch.py` to see the dialogue shape once.
+6. Run `python examples/e2e_host_loop.py` then optional cyber `host_sketch.py` for dialogue shape.
 
 Lookup when stuck (not cover-to-cover): SDK **Getting started** · **§2.1** multi-turn · **§3.1** concurrency · **§5** invariants · **production-grade L2**.
 
@@ -248,22 +271,22 @@ our existing agent runtimes; you add DB-authoritative turn ownership.
 
 SOURCE OF TRUTH (clone / read this repo first):
 - GitHub: https://github.com/walidnegm/conversation-control-plane
-- Package name: conversation-control-plane  (local: pip install -e ".[dev]" from clone)
-- Publisher: Bot0.ai — monorepo reference; public repo is the adopter-facing surface
+- Package name: conversation-control-plane  (local: `pip install -e ".[dev]"` from clone; PyPI install is future)
+- Publisher: Bot0.ai — public repo is the adopter-facing surface
 
-PRIMARY ON-RAMP (in that repo; do NOT read the whole SDK first):
-1) README.md — "On-ramp — how to think" (lessons learnt + specialist checklist + setup)
+PRIMARY ON-RAMP (in that repo):
+1) README.md — "On-ramp — how to think" (design principles + specialist checklist + setup)
 2) README.md — value prop + traction pillars (scale / Day-2 / wrap) if relevant
 3) OPTIONAL: examples/cyber_risk_assessment/ only if you need a shape pin
    (KindSpec, thin payload, host sole writer, VERIFY human_approval). Full product
-   agent code is unnecessary — generate our specialist from the lessons.
+   agent code is unnecessary — generate our specialist from the design principles.
 
 SDK doc = SPEC for lookup when a rule is unclear:
   docs/conversation-control-plane-sdk.md
 - §2.1 multi-turn stream, §3.1 concurrency, §5 invariants, production-grade L2 (task_id,
   command_id, COMPLETE≠ABANDON, thin payload, KindSpec). Use §1.1 if you need the long brief.
 
-THINK THIS WAY:
+BUILD AGAINST THESE PRINCIPLES:
 - Classifiers propose labels; decide_turn enforces. Specialists return TaskTransition only.
 - Never write active_task from the agent. Never invent task_id after begin.
 - Thin projection: pins + phase + pending_ref. Domain working state in specialist store (P15).
@@ -272,7 +295,7 @@ THINK THIS WAY:
 - Host: claim_turn → decide_turn → handle_turn → apply_transition → release_turn.
 - Per-conversation isolation — not a global lock; LLM work off the short ledger TX.
 
-ANTI-PATTERNS (do not generate):
+DO NOT:
 - Parallel *_active / *_phase flags fighting the ledger
 - Ambient last_read_* as sole identity after pin
 - Full domain artifacts stuffed into control payload
@@ -311,19 +334,20 @@ Agents return structured transitions; they **do not** import the ledger. The con
 - **Simple single-agent or graph-only flows** — LangGraph (or a plain tool loop) is enough.  
 - **You’re all-in on Temporal for everything** — don’t add a second authority plane unless chat ownership is a distinct pain.  
 - **Early prototype stage** — this is overkill until multi-specialist stickiness shows up.  
-- **You prefer minimal dependencies** and a fully polished package — this repo is still **early** (public contract stable; PyPI / full host adapters are Phase 1b; formal load numbers and Day-2 UI productization are open).
+- **You prefer minimal dependencies** and a fully polished package — this repo is still **early** (public contract stable; PyPI / full host adapters, formal load numbers, and Day-2 UI productization are **future** work).
 
 If you’re unsure: start with the [On-ramp](#on-ramp--how-to-think-about-this-sdk) kickoff and the cyber `host_sketch.py` dialogue. If that shape feels like busywork for your product, **skip**.
 
 ---
 
-## Core features
+## Core features (what the code actually pins)
 
-- **Publishable ledger** — projection (`active_task`, `suspended_tasks`, `pending_switch`, `control_revision`, turn claims) + L2 journal
-- **`decide_turn`** — single writer of control keys
-- **`ConversationalAgent`** — specialists declare transitions only
-- **Delivery-order + Multi-turn stream** contracts
-- **Production-grade L2 Model A** — fail-closed same-TX projection+journal, `task_id`, `command_id`, COMPLETE ≠ ABANDON (see SDK)
+- **Projection + journal shapes** — `active_task`, `suspended_tasks`, `pending_switch`, `_control_revision`, turn claims; L2 event types include `task_completed` vs `task_abandoned`
+- **`decide_turn`** — portable dispatcher (full DB host optional); exact **reset → abandon** path wired
+- **`strip_control_keys` / `TaskTransition`** — single-writer **convention** + boundary strip
+- **Revision fence + `command_id` idempotency** — real in `ledger.py` / `ledger_journal.py` when a SQL host is present
+- **Multi-turn stream + KindSpec** — phase/pin contracts for sole-continue kinds
+- **Not claimed for bare extract:** global fail-closed claim under every DB error; zero LLM in every monorepo sibling module; PyPI production SLA / load numbers
 
 ---
 
@@ -331,9 +355,9 @@ If you’re unsure: start with the [On-ramp](#on-ramp--how-to-think-about-this-s
 
 | # | Artifact | Role |
 |---|---|---|
-| 1 | **This README — On-ramp** | Lessons learnt, setup, **kickoff prompt** (primary for humans + coding agents) |
+| 1 | **This README — On-ramp** | Design principles, setup, **kickoff prompt** (primary for humans + coding agents) |
 | 2 | **[SDK contract](docs/conversation-control-plane-sdk.md)** | Spec for lookup — not a cover-to-cover tutorial |
-| 3 | **[Cyber scaffold](examples/cyber_risk_assessment/)** | Optional shape pin / token saver — not required if the agent can generate from lessons |
+| 3 | **[Cyber scaffold](examples/cyber_risk_assessment/)** | Optional shape pin / token saver — not required if the agent can generate from principles |
 
 No separate playbook. Optional wrap sketches: Traction §3 + `examples/integrations/`.
 
@@ -341,24 +365,34 @@ No separate playbook. Optional wrap sketches: Traction §3 + `examples/integrati
 
 | Path | What it is |
 |---|---|
-| [`docs/`](docs/) | SDK contract + lifecycle diagram |
-| [`reference/`](reference/) | Portable modules (`decide_turn`, ledger, multi-turn stream, …) |
-| [`examples/cyber_risk_assessment/`](examples/cyber_risk_assessment/) | Optional specialist scaffold + host sketch |
-| [`examples/integrations/`](examples/integrations/) | Optional 10-line wrap sketches |
-| [`tests/`](tests/) | Portable contract tests |
+| [`src/conversation_control_plane/`](src/conversation_control_plane/) | Installable package (no top-level `api` namespace) |
+| [`docs/`](docs/) | SDK contract + lifecycle diagram (reference host notes) |
+| [`examples/e2e_host_loop.py`](examples/e2e_host_loop.py) | **Runnable** host loop + COMPLETE≠ABANDON journal demo |
+| [`examples/cyber_risk_assessment/`](examples/cyber_risk_assessment/) | Optional specialist scaffold + in-memory host sketch |
+| [`examples/integrations/`](examples/integrations/) | Wrap sketches (pseudocode — not E2E product integrations yet) |
+| [`tests/`](tests/) | Portable contract tests (`pytest tests/`) |
+| [`LICENSE`](LICENSE) | MIT |
+
+```bash
+pip install -e ".[dev]"
+pytest tests/ -q
+python examples/e2e_host_loop.py
+```
 
 ---
 
-## Status
+## Status (humble)
 
-| Shipped | Still open (Phase 1b+) |
+| Shipped | Not shipped / honest gaps |
 |---|---|
-| README on-ramp (lessons + kickoff) + SDK spec + optional scaffold | PyPI `pip install conversation-control-plane` (registry) |
-| Reference modules (ledger fail-open without monorepo host; multi-turn stream) | Full host adapters so `decide_turn` needs no product imports |
-| Concurrency **contract** (§3.1) | Formal load **benchmark artifact** |
-| SQL-native **ops read model** | `ccp inspect` CLI + optional session dashboard |
+| MIT license + installable `conversation_control_plane` package | Formal load **benchmark** numbers |
+| In-repo `pytest` pins + runnable `e2e_host_loop` | Full SQL host adapter as a one-liner `pip` experience |
+| Real fencing / `command_id` / COMPLETE≠ABANDON **in source** | Every monorepo host path is fail-closed out of the box |
+| Design principles + SDK contract for lookup | Thin 200-line quickstart replacing the long SDK doc (follow-on) |
+| SQL-native **ops read model** (query the projection) | `ccp inspect` CLI / session viewer |
 
-The **integration contract is stable** — port and test against it now.
+This is an **early** portable contract + reference code, not a LangGraph/Temporal replacement.
+Prefer the narrow edge: queryable ownership, single-writer convention, gate-vs-mid-flight.
 
 ---
 

@@ -11,15 +11,31 @@ related:
 
 # Conversation Turn Lifecycle — the ledger-pinned flow
 
-**What this is.** A single, code-grounded map of one chat turn for Bot0: HTTP/SSE entry
+**What this is.** A single, code-grounded map of one chat turn for **Bot0 the product host**: HTTP/SSE entry
 (`api/routers/host chat module`) → `api/services/host chat module::chat` → `conversation_control/`. It shows where
 perception, short-circuits, `decide_turn`, delivery, and ledger writes happen.
 
-**Honest framing.** This documents the flow **as it is**, not the idealized "one router → `decide_turn`"
-version in the [SDK contract](conversation-control-plane-sdk.md). Reality is a **gauntlet interleaved with
-perception**: finite/code-owned paths can answer **before** `decide_turn`; S4 made the **unified router** the
-main perception hop; **post-router** prose enqueue is preferred over pre-router early enqueue. Line anchors
-drift — prefer **function names** over line numbers when debugging.
+### Gauntlet vs ledger (do not conflate)
+
+| Layer | What it is | Who owns it |
+|---|---|---|
+| **Ledger + `decide_turn`** | Portable **control plane** — claim, projection, journal, single writer, phase/pin gates | **Conversation Control Plane SDK** |
+| **Gauntlet** | Bot0 **orchestrator / host** choices around that plane — pre- and post-`decide_turn` short-circuits, unified-router wiring, prose-intake readiness, product delivery leaves | **Bot0 product** (`bot0.chat`), **not** the ledger schema |
+
+The gauntlet was **our product decision** to harden multi-agent chat quality and delivery order. It is **not**
+required by the control plane contract. Adopters can run a thin host:
+
+`claim → router labels → decide_turn → handle_turn → apply_transition → release`
+
+without any Bot0-named gauntlet stages. This document maps **Bot0 host + plane together** so monorepo
+debuggers see the real turn. For a **portable-only** picture (no gauntlet names), see the SDK host loop
+([README On-ramp](../../extract/conversation-control-plane/README.md) / SDK §1) — a second mermaid
+(**“adopter host loop only”**) can be added to the public package later without changing the ledger.
+
+**Honest framing.** This documents Bot0 **as it is**, not the idealized portable host above. Reality is a
+**gauntlet interleaved with perception**: finite/code-owned paths can answer **before** `decide_turn`; S4 made
+the **unified router** the main perception hop; **post-router** prose enqueue is preferred over pre-router early
+enqueue. Line anchors drift — prefer **function names** over line numbers when debugging.
 
 **Ownership (2026-07-09).** Who manages memory vs front door vs multi-agent ownership is **not** siloed in this
 diagram alone — see [SDK §0.1.2](conversation-control-plane-sdk.md#012-who-owns-what--front-door-multi-agent-ownership-memory-expectations)

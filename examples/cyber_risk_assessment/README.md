@@ -3,16 +3,16 @@
 **Status:** **Optional shape pin** — not production product code, not the primary on-ramp.
 
 Most coding agents should start from the package [README On-ramp](../../README.md)
-(**lessons learnt + kickoff prompt**). The SDK doc is the **spec** for lookup. This folder is a
+(**design principles + kickoff prompt**). The SDK doc is the **spec** for lookup. This folder is a
 **token saver** when you want a concrete KindSpec / thin payload / sole-writer host — agents can
-usually generate the same shape from the lessons alone. Full product cyber (LangGraph strategist,
+usually generate the same shape from the principles alone. Full product cyber (LangGraph strategist,
 scoring engines) is intentionally **not** shipped here.
 
 ## Developer surface (keep small)
 
 | Artifact | Role |
 |---|---|
-| Package [README](../../README.md) **On-ramp** | Lessons learnt, setup, **kickoff prompt** (start here) |
+| Package [README](../../README.md) **On-ramp** | Design principles, setup, **kickoff prompt** (start here) |
 | [SDK contract](../../docs/conversation-control-plane-sdk.md) | Spec for lookup — not cover-to-cover |
 | **This example** | Optional runnable shape (KindSpec, thin pins, HITL VERIFY, host sketch) |
 

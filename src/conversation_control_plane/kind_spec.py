@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping, Optional
 
-from api.services.conversation_control.multi_turn_stream_contract import (
+from conversation_control_plane.multi_turn_stream_contract import (
     CONTINUE_PHASES_BY_KIND,
     COST_OUT_KIND,
     CYBER_RISK_KIND,

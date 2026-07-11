@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from api.services.conversation_control.contract import (
+from conversation_control_plane.contract import (
     ActiveTask,
     PendingSwitch,
     TurnPlan,
@@ -40,7 +40,7 @@ from api.services.conversation_control.contract import (
     canonical_agent,
     ledger_kind_for_agent,
 )
-from api.services.conversation_control.ledger import (
+from conversation_control_plane.ledger import (
     get_control_state,
     propose_switch,
     begin_task,
@@ -65,13 +65,13 @@ def _perceive_relative_intent(
     unified_signal: Any = None,
 ) -> Any:
     """Relative task perception for decide_turn — no duplicate LLM when S4 signal exists."""
-    from api.services.conversation_control.classifier import classify_intent, _fast_path
+    from conversation_control_plane.classifier import classify_intent, _fast_path
 
     fp = _fast_path(query, active_task)
     if fp is not None:
         return fp
     if unified_signal is not None:
-        from api.services.conversation_control.unified_turn_router import (
+        from conversation_control_plane.unified_turn_router import (
             intent_result_from_unified,
         )
         return intent_result_from_unified(unified_signal)
@@ -140,7 +140,7 @@ def decide_turn(
     # Live agent cost preview — LLM-owned signal on IntentRoute (not a keyword gate).
     # Multi-turn: kind=cost_out continues without clearing; otherwise open cost_out.
     if cost_estimate_request:
-        from api.services.conversation_control.task_pin_contract import (
+        from conversation_control_plane.task_pin_contract import (
             COST_OUT_KIND,
             ensure_cost_out_task,
         )
@@ -200,7 +200,7 @@ def decide_turn(
             discovery_kind = getattr(live_route, 'discovery_kind') or "none"
         elif isinstance(live_route, dict):
             discovery_kind = live_route.get('discovery_kind') or "none"
-    from api.services.conversation_control.delivery_order_contract import (
+    from conversation_control_plane.delivery_order_contract import (
         is_front_door_detour_kind,
     )
 
@@ -309,17 +309,39 @@ def decide_turn(
     # a wordlist inside the control plane (conv_9594c5). Mirrors the same removal from
     # classifier._EXACT_RESET_COMMANDS (commit 27f8a927) — this was the duplicate that
     # still hard-mapped "start over" -> abandon and defeated that fix.
-    from api.services.conversation_control.reset_commands import is_exact_reset_command
+    from conversation_control_plane.reset_commands import is_exact_reset_command
 
     if is_exact_reset_command(q):
         if control.get("pending_question"):
-            from api.services.conversation_control.ledger import clear_pending_question
+            from conversation_control_plane.ledger import clear_pending_question
 
             clear_pending_question(
                 db, tenant_id, conversation_id, reason="user_reset",
             )
-        plan = TurnPlan(agent="bot0", mode="command", reason="Reset command")
-        # In real later: ledger.complete_task(..., ABANDON)
+        # COMPLETE ≠ ABANDON: exact reset clears active ownership via abandon
+        # (distinct journal event type — not the success complete path).
+        if isinstance(current_active, dict) and current_active:
+            try:
+                _agent = str(current_active.get("agent") or "bot0")
+                complete_task(
+                    db,
+                    tenant_id,
+                    conversation_id,
+                    agent=_agent,
+                    reason="abandon",
+                    task_id=(
+                        current_active.get("task_id")
+                        if isinstance(current_active.get("task_id"), str)
+                        else None
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — never block command ack on journal glitch
+                logger.debug("reset abandon complete_task failed", exc_info=True)
+        plan = TurnPlan(
+            agent="bot0",
+            mode="command",
+            reason="Reset command — abandon",
+        )
         _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent, live_route_layer, "command")
         return plan
 
@@ -344,11 +366,11 @@ def decide_turn(
     # sessions cannot intercept a bare "2".
     current_pending_q = control.get("pending_question")
     if current_pending_q:
-        from api.services.conversation_control.pending_question import (
+        from conversation_control_plane.pending_question import (
             is_finite_grammar_pick as _is_finite_pick,
             pending_question_is_stale as _pending_q_stale,
         )
-        from api.services.conversation_control.ledger import clear_pending_question
+        from conversation_control_plane.ledger import clear_pending_question
 
         if _pending_q_stale(current_pending_q, db=db):
             clear_pending_question(
@@ -367,7 +389,7 @@ def decide_turn(
             return plan
         else:
             # Systemic: ordinal_stream_contract owns same-turn open vs supersede.
-            from api.services.conversation_control.ordinal_stream_contract import (
+            from conversation_control_plane.ordinal_stream_contract import (
                 should_supersede_pending_on_non_pick as _should_super_pq,
             )
 
@@ -381,7 +403,7 @@ def decide_turn(
     # replies bind to it BEFORE generic active_task heuristics or a stale
     # workflow_builder session can run extraction on bare text ("Built it").
     try:
-        from api.services.conversation_control.referential_turn import (
+        from conversation_control_plane.referential_turn import (
             discover_active_artifact,
             plan_from_referential_binding,
             resolve_referential_binding,
@@ -668,7 +690,7 @@ def decide_turn(
         confidence = 0.0
         if isinstance(_carried_draft, dict) and _carried_draft.get("steps"):
             try:
-                from api.services.conversation_control.prose_intake_contract import (
+                from conversation_control_plane.prose_intake_contract import (
                     resolve_carried_draft_turn_kind,
                 )
 
@@ -729,7 +751,7 @@ def decide_turn(
         # Complete the prior drafting task and open a fresh empty drafting task so the
         # turn produces a new informative draft (not "Updated draft:").
         q = (query or "").strip()
-        from api.services.conversation_control.workflow_intake import (
+        from conversation_control_plane.workflow_intake import (
             drafting_fork_reply_in_progress as _fork_reply_in_progress,
         )
 
@@ -753,7 +775,7 @@ def decide_turn(
                     else None
                 ),
             )
-            from api.services.conversation_control.workflow_intake import (
+            from conversation_control_plane.workflow_intake import (
                 drafting_pending_ref as _drafting_pending_ref,
             )
 
@@ -795,7 +817,7 @@ def decide_turn(
                 ),
             )
             # S5: unified handoff
-            from api.services.conversation_control.ledger import handoff as _unified_handoff
+            from conversation_control_plane.ledger import handoff as _unified_handoff
             _unified_handoff(
                 db, tenant_id, conversation_id,
                 target_agent="workflow_builder",
@@ -897,7 +919,7 @@ def decide_turn(
             suspend_active(db, tenant_id, conversation_id, reason="drafting_detour")
         _open_q = (query or "").strip()
         _open_domain = _open_q[:500] if len(_open_q) > 10 else None
-        from api.services.conversation_control.workflow_intake import (
+        from conversation_control_plane.workflow_intake import (
             drafting_pending_ref as _drafting_pending_ref,
         )
 
@@ -958,7 +980,7 @@ def decide_turn(
         merged_ctx = {**(context or {}), **control}
         if agent == "workflow_builder":
             try:
-                from api.services.conversation_control.workflow_builder_post_commit import (
+                from conversation_control_plane.workflow_builder_post_commit import (
                     is_workflow_builder_post_commit as _is_wb_post_commit,
                     release_post_commit_builder as _release_wb_post_commit,
                 )
@@ -1140,7 +1162,7 @@ def decide_turn(
             _named_target or (not at_specific_gate and _route_conf >= 0.7)
         ):
             to_agent = _canonical((perceived.target_task if perceived else "") or "") or live_route_intent or agent
-            from api.services.conversation_control.handoff_guard import (
+            from conversation_control_plane.handoff_guard import (
                 append_handoff_trace,
                 read_handoff_trace,
                 would_ping_pong,
@@ -1205,22 +1227,51 @@ def decide_turn(
         # swallowed by a stale active builder just because the relative-task classifier said
         # "continue".
         bot0_midflight_detour = route_broke_to_bot0 and not at_specific_gate
+        # Finite confirm/decline at an *armed* gate (or sole-continue stream) is
+        # continue-shaped for resume + session reorient — independent of router
+        # label. Bare "yes" after 10h at cost_profile_save_confirm was missing
+        # reorient when the router did not emit intent=continue (conv_e6b8154e).
+        _finite_gate_ack = False
+        if at_specific_gate or bool(awaiting):
+            try:
+                from conversation_control_plane.finite_confirm_grammar import (
+                    is_exact_confirm_or_decline as _is_finite_ack,
+                )
+
+                _finite_gate_ack = _is_finite_ack(query)
+            except Exception:  # noqa: BLE001
+                _finite_gate_ack = False
+            if not _finite_gate_ack and awaiting == "cost_profile_save_confirm":
+                try:
+                    from api.services.agent_cost_profile_save import (
+                        is_cost_profile_save_confirm as _is_cost_yes,
+                    )
+
+                    _finite_gate_ack = _is_cost_yes(query or "")
+                except Exception:  # noqa: BLE001
+                    pass
         continues = (
             (intent == "continue" and not bot0_midflight_detour)
             or (intent in (None, "unclear", "handoff") and heuristic_answers and not route_broke_to_bot0)
+            or (_finite_gate_ack and at_specific_gate and not bot0_midflight_detour)
         ) and not fresh_new_spec  # fresh new spec wins over heuristic continue for same agent
         # Session reorient: specific gates OR sole-continue mid-stream after long gap.
         # (Silent "continue" after hours is a multi-turn trust failure — all paints.)
         _kind_for_stale = str(current_active.get("kind") or "").strip()
         try:
-            from api.services.conversation_control.multi_turn_stream_contract import (
+            from conversation_control_plane.multi_turn_stream_contract import (
                 is_sole_continue_kind as _is_sole_cont,
             )
             _sole_for_stale = _is_sole_cont(_kind_for_stale) or _kind_for_stale == "workflow_build"
         except Exception:  # noqa: BLE001
             _sole_for_stale = _kind_for_stale == "workflow_build"
-        if continues and (at_specific_gate or _sole_for_stale):
-            from api.services.conversation_control.session_staleness import (
+        # Reorient also when finite ack + multi-turn even if continues stayed
+        # false (router mislabel) — still before silent commit of a 10h-old gate.
+        _reorient_candidate = continues or (
+            _finite_gate_ack and (_sole_for_stale or at_specific_gate)
+        )
+        if _reorient_candidate and (at_specific_gate or _sole_for_stale):
+            from conversation_control_plane.session_staleness import (
                 should_reorient_before_acting as _should_reorient,
             )
             if _should_reorient(db, context=context, query=query):

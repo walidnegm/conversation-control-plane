@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from api.services.conversation_control.contract import canonical_agent
+from conversation_control_plane.contract import canonical_agent
 
 _HANDOFF_TRACE_KEY = "_handoff_trace"
 _DETOUR_TRACE_KEY = "_detour_delivery_trace"

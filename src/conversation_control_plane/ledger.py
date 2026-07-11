@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 try:
     from api.services.event_logger import log_platform_event
-except ImportError:  # public extract / Phase 1b without monorepo host
+except ImportError:  # public extract without monorepo host
     def log_platform_event(*_a: Any, **_k: Any) -> None:  # type: ignore[misc]
         return None
 
@@ -244,7 +244,7 @@ def _raise_if_stale_update(
         return
     if rowcount and rowcount > 0:
         return
-    from api.services.conversation_control.failure_modes import StaleControlRevisionError
+    from conversation_control_plane.failure_modes import StaleControlRevisionError
 
     actual = get_control_revision(db, tenant_id, conversation_id)
     raise StaleControlRevisionError(
@@ -270,7 +270,7 @@ def assert_expected_version(
     if expected_version is None:
         return actual
     if int(expected_version) != actual:
-        from api.services.conversation_control.failure_modes import StaleControlRevisionError
+        from conversation_control_plane.failure_modes import StaleControlRevisionError
 
         raise StaleControlRevisionError(
             expected=int(expected_version),
@@ -395,7 +395,7 @@ def _set_jsonb_key(
     )
 
 # Control keys that the ledger is allowed to touch (single-writer enforcement).
-from api.services.conversation_control.ledger_keys import LEDGER_MUTABLE_PROJECTION_KEYS
+from conversation_control_plane.ledger_keys import LEDGER_MUTABLE_PROJECTION_KEYS
 
 _CONTROL_KEYS = set(LEDGER_MUTABLE_PROJECTION_KEYS)
 
@@ -430,7 +430,7 @@ def get_control_state(
         return {}
 
     context = row[0] or {}
-    from api.services.conversation_control.pending_question import read_pending_question
+    from conversation_control_plane.pending_question import read_pending_question
 
     return {
         "agent_type": row[1],
@@ -484,7 +484,7 @@ def handoff(
     """Single entry for handoff. Sets pending or begins task.
     Called from decide_turn / dispatch for coherence.
     """
-    from api.services.conversation_control.contract import ledger_kind_for_agent
+    from conversation_control_plane.contract import ledger_kind_for_agent
 
     kind = ledger_kind_for_agent(target_agent) or "handoff"
     try:
@@ -517,7 +517,7 @@ def propose_switch(
     expected_version: Optional[int] = None,
 ) -> dict[str, Any]:
     """Record a pending agent switch. Single writer for pending_switch key."""
-    from api.services.conversation_control.ledger_journal import (
+    from conversation_control_plane.ledger_journal import (
         append_control_event,
         new_command_id,
     )
@@ -610,7 +610,7 @@ def resolve_switch(
     one FOR UPDATE, optionally suspend active_task, clear pending_switch, begin
     the target agent task, and append a single journal event.
     """
-    from api.services.conversation_control.ledger_journal import (
+    from conversation_control_plane.ledger_journal import (
         append_control_event,
         find_event_by_command_id,
         new_command_id,
@@ -793,7 +793,7 @@ def set_pending_question(
     ``purpose`` isolates ordinals across multi-turn streams (cost vs inventory vs
     scorecards) — see ``task_pin_contract.PURPOSE_*``.
     """
-    from api.services.conversation_control.pending_question import build_pending_question
+    from conversation_control_plane.pending_question import build_pending_question
 
     payload = build_pending_question(
         kind=kind,
@@ -954,13 +954,13 @@ def begin_task(
     thin control metadata (pins/gates) — never IR/graph blobs.
     ``expected_version`` fences the projection write (None = no fence).
     """
-    from api.services.conversation_control.ledger_journal import (
+    from conversation_control_plane.ledger_journal import (
         append_control_event,
         find_event_by_command_id,
         new_command_id,
         new_task_id,
     )
-    from api.services.conversation_control.task_phase_registry import (
+    from conversation_control_plane.task_phase_registry import (
         require_valid_task_fields,
     )
 
@@ -997,7 +997,7 @@ def begin_task(
     if effective_kind is not None:
         task["kind"] = effective_kind
     if payload is not None:
-        from api.services.conversation_control.control_payload import (
+        from conversation_control_plane.control_payload import (
             sanitize_control_payload,
         )
 
@@ -1261,7 +1261,7 @@ def update_phase(
         # Defensive — caller should have validated via resolve_pending first
         task = {"agent": agent}
 
-    from api.services.conversation_control.task_phase_registry import (
+    from conversation_control_plane.task_phase_registry import (
         require_valid_task_fields,
     )
 
@@ -1285,7 +1285,7 @@ def update_phase(
     elif kind is not None:
         task["kind"] = kind
     if payload is not None:
-        from api.services.conversation_control.control_payload import (
+        from conversation_control_plane.control_payload import (
             sanitize_control_payload,
         )
 
@@ -1500,7 +1500,7 @@ def complete_task(
     Projection clear is shared; event identity is not.
     ``expected_version`` fences the clear (None = no fence).
     """
-    from api.services.conversation_control.ledger_journal import (
+    from conversation_control_plane.ledger_journal import (
         append_control_event,
         find_event_by_command_id,
         new_command_id,
@@ -1662,7 +1662,7 @@ def apply_transition(
 
     Centralizing this is what lets the retirement slices delete the scattered
     ad-hoc control writes: every control mutation now has exactly one path in."""
-    from api.services.conversation_control.contract import TaskTransition
+    from conversation_control_plane.contract import TaskTransition
 
     t = transition
     if t == TaskTransition.BEGIN:
@@ -1708,7 +1708,7 @@ def apply_transition_request(
     payload: Optional[dict[str, Any]] = None,
 ) -> None:
     """Map a ``TaskTransitionRequest`` (or compatible AgentTurnResult fields) to ledger writes."""
-    from api.services.conversation_control.contract import TaskTransitionRequest
+    from conversation_control_plane.contract import TaskTransitionRequest
 
     if isinstance(request, TaskTransitionRequest):
         apply_transition(
@@ -1922,7 +1922,26 @@ def claim_turn(
     ttl_seconds: float | None = None,
     orphan_steal_seconds: float | None = None,
     session_factory=None,
+    fail_open_on_error: bool = False,
 ) -> Literal["claimed", "busy", "no_row", "unavailable"]:
+    """Atomically claim the turn slot for a conversation.
+
+    Returns:
+      "claimed"     — this turn now owns the conversation; caller MUST
+                      release_turn() in a finally.
+      "busy"        — another turn holds a live claim; caller should surface
+                      a typed conflict (never proceed).
+      "no_row"      — no conversations row exists (anonymous/threadless
+                      turn); nothing to serialize against — proceed unclaimed.
+      "unavailable" — only when ``fail_open_on_error=True`` and infrastructure
+                      failed. **Default is fail-closed** (raises
+                      ``TurnClaimInfrastructureError``) so hosts never run the
+                      turn unclaimed under DB errors.
+
+    Hosts that receive "unavailable" or the raised error must **not** execute
+    the turn as if claimed — that is double-run risk, the failure mode this API
+    exists to prevent.
+    """
     ttl_seconds = (
         float(ttl_seconds)
         if ttl_seconds is not None
@@ -1933,23 +1952,12 @@ def claim_turn(
         if orphan_steal_seconds is not None
         else _turn_claim_orphan_steal_seconds(None)
     )
-    """Atomically claim the turn slot for a conversation.
-
-    Returns:
-      "claimed"     — this turn now owns the conversation; caller MUST
-                      release_turn() in a finally.
-      "busy"        — another turn holds a live claim; caller should surface
-                      a typed conflict (never proceed).
-      "no_row"      — no conversations row exists (anonymous/threadless
-                      turn); nothing to serialize against — proceed unclaimed.
-      "unavailable" — claim infrastructure failed; proceed unclaimed
-                      (fail-open, logged).
-    """
     if not conversation_id or not tenant_id:
         return "no_row"
     factory = session_factory or _turn_claim_session_factory()
-    session = factory()
+    session = None
     try:
+        session = factory()
         result = session.execute(
             text(
                 """
@@ -2014,19 +2022,41 @@ def claim_turn(
         )
         session.commit()
         return "busy"
-    except Exception:
+    except Exception as exc:
         import logging
-        logging.getLogger(__name__).warning(
-            "claim_turn failed (fail-open, proceeding unclaimed): conversation=%s",
-            conversation_id, exc_info=True,
+
+        logging.getLogger(__name__).error(
+            "claim_turn failed (fail-closed default): conversation=%s",
+            conversation_id,
+            exc_info=True,
         )
-        try:
-            session.rollback()
-        except Exception:
-            pass
-        return "unavailable"
+        if session is not None:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+        if fail_open_on_error:
+            logging.getLogger(__name__).warning(
+                "claim_turn fail_open_on_error=True → unavailable: conversation=%s",
+                conversation_id,
+            )
+            return "unavailable"
+        from conversation_control_plane.failure_modes import (
+            TurnClaimInfrastructureError,
+        )
+
+        raise TurnClaimInfrastructureError(
+            "turn claim infrastructure unavailable",
+            conversation_id=conversation_id,
+            tenant_id=tenant_id,
+            cause=exc,
+        ) from exc
     finally:
-        session.close()
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
 
 
 def mark_turn_completed(

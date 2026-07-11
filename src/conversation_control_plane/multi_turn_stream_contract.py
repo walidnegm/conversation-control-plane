@@ -73,7 +73,7 @@ def is_sole_continue_kind(kind: str | None) -> bool:
 
 # Prefer monorepo task_pin registry when present (single source of kind strings).
 try:
-    from api.services.conversation_control.task_pin_contract import (  # type: ignore
+    from conversation_control_plane.task_pin_contract import (  # type: ignore
         COST_OUT_KIND as COST_OUT_KIND,
         CYBER_RISK_KIND as CYBER_RISK_KIND,
         DRAFTING_KIND as DRAFTING_KIND,

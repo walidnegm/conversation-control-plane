@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from api.services.conversation_control.ledger_journal import list_control_events
+from conversation_control_plane.ledger_journal import list_control_events
 
 
 def rebuild_control_projection(

@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from api.services.conversation_control.discovery_intent import (
+from conversation_control_plane.discovery_intent import (
     DISCOVERY_DETOUR_KINDS,
     is_discovery_detour_kind,
 )
@@ -312,7 +312,7 @@ def select_exclusive_turn_owner(
     # Pin refine enum (post-authority) always owns cost_out — never draft/abandon.
     if signal is not None:
         try:
-            from api.services.conversation_control.cost_pin_refine import (
+            from conversation_control_plane.cost_pin_refine import (
                 is_pin_refine_kind as _is_pin_refine,
             )
 
@@ -325,7 +325,7 @@ def select_exclusive_turn_owner(
         except Exception:  # noqa: BLE001
             pass
     try:
-        from api.services.conversation_control.task_pin_contract import (
+        from conversation_control_plane.task_pin_contract import (
             exclusive_owner_for_active_kind,
         )
 
@@ -384,7 +384,7 @@ def select_exclusive_turn_owner(
         return ExclusiveTurnOwner("realization", "read_kind=realization_intake")
 
     try:
-        from api.services.conversation_control.read_intent import (
+        from conversation_control_plane.read_intent import (
             PROJECT_SURFACE_READ_KINDS,
             WORKFLOW_SURFACE_READ_KINDS,
             WORKFLOW_SURFACE_SIMULATION_KINDS,
@@ -470,7 +470,7 @@ def sole_continue_blocks_concept_gate_owner(
     releases (classifier-owned).
     """
     try:
-        from api.services.conversation_control.task_pin_contract import (
+        from conversation_control_plane.task_pin_contract import (
             active_kind_blocks_front_door_leaves,
         )
 

@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal, Optional, Protocol
 
-from api.services.conversation_control.ledger_keys import (
+from conversation_control_plane.ledger_keys import (
     CONTROL_KEYS,
     LEDGER_CONTROL_KEYS,
 )

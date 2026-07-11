@@ -1,13 +1,16 @@
-# Phase 1b extraction manifest — Conversation Control Plane SDK portable slice.
+# Public extraction manifest — Conversation Control Plane SDK portable slice.
 # Source of truth: Bot0 monorepo. Destination: github.com/walidnegm/conversation-control-plane
 #
-# Public bundle is intentionally small: README + SDK contract + lifecycle diagram.
-# Operational runbooks (loop, trace export, scale smoke) stay in the monorepo only.
+# Public package surface: src/conversation_control_plane/ (NOT top-level api/).
+# Sync rewrites monorepo api.services.conversation_control.* → conversation_control_plane.*
 
-sdk_version: "0.1.0-extract"
+sdk_version: "0.1.0"
 contract_doc: docs/epics/conversation-control-plane-sdk.md
 public_repo: https://github.com/walidnegm/conversation-control-plane
+license: MIT
 
+# Modules copied from monorepo then rewritten into conversation_control_plane/.
+# Do NOT include discovery_intent (LLM classifier — host product, not authority path).
 modules:
   - api/services/conversation_control/chat_dispatch_contract.py
   - api/services/conversation_control/delivery_order_contract.py
@@ -15,7 +18,6 @@ modules:
   - api/services/conversation_control/contract.py
   - api/services/conversation_control/decide.py
   - api/services/conversation_control/dispatch_phase.py
-  - api/services/conversation_control/discovery_intent.py
   - api/services/conversation_control/ledger.py
   - api/services/conversation_control/ledger_keys.py
   - api/services/conversation_control/ledger_journal.py
@@ -25,8 +27,9 @@ modules:
   - api/services/conversation_control/projection_rebuild.py
   - api/services/conversation_control/handoff_guard.py
   - api/services/conversation_control/post_save_setup_entry.py
-  # Portable multi-turn continue gates (self-contained; no private product handlers).
   - api/services/conversation_control/multi_turn_stream_contract.py
+  - api/services/conversation_control/reset_commands.py
+  - api/services/conversation_control/failure_modes.py
 
 docs:
   - docs/epics/conversation-control-plane-sdk.md
@@ -38,19 +41,19 @@ public_bundle:
     - conversation-control-plane-sdk.md
     - conversation-turn-lifecycle-diagram.md
   replace_section_15: docs/section-15-public.md
-  sanitize_lifecycle: true  # §7 bot0.py anchors → portable reference/ modules
-  # Monorepo-only (implementation playbook / docs/epics/) — not published:
+  sanitize_lifecycle: true
+  package_root: src/conversation_control_plane
+  # Monorepo-only (not published as separate files):
   # - conversation-control-plane-loop-playbook.md  → SDK §3.1
   # - conversation-control-plane-trace-export.md   → SDK §11.1
-  # - conversation-control-plane-scale-smoke.md    → SDK §3.1 Q1, §11.2
+  # - conversation-control-plane-scale-smoke.md    → SDK §3.1 Q1
 
 examples:
   - extract/conversation-control-plane/examples/README.md
+  - extract/conversation-control-plane/examples/e2e_host_loop.py
   - extract/conversation-control-plane/examples/cyber_risk_assessment/
 
 regression_pins:
-  - regression_suite/test_chat_dispatch_contract.py
-  - regression_suite/test_delivery_order_contract.py
-  - regression_suite/test_control_plane_sdk_deliverables.py
+  - extract/conversation-control-plane/tests/
   - regression_suite/test_public_sdk_publish_bundle.py
   - regression_suite/test_decide_turn_control_plane.py

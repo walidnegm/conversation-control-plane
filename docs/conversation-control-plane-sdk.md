@@ -9,12 +9,12 @@
 | **Role** | Reference implementation (Bot0 monorepo today) + **public repo** (extraction destination) + integration contract (this document) |
 | **Citation** | *Conversation Control Plane SDK* (reference implementation by Bot0.ai). Public repo: `https://github.com/walidnegm/conversation-control-plane`. Integration contract: `docs/conversation-control-plane-sdk.md` |
 | **Code identity** | `api/services/conversation_control/sdk_identity.py` |
-| **Future package slugs (Phase 1b)** | PyPI `conversation-control-plane` · npm `@bot0/conversation-control-plane` — **not published yet** |
+| **Future package slugs** | PyPI `conversation-control-plane` · npm `@bot0/conversation-control-plane` — **not published yet** |
 
-Status: Living reference implementation (2026-07-07) — **integration contract available now**; **public repo scaffolded**; standalone `pip install` in Phase 1b (§0.3)
+Status: Living reference implementation (2026-07-07) — **integration contract available now**; **public repo scaffolded**; standalone registry `pip install` is **future** (§0.3)
 Owner: Bot0 control-plane / conversation layer
 Reference code: `api/services/conversation_control/` (+ specialist modules below — monorepo-embedded today; syncs to the public repo)
-License / distribution: **Public GitHub repo** — early extraction; package registry publish still Phase 1b
+License / distribution: **Public GitHub repo** — early extraction; package registry publish is **future**
 
 ### Getting started — core concepts in five minutes
 
@@ -151,12 +151,17 @@ reference implementation and portable contract:
 | Document | Role |
 |---|---|
 | **This SDK** | Portable contract (you are here) |
-| [conversation-turn-lifecycle-diagram.md](conversation-turn-lifecycle-diagram.md) | One-turn code-grounded diagram |
+| [conversation-turn-lifecycle-diagram.md](conversation-turn-lifecycle-diagram.md) | One-turn map of **Bot0 host + plane** (includes product **gauntlet** — not part of the ledger) |
 | [§ Ledger maturity L1→L2](#ledger-maturity-l1l2--model-a) | L2 Model A program (storage + interaction integrity) — full epic stays monorepo |
 | Bot0 implementation playbook (monorepo only) | Internal slice status + readiness rules — **not** for external adopters |
 | Bot0 agent-architecture (monorepo only) | Per-agent engines and audit |
 
 Public bundle = this document + lifecycle diagram + package README.
+
+**Gauntlet ≠ ledger.** The Bot0 **gauntlet** (pre/post-`decide_turn` short-circuits, readiness layers in
+`bot0.chat`) is a **host/orchestrator** product choice. The control plane is only claim · `decide_turn` ·
+projection · journal · transitions. See lifecycle diagram § *Gauntlet vs ledger*. A second public diagram
+(**adopter host loop only**, no gauntlet names) is optional follow-on packaging — not a new authority store.
 
 **Layered stack, not a rip-and-replace.** Modern agent products combine tools from the ecosystem. LangGraph,
 CrewAI, and Temporal are strong **execution** layers — graphs, crews, durable workflows. This SDK formalizes
@@ -167,10 +172,10 @@ on those primitives; this document shows how to **compose** them. Full layering 
 
 | Stage | What you can do today |
 |---|---|
-| **Public home (scaffold)** | [github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane) — reference code + docs synced; **monorepo remains authoritative** until `pip install` (Phase 1b) |
+| **Public home (scaffold)** | [github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane) — README stub; **monorepo reference code is authoritative** until full package registry publish |
 | **Contract (now)** | Port ledger semantics and wire `decide_turn` against your conversations store |
 | **Reference code (now)** | Study `api/services/conversation_control/` in the Bot0 monorepo (sync source for the public repo) |
-| **Package (Phase 1b)** | `pip install` / `npm install` — milestone in §15 |
+| **Package (future)** | `pip install` / `npm install` — milestone in §15 |
 
 The contract is **stable enough to design and integrate against today**. The published package boundary is the
 remaining adoption convenience — not a blocker on reading, porting, or regression-pinning the semantics.
@@ -197,7 +202,12 @@ code**, and **where the contract lives**. This project follows that split:
 | **Vendor SDK** | Temporal Go SDK, Vercel AI SDK | **Conversation Control Plane SDK by Bot0.ai** — the product name adopters cite |
 | **Spec + reference implementation** | OpenTelemetry Specification + language SDKs | **This document** = integration contract (spec); **`api/services/conversation_control/`** = reference implementation |
 | **Short informal label** | "the OTel SDK", "LangGraph" | **Control Plane SDK** — fine in internal docs; prefer the full name in papers, READMEs, and package metadata |
-| **Future package install** | `pip install temporalio`, `@vercel/ai` | Reserved slugs only until Phase 1b: `conversation-control-plane` / `@bot0/conversation-control-plane` |
+| **Future package install** | `pip install temporalio`, `@vercel/ai` | Reserved slugs (not on PyPI/npm yet): `conversation-control-plane` / `@bot0/conversation-control-plane` |
+
+**Plain-language framing (no product-wide rename):** we call this a *conversation control plane* for short.
+In plain terms it is a **conversation turn-ownership ledger** — who owns the thread, gates, and resume —
+not an IAM/governance “control plane,” and not an agent runtime. Keep the brand name; use the
+turn-ownership phrase when explaining value to newcomers.
 
 **Recommended README line (public repo + monorepo mirror):**
 
@@ -207,7 +217,7 @@ https://github.com/walidnegm/conversation-control-plane
 Integration contract: docs/conversation-control-plane-sdk.md (Bot0 monorepo; syncs to public repo)
 ```
 
-**Do not imply** `pip install` / `npm install` works until Phase 1b (§15 extraction gate) clears.
+**Do not imply** `pip install` / `npm install` works until the package is published to a registry (§15).
 Until then, star/clone the **public repo**, cite the spec path and vendor attribution; wire reference code via monorepo import, public repo checkout, or port.
 
 Canonical string constants (for tooling, tests, generated headers): `sdk_identity.py`.
@@ -324,7 +334,7 @@ and **determinism** that fights LLM chat. This SDK owns the gap on the **SQL you
 | Ecosystem default | Where it hurts in multi-specialist chat | This SDK |
 |---|---|---|
 | LangChain / CrewAI / AutoGen | State is an afterthought; handoffs and “continue” re-inferred from text | DB-authoritative **projection + journal** for ownership |
-| Temporal-class infra | Steep curve; workflow engine semantics; strict replay/determinism | **Snapshot-and-resume** control slice — not a second workflow product |
+| Temporal / durable workflows | Excellent for long-running work, retries, timers | **Compose** for that layer; this plane owns **chat turn ownership**, not workflow replay |
 | LangGraph alone | Excellent DAG/checkpoint; weak *queryable* “who owns the thread?” | `active_task` / claims / `decide_turn` **above** your graph |
 | LlamaIndex / RAG | Data retrieval | **Out of scope** — compose; ledger does not own embeddings |
 
@@ -658,10 +668,10 @@ the turn + ref → agent loads its own store and continues.
 See also: Layer 3 memory table above · §2.1 multi-turn stream · §4 two parallel state systems ·
 `contract.py` (`TaskTransition`, `AgentTurnResult`, `CONTROL_KEYS`).
 
-### 0.1.4 Day-2 operations — visibility (SQL-native, not Temporal Web UI)
+### 0.1.4 Day-2 operations — SQL-native visibility
 
-Engineers love Temporal’s Web UI because **stuck work is clickable**. A DB-authoritative control plane can
-match that *for chat ownership* without embedding a graph IDE in the package:
+Stuck work is **queryable**. A DB-authoritative control plane exposes chat ownership without embedding
+a graph IDE in the package:
 
 | Question | Read model | API / store |
 |---|---|---|
@@ -737,7 +747,7 @@ classifiers — that teams otherwise rebuild inside LangGraph after production i
 
 ### 0.3 What ships today vs the extraction milestone
 
-| Today (monorepo reference + public repo scaffold) | Extraction milestone (Phase 1b) |
+| Today (monorepo reference + public repo scaffold) | Future package milestone |
 |---|---|
 | Contract doc + regression pins; [public GitHub repo](https://github.com/walidnegm/conversation-control-plane) live | Versioned `pip install` / `npm install` + adapter interfaces |
 | `conversation_control/` embedded in Bot0 API (sync source) | Dependency boundary for your DB/LLM |
@@ -746,7 +756,7 @@ classifiers — that teams otherwise rebuild inside LangGraph after production i
 
 **Do now:** read §1 bootstrap, map your agents to §9.1 **patterns**, wire `decide_turn` + ledger against your
 store. Pin §5 invariants in your test suite. (Bot0-specific agent inventory: host monorepo agent catalog — internal.)
-**Phase 1b adds:** published package boundary + adapter interfaces — convenience, not a prerequisite on the contract.
+**Future package work adds:** published package boundary + adapter interfaces — convenience, not a prerequisite on the contract.
 
 ### 0.4 DB-backed ≠ the differentiator — ledger *semantics* are
 
@@ -834,7 +844,7 @@ deployments. A single-agent tool loop does not need Tier 2.
 
 **Reference pattern vs consumable SDK**
 
-Until Phase 1b clears (§0.3, §15), treat this as:
+Until registry publish lands (§0.3, §15), treat this as:
 
 1. **Integration contract** — types, invariants, precedence rules you can port to any stack.
 2. **Reference implementation** — Bot0 monorepo (host monorepo agent catalog for per-agent paths; still coupled to LLM factory, prompt library, tenant SQL).
@@ -867,21 +877,21 @@ Traces are **always written server-side** regardless of whether the user toggles
 **debug/design affordance** (may later be testing-only); the **stable JSON contract** is what adopters
 persist and export (§11.1).
 
-| Today (Bot0 reference) | Phase 2+ (export, not in-house graph UI) |
+| Today (Bot0 reference) | future (export, not in-house graph UI) |
 |---|---|
 | Routing debug strip + `route_data` persistence | Documented **trace export schema** for OTel/Langfuse/etc. |
 | Superadmin ledger inspector panel | Standalone timeline API + sample Grafana/Langfuse dashboards |
 | `get_control_state` for projection | `control_revision` diff / time-travel queries |
 | Optional LangGraph execution host (§8) | **Third-party** graph viz on execution subgraphs — separate from control-plane traces |
 
-**Do not wait for Phase 2** to inspect routing in production — enable the routing strip in staging, or query
+**Do not wait for future tooling** to inspect routing in production — enable the routing strip in staging, or query
 `conversation_messages.route_data` and `get_control_state`. Build pretty graphs in your observability stack;
 the SDK's job is to emit **queryable, stable fields** every turn.
 
 **Bottom line for adopters**
 
 If multi-specialist chat is your product surface, port the **ledger semantics and `decide_turn` contract now**
-— alongside whatever execution stack you already use (§14). Phase 1b adds `pip install` convenience; the
+— alongside whatever execution stack you already use (§14). A future package release adds `pip install` convenience; the
 contract and reference code are the integration source today.
 
 ---
@@ -897,20 +907,20 @@ so adopters can decide without reading internal epics.
 |---|---|
 | Is this for all agentic work? | **No** — multi-specialist **chat threads** with handoff/resume/gate semantics |
 | Is Postgres the differentiator? | **No** — conversational control **semantics** are (§0.4); persistence is table stakes |
-| Can I integrate today without `pip install`? | **Yes** — port the contract + reference code now; Phase 1b adds package convenience (§0.3) |
+| Can I integrate today without `pip install`? | **Yes** — port the contract + reference code now; a future package release adds install convenience (§0.3) |
 | Where does this sit vs LangGraph/CrewAI/Temporal? | **Conversation layer** on top of execution layers — compose, don't fork (§14) |
 
 ### Documented weaknesses
 
 | Weakness | Why it matters | What we do about it |
 |---|---|---|
-| **Monorepo smell** | Coupled to LLM factory, prompt library, tenant SQL — "we built what we needed" | Phase 1b adapter interfaces (§15); §1.5 port map; substrate explicitly **your** job until extraction |
+| **Monorepo smell** | Coupled to LLM factory, prompt library, tenant SQL — "we built what we needed" | Future adapter interfaces (§15); §1.5 port map; substrate explicitly **your** job until extraction |
 | **Reinvention risk** | Custom session manager vs composing ecosystem tools | **Composable path:** keep LangGraph/Temporal for execution; **port** single-writer + handoff invariants from this contract (§14) |
 | **Rigidity** | Single-writer, bounded classifiers, no regex NL — slows exploratory agents | **By design** for production chat; poor fit for research agents that need loose control flow (see applicability) |
 | **Adoption friction** | Big lift vs `pip install langgraph` | Extraction gate + minimal README + examples (§15); until then, **steal Tier 0–1 patterns** without importing Bot0 |
 | **Loop / stuck-thread risk** | Users report "stuck in builder," orientation loops, handoff ping-pong | Mitigations shipped (§3.1 Q2): precedence, Switch/Stay, `handoff_guard`, TTLs — **not a proof of zero loops**; [SDK §3.1](conversation-control-plane-sdk.md#31-three-hard-questions-the-contract-must-answer) + property harness (§15); Hypothesis expansion still open |
 | **Scale / enterprise unknowns** | High-throughput, cross-org handoffs, multi-tenant at extreme scale — **proven in Bot0 production shape**, not benchmarked as generic infra | Isolation unit = conversation row; turn claims + optimistic revision + short TX (§3.1 Q1); [SDK §3.1 Q1](conversation-control-plane-sdk.md#q1--concurrency--locks-who-owns-the-turn) + regression pins; **formal load benchmark artifact still backlog** |
-| **Day-2 UI productization** | No Temporal-class clickable Web UI in the package | SQL-native read model + lifecycle diagram + traces (§0.1.4); `ccp inspect` / session viewer are **open** productization, not missing contract |
+| **Day-2 UI productization** | No built-in ops console in the package yet | SQL-native read model + lifecycle diagram + traces (§0.1.4); `ccp inspect` / session viewer are **open** productization, not missing contract |
 | **Visualization deferred** | No LangGraph Studio equivalent in the SDK | Persist traces + ledger fields (§11.1); [trace export sample](conversation-control-plane-sdk.md#111-intent-router-layers-l0l4-and-per-turn-routing-trace) — intentional separation from in-house graph UI |
 
 ### Applicability — good fit vs poor fit
@@ -927,7 +937,7 @@ so adopters can decide without reading internal epics.
 
 | Layer | Common choice | This SDK's role |
 |---|---|---|
-| **Execution graph** | LangGraph, plain Python, Temporal, CrewAI, … | **Pluggable** per specialist — LangGraph is Bot0's Phase 2 **reference example**, not a dependency |
+| **Execution graph** | LangGraph, plain Python, Temporal, CrewAI, … | **Pluggable** per specialist — LangGraph is Bot0's future **reference example**, not a dependency |
 | **Durable workflows** | Temporal (or similar) for long-running, retry-heavy work | Turn claims + ledger cover **conversation turn** serialization; Temporal still wins for arbitrary workflow durability |
 | **Crews / roles** | CrewAI for quick multi-role automation | Use for **non-chat** or linear crews; add ledger when chat threads need strict ownership |
 | **Conversational control** | Port `decide_turn` + control slice | **This SDK's core** — even if everything else stays LangGraph |
@@ -940,7 +950,7 @@ so adopters can decide without reading internal epics.
 | | **This SDK** | **LangGraph** | **CrewAI** | **Temporal** |
 |---|---|---|---|---|
 | **Sweet spot** | Chat ownership + multi-gate lifecycle | Stateful agent graphs | Role-based crews | Mission-critical durable execution |
-| **Consumable package** | Phase 1b (not yet) | Yes | Yes | Yes |
+| **Consumable package** | Future (not yet) | Yes | Yes | Yes |
 | **Handoff / resume** | Code-owned ledger (`pending_switch`, TTL) | App-defined edges/interrupts | Manager delegation | Workflow signals (different model) |
 | **Audit: "why route X?"** | Ledger projection + journal + routing trace | Checkpoint history | Crew memory | Workflow event history |
 | **Borrow for L2** | — | Replay / schema-safe checkpoints | Scoped flow state | Command/event, idempotency, ordered history |
@@ -949,7 +959,7 @@ so adopters can decide without reading internal epics.
 
 **Verdict we publish:** strong **opinionated** solution for **conversational multi-agent reliability**; less
 compelling as a general control plane for all agentic work. Differentiation is **ownership + gates +
-"why route X?"**, not a replacement for execution frameworks. Adoption credibility rises when Phase 1b
+"why route X?"**, not a replacement for execution frameworks. Adoption credibility rises when a published package
 ships a clean library and L2 Model A (journal + command integrity) is complete (§ Ledger maturity · §15).
 
 ### 0.8 External evaluation — for discussion purposes (not a direction change)
@@ -969,13 +979,12 @@ The remaining defensible edge is narrower: **gate-vs-mid-flight discipline**, **
 | Topic | Tension |
 |---|---|
 | **Naming** | Industry "AI control plane" often means governance (identity, policy, tamper-evident audit) — above orchestration. Our artifact is closer to **turn-ownership / session ledger** semantics. Rename vs educate? |
-| **Public repo** | [github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane) ships reference code + docs; **`pip install` = Phase 1b**. Marketing language must not outrun the artifact. |
+| **Public repo** | [github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane) ships reference code + docs; **registry `pip install` is future**. Marketing language must not outrun the artifact. |
 | **§15 green checks** | Shipped semantics must be **regression + live-conversation** verifiable — not aspirational. Gaps between doc and product erode credibility faster than an empty repo. |
 | **Strategic fork** | Bot0 = workforce-transformation SaaS; OSS agent-infra SDK = different business (DX, community, competing with well-funded SDK vendors). Alternative: keep as **internal moat** + excellent contract doc; defer OSS until extractable core exists. |
 | **Recommended inversion** | Ship a small installable core (ledger + `decide_turn` + §5 invariants + harness + adapter stubs) **before** expanding marketing surface — artifact first, README second. |
 
-**What we are *not* doing by publishing this:** abandoning the ledger contract, §14 compose framing, or Phase 1b
-extraction intent. We **are** acknowledging that external adopters will judge claims against repo contents and
+**What we are *not* doing by publishing this:** abandoning the ledger contract, §14 compose framing, or public package extraction intent. We **are** acknowledging that external adopters will judge claims against repo contents and
 live Bot0 behavior — and that §0.7 honesty must extend to adoption tables and §15 checkmarks.
 
 ---
@@ -987,7 +996,7 @@ section is the adoption entry point.*
 
 ### 1.1 Adopter brief (copy to your coding agent)
 
-> **Prefer the public package README On-ramp** (lessons learnt + kickoff) when the extract/public
+> **Prefer the public package README On-ramp** (design principles + kickoff) when the extract/public
 > repo is available — this brief is the monorepo/spec-side copy. **Do not** require cover-to-cover
 > reading of this entire document first; treat sections below as **lookup**.
 
@@ -997,20 +1006,20 @@ into our chatbot — production state layer for multi-agent chat, NOT a LangGrap
 
 SOURCE OF TRUTH:
 - Public repo: https://github.com/walidnegm/conversation-control-plane
-- Package: conversation-control-plane (pip install -e ".[dev]" from clone; PyPI Phase 1b)
+- Package: conversation-control-plane (pip install -e ".[dev]" from clone; PyPI install is future)
 - This monorepo path is the sync source; prefer the public clone for external adopters.
 
 ON-RAMP FIRST (thinking shape), not the whole SDK:
-1) Package README — "On-ramp — how to think" (lessons learnt, specialist checklist, setup, kickoff).
+1) Package README — "On-ramp — how to think" (design principles, specialist checklist, setup, kickoff).
 2) This file only for lookup: §2.1 multi-turn stream, §3.1 concurrency, §5 invariants,
  production-grade L2, §0.1.3 thin projection. §1 bootstrap if you need a longer checklist.
-3) OPTIONAL shape pin: examples/cyber_risk_assessment/ — generate our specialist from lessons;
- full product agent dumps are usually unnecessary.
+3) OPTIONAL shape pin: examples/cyber_risk_assessment/ — generate our specialist from the
+ design principles; full product agent dumps are usually unnecessary.
 
 CITATION: Conversation Control Plane SDK (reference implementation by Bot0.ai).
 Public: https://github.com/walidnegm/conversation-control-plane
 
-CONTRACT:
+BUILD AGAINST THESE PRINCIPLES:
 - Control plane = ledger + decide_turn (not a specialist agent). Keep Layer 1 runtimes.
 - Specialists implement ConversationalAgent; return TaskTransition only.
 - Only decide_turn / host writes control keys (active_task, suspended_tasks, pending_switch).
@@ -1020,8 +1029,9 @@ CONTRACT:
 - Multi-turn stream: phase-gated resolve, ledger pins only, LLM continue meaning,
  finite grammar only when armed — no per-agent glue, no ambient last_read sole authority.
 
-ANTI-PATTERNS: parallel *_active flags; fat domain blobs in control payload; cancel-as-complete;
-keyword sole-arbiter NL routing; re-resolve by name every continue turn.
+DO NOT:
+- Parallel *_active flags; fat domain blobs in control payload; cancel-as-complete;
+ keyword sole-arbiter NL routing; re-resolve by name every continue turn.
 
 YOUR TASK:
 1. Port ledger + decide_turn to our conversations store (JSONB control slice is fine).
@@ -1171,7 +1181,7 @@ authority** (state, contracts, math, rendering, irreversible transitions). **Not
 | Routing cognition, hop budget, sibling envelopes | §11 |
 | Prompt library + tool registry / MCP (adjacent, not in ledger) | §11.3 |
 | Classifier rubric ownership (prompt vs code vs ledger context) | §11.4 |
-| **One chat turn — full lifecycle diagram (Bot0 reference)** | [conversation-turn-lifecycle-diagram.md](conversation-turn-lifecycle-diagram.md) |
+| **One chat turn — Bot0 host + plane** (gauntlet is host, not ledger) | [conversation-turn-lifecycle-diagram.md](conversation-turn-lifecycle-diagram.md) |
 | Multi-turn setup IR pipeline template | §12 |
 | Contract-first IR (commit API as seed) | §12.1 |
 | Behavior under failure | §13 |
@@ -1780,14 +1790,14 @@ Known loop/stuck-thread risks: .
 
 ## 8. Stage model and rollout
 
-### Phase 1 — library (now)
+### Now — library (contract + reference code)
 
 Ship invariants 1–5 and the §6–§7 behavioral expectations. Factor shared seams (`recent_context`,
 DB-authoritative reads) into reusable helpers. Workflow Builder is the reference extraction source.
 Document portable patterns (§9.1); keep Bot0 agent catalog in host monorepo agent catalog; **do not** publish a
 standalone package until §15 extraction gate clears.
 
-### Phase 1b — standalone repo extraction (in progress)
+### Future — package registry + adapters
 
 **Public home:** [github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane) — adopters land here; the Bot0 monorepo remains the authoritative sync source during extraction.
 
@@ -1805,9 +1815,9 @@ Cut `conversation_control/` (+ typed contracts, regression harness) into the pub
 
 Until `pip install` ships, treat host monorepo agent catalog paths as **monorepo documentation**; cite the public repo for external evaluation.
 
-### Phase 2 — Optional execution hosts (LangGraph = Bot0 reference example)
+### Future — Optional execution hosts (LangGraph = Bot0 reference example)
 
-The SDK remains **the contract**; specialist **brains** stay pluggable (§9, §14.3). Bot0's Phase 2
+The SDK remains **the contract**; specialist **brains** stay pluggable (§9, §14.3). Bot0's future
 **reference implementation** uses LangGraph as one execution host (meta-graph + subgraphs) — adopters are
 not required to adopt LangGraph to use the ledger or `decide_turn`.
 
@@ -1821,7 +1831,7 @@ not required to adopt LangGraph to use the ledger or `decide_turn`.
 **If you stay on plain Python / Temporal / CrewAI / custom:** same contract — implement
 `ConversationalAgent`, dispatch from `decide_turn`, return `TaskTransition` only.
 
-**Hard gate:** Phase 2 starts only when Phase 1 exit criteria are met (§6 S6).
+**Hard gate:** optional execution-host work starts only when library exit criteria are met (§6 S6).
 
 **What stays ours regardless of host:** DB-authoritative reads, single-writer discipline, five invariants,
 gate-vs-mid-flight precedence, typed `kind`/`payload`, failure-mode contract.
@@ -1879,7 +1889,7 @@ to their own domain agents. It is **not** a list of Bot0 product surfaces (`spec
 
 **Bot0 monorepo only:** per-agent engines, file paths, routing vocabulary gaps (`personal_score`,
 `catalog_role_create` adapters), and heterogeneity audit →
- §1 + §1.1. Phase 1b
+ §1 + §1.1. future package work
 `examples/` should ship **one bounded + one unbounded thin sample** derived from these patterns, not the full
 Bot0 product catalog.
 
@@ -2488,13 +2498,13 @@ does not *prevent* them unless you add explicit conversational control semantics
 
 You do **not** abandon your existing agent runtime. The diagram below shows the **stable contract** (control
 plane + ledger) and a **pluggable specialist layer**. LangGraph appears here as Bot0's **reference
-implementation example** for Phase 2 (§8) — not as a requirement. Any specialist that implements
+implementation example** for future optional hosts (§8) — not as a requirement. Any specialist that implements
 `ConversationalAgent` (§9) can sit under `decide_turn` dispatch:
 
 | Specialist runtime (examples) | Bot0 posture |
 |---|---|
-| **Plain Python modules** | Phase 1 production today (`agent/`, `api/services/`) |
-| **LangGraph subgraphs** | Phase 2 **reference** execution host — one way to run `handle_turn` |
+| **Plain Python modules** | Production today in the reference host (`agent/`, `api/services/`) |
+| **LangGraph subgraphs** | future **reference** execution host — one way to run `handle_turn` |
 | **Temporal activities / workflows** | Fine for long-running, retry-heavy domain work behind an adapter |
 | **CrewAI (or similar) crews** | Fine for linear role automation; wrap as one `ConversationalAgent` per crew surface |
 | **Custom state machines** | Common — the SDK does not care how tools loop inside the specialist |
@@ -2536,7 +2546,7 @@ not a graph edge that guesses. Classifiers emit labels; code enforces transition
 turn only **after** the ledger says it owns it, and returns **`TaskTransition` only** — never
 `active_task` / `pending_switch` writes (§9, invariant 1).
 
-**Bot0 reference path:** Phase 1 = Python specialists today; Phase 2 = **example** mapping of the same
+**Bot0 reference path:** Today = Python specialists; optional later = **example** mapping of the same
 `ConversationalAgent` contract onto LangGraph subgraphs (§8). Adopters may skip LangGraph entirely and still
 be SDK-compliant.
 
@@ -2625,8 +2635,7 @@ Bounded multi-turn shape (phases, pins, COMPLETE≠ABANDON): `examples/cyber_ris
 
 ## 15. Open deliverables + credibility gates
 
-> **Scope.** Adopter-facing items only. Bot0 slice status and operational runbooks live in the
-> monorepo implementation playbook — not in this public bundle.
+> **Scope.** Adopter-facing items only. Internal product slice status lives in the publisher monorepo — not in this public bundle.
 
 ### Shipped in this repository
 
@@ -2635,24 +2644,22 @@ Bounded multi-turn shape (phases, pins, COMPLETE≠ABANDON): `examples/cyber_ris
 | Integration contract | This document (loops §3.1, Day-2 ops §0.1.4, traces §11.1, wraps §14.8) |
 | One-turn lifecycle diagram | [conversation-turn-lifecycle-diagram.md](conversation-turn-lifecycle-diagram.md) |
 | Value prop + traction pillars | [README.md](../README.md) |
-| Reference control-plane modules | `reference/api/services/conversation_control/` |
+| Reference control-plane modules | `src/conversation_control_plane/` |
 | Portable contract tests | `tests/` |
 | Host integration wraps | [examples/integrations/](../examples/integrations/) |
-| Bounded-agent design stub | [examples/cyber_risk_assessment/](../examples/cyber_risk_assessment/) |
+| Bounded-agent design scaffold | [examples/cyber_risk_assessment/](../examples/cyber_risk_assessment/) |
 
-### Open (adopter-facing)
+### Future
 
-- **Phase 1b package** — PyPI `pip install conversation-control-plane`; ledger already fail-open without
-  monorepo host; remaining work = host adapters so `decide_turn` / classifiers need no product imports
+- **Package registry** — PyPI `pip install conversation-control-plane` (clone + `pip install -e .` works today; registry publish is future). Ledger already fail-open without a product host; remaining work is host adapters so `decide_turn` needs no product imports.
 - **New-agent scaffold generator** — copy [§1.1 adopter brief](#11-adopter-brief-copy-to-your-coding-agent) +
-  [cyber risk assessment stub](../examples/cyber_risk_assessment/) until `create_agent <kind>` lands
+  [cyber risk assessment scaffold](../examples/cyber_risk_assessment/) until `create_agent <kind>` lands
 - **Property-test expansion** — arbitrary turn-sequence ↔ ledger parity in your host
 - **Formal load benchmark** — concurrency **contract** is in §3.1 Q1 (per-conversation claim + short TX);
   packaged soak/k6 numbers are still open
 - **Day-2 inspector** — SQL read model is in §0.1.4; lightweight `ccp inspect` CLI + optional session
   viewer UI are productization (not missing contract semantics)
-- **First-class framework adapters** — wrap sketches ship; installable LangGraph/CrewAI adapter packages
-  are Phase 1b+
+- **First-class framework adapters** — wrap sketches ship; installable LangGraph/CrewAI packages are future
 - **HITL sample repository** — full cyber-style lifecycle dialogue: agent pauses to DB while awaiting
   human supervisor approval, then resumes on the same `task_id`/phase (thin synthetic seed only —
   not a full product corpus). Holy-grail control-plane demo for adopters
@@ -2663,5 +2670,6 @@ Bounded multi-turn shape (phases, pins, COMPLETE≠ABANDON): `examples/cyber_ris
 - **Small public surface** — README + this contract + lifecycle diagram (no sprawl)
 - **Honest limits** — §0.7 (loops, scale benchmark backlog, Day-2 UI productization)
 
-**External acceptance gate:** Public repo live;
-[`pip install`](https://github.com/walidnegm/conversation-control-plane) convenience is Phase 1b.
+**External acceptance gate:** Public repo live at
+[github.com/walidnegm/conversation-control-plane](https://github.com/walidnegm/conversation-control-plane).
+Registry `pip install` convenience is **future**.

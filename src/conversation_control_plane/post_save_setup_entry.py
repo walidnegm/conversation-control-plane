@@ -46,7 +46,7 @@ def workflow_id_from_post_save_transcript(
     messages: list[dict[str, Any]] | list[tuple[str, str]] | None,
 ) -> str | None:
     """Best-effort wf_* from a recent code-owned save or setup follow-up."""
-    from api.services.conversation_control.authoring_gate_turn import (
+    from conversation_control_plane.authoring_gate_turn import (
         committed_workflow_id_from_messages,
     )
 
@@ -89,7 +89,7 @@ def _builder_mid_authoring_open(
     if not db or not tenant_id or not conversation_id:
         return False
     try:
-        from api.services.conversation_control.dispatch_phase import (
+        from conversation_control_plane.dispatch_phase import (
             load_builder_pending_state,
         )
 
@@ -239,7 +239,7 @@ def post_save_setup_owns_turn(
 
     # Ledger workflow / scorecard pick beats post-save digit ownership.
     try:
-        from api.services.conversation_control.pending_question import (
+        from conversation_control_plane.pending_question import (
             read_pending_question,
         )
 
@@ -260,10 +260,10 @@ def post_save_setup_owns_turn(
     if not wf_id:
         return False, None
 
-    from api.services.conversation_control.authoring_gate_turn import (
+    from conversation_control_plane.authoring_gate_turn import (
         workflow_saved_in_db,
     )
-    from api.services.conversation_control.workflow_builder_post_commit import (
+    from conversation_control_plane.workflow_builder_post_commit import (
         workflow_has_committed_graph,
     )
 
@@ -370,10 +370,10 @@ def _committed_workflow_row(
     wf_id = resolve_post_save_workflow_id(context, messages)
     if not wf_id:
         return None, None
-    from api.services.conversation_control.authoring_gate_turn import (
+    from conversation_control_plane.authoring_gate_turn import (
         workflow_saved_in_db,
     )
-    from api.services.conversation_control.workflow_builder_post_commit import (
+    from conversation_control_plane.workflow_builder_post_commit import (
         workflow_has_committed_graph,
     )
 
@@ -435,7 +435,7 @@ def post_save_workflow_status_eligible(
     survives across unrelated detours (realization_intake, scorecards, catalog role)
     and must not hijack orientation or discovery turns (conv realization + scorecards).
     """
-    from api.services.conversation_control.dispatch_phase import (
+    from conversation_control_plane.dispatch_phase import (
         post_save_status_orientation_suppressed,
     )
 
@@ -450,7 +450,7 @@ def post_save_workflow_status_eligible(
     active = ctx.get("active_task") or {}
     if isinstance(active, dict) and (active.get("kind") or "") == "outcome_value_setup":
         # S8: require a real workflow pin on the O&V payload (not bare thread pin).
-        from api.services.conversation_control.task_pin_contract import (
+        from conversation_control_plane.task_pin_contract import (
             OUTCOME_VALUE_KIND,
             payload_dict,
             workflow_pin,
