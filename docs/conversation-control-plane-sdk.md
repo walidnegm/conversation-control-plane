@@ -269,6 +269,26 @@ Frameworks commonly **collapse** two or three of these. This design separates th
 | **Execution orchestration** | What nodes, agents, services, or activities should run? | LangGraph / agent runtime / your `handle_turn` |
 | **Durable execution** | Retries, timers, failures, worker recovery? | Temporal / infra (optional) — or your job queue |
 
+#### Zero inherent LLM calls {#zero-inherent-llm-calls}
+
+**The control plane has 0 inherent LLM calls.** Achieving its object — durable conversational
+**authority** (ownership, gates, phases, suspend/resume, audit) — does not require a model.
+
+| Surface | LLM? |
+|---|---|
+| `decide_turn`, ledger begin/continue/complete/abandon, turn claims, `control_revision`, KindSpec/phase gates, handoff guard, delivery-order | **No** — pure procedure over state |
+| Your router / intent classifiers (optional) | **Yes** typically — emit **enums**; plane enforces |
+| Specialist `handle_turn` (optional) | **Yes** often — domain work *after* dispatch |
+
+```text
+User → [optional LLM labels] → decide_turn + ledger (0 LLM) → specialist (optional LLM) → TaskTransition → ledger write (0 LLM)
+```
+
+**Implications:** (1) you can integrate with finite UI picks or scripted hosts with no model in the loop;
+(2) authority does not drift with prompt or provider changes; (3) cost/latency of the control path is
+**DB + code**, not tokens. Product chat may still use many LLM hops **around** the plane — that is not
+the plane’s inherent contract.
+
 ```mermaid
 flowchart LR
  SEM["Semantic interpretation<br/>LLM / agent"]
@@ -282,7 +302,8 @@ flowchart LR
 ```
 
 **Architectural contribution:** not “another agent framework,” but making **conversational authority** a
-first-class, portable contract above whatever executes the specialist.
+first-class, portable contract above whatever executes the specialist — and **not** another LLM call site
+([§0.0.2 zero inherent LLM calls](#zero-inherent-llm-calls)).
 
 ### 0.0.3 Why independence is valuable
 

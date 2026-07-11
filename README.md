@@ -83,6 +83,18 @@ Same Postgres can host a LangGraph checkpointer **and** this ledger — differen
 
 **Rule:** classifiers propose labels; **`decide_turn` enforces**. Specialists return `TaskTransition` only — they never write `active_task` / `pending_switch`.
 
+### Zero inherent LLM calls
+
+The **control plane itself does not call a model.** Ledger writes, `decide_turn`, turn claims, phase/pin gates, COMPLETE vs ABANDON — all **deterministic code**.
+
+| Layer | Typical LLM use |
+|---|---|
+| Semantic interpretation (your classifiers / tools) | Optional — feeds **enums** into the plane |
+| **Conversation Control Plane (this SDK)** | **0 LLM calls** |
+| Specialist execution (LangGraph / agent loop) | Optional — your product |
+
+You can drive turns from a UI button, finite menu, test harness, or `host_sketch.py` with **no LLM at all**. Authority is not another prompt.
+
 ---
 
 ## Traction pillars — honest status
@@ -191,6 +203,7 @@ These are the failures this contract exists to prevent. Internalize them before 
 | Lesson | Wrong instinct | Right shape |
 |---|---|---|
 | **This is not the agent** | Rewrite LangGraph/CrewAI into “our SDK” | Keep Layer 1 execution; add ledger for **who owns the thread** |
+| **0 inherent LLM calls** | “Control plane = another prompt / router model” | Plane is **deterministic code**; models only optional **around** it |
 | **Cognition ≠ execution** | Regex/wordlists or free LLM prose decide routing | LLM proposes **enums**; code owns transitions and side effects |
 | **Single writer** | Specialist or tool writes `active_task` | Agent returns `TaskTransition`; **only** host/`decide_turn` writes control keys |
 | **Projection is thin** | Dump IR/draft/graph into conversation context JSON | Pins + phase + `pending_ref`; domain depth in a **specialist store** |
