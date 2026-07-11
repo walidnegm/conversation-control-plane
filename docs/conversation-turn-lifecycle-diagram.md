@@ -4,9 +4,9 @@ description: One diagrammed map of a single Bot0 chat turn — claim → percept
 type: reference
 date: 2026-07-07
 related:
-  - conversation-control-plane-sdk.md
-  - 
-  - 
+ - conversation-control-plane-sdk.md
+ - 
+ - 
 ---
 
 # Conversation Turn Lifecycle — the ledger-pinned flow
@@ -17,7 +17,7 @@ related:
 **Honest framing.** This documents the flow **as it is**, not the idealized "one router → `decide_turn`" version
 in the [SDK contract](conversation-control-plane-sdk.md). The pre-decide **gauntlet** is real: several fast-paths
 and detours can short-circuit before `decide_turn` runs. Retiring that competition (detours → ledger tasks, one
-authoritative decision) is the  work;
+authoritative decision) is the work;
 this diagram is the honest baseline it works against.
 
 **Ownership (2026-07-09).** Who manages memory vs front door vs multi-agent ownership is **not** siloed in this
@@ -26,6 +26,24 @@ and .
 
 **One-liner:** *The ledger is the control plane’s state of record; the control plane is the rules and code
 that read/write that state and pick the delivery leaf — one meta-layer, not two products.*
+
+**Where this sits in the ecosystem** ([SDK §0](conversation-control-plane-sdk.md#0-value-proposition--conversational-control-in-a-layered-stack) ·
+[§14](conversation-control-plane-sdk.md#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane)):
+conversational **authority** is **not** LangGraph state, Temporal workflow code, or agent-SDK handoffs. Those
+are **execution adapters**. This diagram is one **turn** through the authority plane.
+
+```mermaid
+flowchart LR
+ SEM["Semantic<br/>LLM"] --> AUTH["Authority<br/>ledger + decide_turn<br/>THIS DIAGRAM"]
+ AUTH --> EXE["Execution<br/>LangGraph / agent / jobs"]
+```
+
+| Concern | Owner on this map |
+|---|---|
+| What did the user mean? | ▨ classifiers / router |
+| Who owns the turn / gate / phase? | ▣ ledger + `decide_turn` |
+| How does the specialist run? | Agent / graph / async job **after** dispatch |
+| Retries / worker recovery | Claim TTL, jobs, infra — not graph-as-authority |
 
 **Rule:** host short-circuits that ignore sealed `task_intent` / exclusive owner (e.g. early cost sole-continue)
 are **control-plane delivery bugs**, not agent tool-choice bugs.
@@ -65,68 +83,68 @@ Legend: **▨ = LLM cognition** · **▣ = code / finite-grammar / ledger-state*
 
 ```mermaid
 flowchart TD
-  MSG["User message — SSE /chat"] --> CLAIM
+ MSG["User message — SSE /chat"] --> CLAIM
 
-  CLAIM{"▣ claim_turn<br/>one _turn_claim per conversation"}
-  CLAIM -->|busy| REJECT["⚡ 409 conversation_turn_in_flight<br/>reject, don't queue"]
-  CLAIM -->|claimed| GRD
+ CLAIM{"▣ claim_turn<br/>one _turn_claim per conversation"}
+ CLAIM -->|busy| REJECT["⚡ 409 conversation_turn_in_flight<br/>reject, don't queue"]
+ CLAIM -->|claimed| GRD
 
-  GRD{"▨ Guardrail — check_message"}
-  GRD -->|blocked| GBLK["⚡ safety refusal"]
-  GRD -->|ok| GA
+ GRD{"▨ Guardrail — check_message"}
+ GRD -->|blocked| GBLK["⚡ safety refusal"]
+ GRD -->|ok| GA
 
-  subgraph GA["Pre-decide gauntlet — each may ⚡ short-circuit (finite-grammar / ledger-state / own bounded LLM)"]
-    direction TB
-    G1["▣ catalog_handoff — FE button payload"]
-    G2["▣ domain_gate_pick — finite pick + ledger phase"]
-    G3["▨ ir_gate_role_proposal — classify_propose_roles"]
-    G4["▣ authoring_gate_proceed — finite yes/no/accept at gate"]
-    G5["▨ ir_confirm — classify_ir_gate_turn"]
-    G6["▣ prose_intake_early_enqueue — structural shape/length"]
-    G1 --> G2 --> G3 --> G4 --> G5 --> G6
-  end
-  GA -->|a gate owns the turn| SHORT
-  GA -->|none owns| PERC
+ subgraph GA["Pre-decide gauntlet — each may ⚡ short-circuit (finite-grammar / ledger-state / own bounded LLM)"]
+ direction TB
+ G1["▣ catalog_handoff — FE button payload"]
+ G2["▣ domain_gate_pick — finite pick + ledger phase"]
+ G3["▨ ir_gate_role_proposal — classify_propose_roles"]
+ G4["▣ authoring_gate_proceed — finite yes/no/accept at gate"]
+ G5["▨ ir_confirm — classify_ir_gate_turn"]
+ G6["▣ prose_intake_early_enqueue — structural shape/length"]
+ G1 --> G2 --> G3 --> G4 --> G5 --> G6
+ end
+ GA -->|a gate owns the turn| SHORT
+ GA -->|none owns| PERC
 
-  subgraph PERC["Perception — cognition (▨) then code authority (▣)"]
-    R1["▨ unified router — classify_unified_turn<br/>→ UnifiedTurnSignal<br/>(user_wants, authoring_maturity, missing_segments)"]
-    AUTH["▣ authority passes on signal<br/>prose_intake · drafting_signal · product_concept · gate_proceed · IR review"]
-    R2["▣/▨ intent router L0–L4 — bot0_intent_router<br/>→ IntentRoute"]
-    R1 --> AUTH --> R2
-  end
-  PERC --> PICK
+ subgraph PERC["Perception — cognition (▨) then code authority (▣)"]
+ R1["▨ unified router — classify_unified_turn<br/>→ UnifiedTurnSignal<br/>(user_wants, authoring_maturity, missing_segments)"]
+ AUTH["▣ authority passes on signal<br/>prose_intake · drafting_signal · product_concept · gate_proceed · IR review"]
+ R2["▣/▨ intent router L0–L4 — bot0_intent_router<br/>→ IntentRoute"]
+ R1 --> AUTH --> R2
+ end
+ PERC --> PICK
 
-  subgraph PICK["Finite-grammar picks + reset (▣, LLM-arbitrated on miss)"]
-    K1["▣ reset gate — literal set OR hint + LLM reset_request"]
-    K2["▣ pending picks — scorecard / discovery / workflow — #id or number"]
-    K3["▣ gate-continue route synth — code-owned IntentRoute"]
-    K1 --> K2 --> K3
-  end
-  PICK -->|resolved| SHORT
-  PICK -->|else| DECIDE
+ subgraph PICK["Finite-grammar picks + reset (▣, LLM-arbitrated on miss)"]
+ K1["▣ reset gate — literal set OR hint + LLM reset_request"]
+ K2["▣ pending picks — scorecard / discovery / workflow — #id or number"]
+ K3["▣ gate-continue route synth — code-owned IntentRoute"]
+ K1 --> K2 --> K3
+ end
+ PICK -->|resolved| SHORT
+ PICK -->|else| DECIDE
 
-  DECIDE{"◆ decide_turn — AUTHORITATIVE DISPATCHER<br/>precedence · continue-resumes · Switch/Stay · hot-potato guard<br/>SINGLE WRITER of control keys → TurnPlan"}
-  DECIDE --> POST
+ DECIDE{"◆ decide_turn — AUTHORITATIVE DISPATCHER<br/>precedence · continue-resumes · Switch/Stay · hot-potato guard<br/>SINGLE WRITER of control keys → TurnPlan"}
+ DECIDE --> POST
 
-  subgraph POST["Post-decide ladder — SDK §2.1 discovery detour precedence"]
-    P0["◆ STAGE_FRONT_DOOR_DELIVERY<br/>scorecards · orientation · discovery detours<br/>delivery_order_contract · decide_turn supersede"]
-    P0a["▣ active-flow continue<br/>realization_intake · outcome_value_setup<br/>only if active_flow_handler_must_yield is false"]
-    P1["▣ authoring gates · product how-tos<br/>same yield guard"]
-    P2["▨ orientation demotion · generic discovery demotion"]
-    P3["▨ concept gate — grounded glossary/how-to"]
-    P4["▣/▨ prose intake lane — §9 readiness gauntlet"]
-    P0 --> P0a --> P1 --> P2 --> P3 --> P4
-  end
-  POST -->|prose intake owns turn| SHORT
-  POST -->|else| DISP
+ subgraph POST["Post-decide ladder — SDK §2.1 discovery detour precedence"]
+ P0["◆ STAGE_FRONT_DOOR_DELIVERY<br/>scorecards · orientation · discovery detours<br/>delivery_order_contract · decide_turn supersede"]
+ P0a["▣ active-flow continue<br/>realization_intake · outcome_value_setup<br/>only if active_flow_handler_must_yield is false"]
+ P1["▣ authoring gates · product how-tos<br/>same yield guard"]
+ P2["▨ orientation demotion · generic discovery demotion"]
+ P3["▨ concept gate — grounded glossary/how-to"]
+ P4["▣/▨ prose intake lane — §9 readiness gauntlet"]
+ P0 --> P0a --> P1 --> P2 --> P3 --> P4
+ end
+ POST -->|prose intake owns turn| SHORT
+ POST -->|else| DISP
 
-  DISP["▨ Dispatch specialist<br/>ConversationalAgent.handle_turn → AgentTurnResult / TaskTransitionRequest<br/>(task_id · command_id · transition only)"]
-  DISP --> LED
+ DISP["▨ Dispatch specialist<br/>ConversationalAgent.handle_turn → AgentTurnResult / TaskTransitionRequest<br/>(task_id · command_id · transition only)"]
+ DISP --> LED
 
-  LED["▣ Ledger write — single writer<br/>L1 projection: active_task / suspended_tasks / pending_switch<br/>+ _control_revision++ · platform event<br/>L2 journal: conversation_control_events (task_id · command_id · seq)"]
-  LED --> REL
-  SHORT["⚡ short-circuit answer"] --> REL
-  REL["▣ release_turn — finally<br/>+ persist 3-hop routing trace on the message"]
+ LED["▣ Ledger write — single writer<br/>L1 projection: active_task / suspended_tasks / pending_switch<br/>+ _control_revision++ · platform event<br/>L2 journal: conversation_control_events (task_id · command_id · seq)"]
+ LED --> REL
+ SHORT["⚡ short-circuit answer"] --> REL
+ REL["▣ release_turn — finally<br/>+ persist 3-hop routing trace on the message"]
 ```
 
 **Reading it:** perception (guardrail + unified router + intent router) only *proposes*. The gauntlet and the
@@ -143,31 +161,31 @@ stages inside `bot0_intent_router.py`, surfaced in every routing trace as `layer
 
 ```mermaid
 flowchart TD
-  Q["User message + context"] --> L0
-  L0{"L0 — sticky session<br/>▣ reads active_task / agent_type / idle clock"}
-  L0 -->|active + not broken| STAY["stay on sticky agent"]
-  L0 -->|no sticky| L1
+ Q["User message + context"] --> L0
+ L0{"L0 — sticky session<br/>▣ reads active_task / agent_type / idle clock"}
+ L0 -->|active + not broken| STAY["stay on sticky agent"]
+ L0 -->|no sticky| L1
 
-  L1{"L1 — explicit trigger<br/>▣ regex CANDIDATE"}
-  L1 -->|hit| ARB["▨ LLM arbitrates (candidate only)"]
-  L1 -->|ordered step list| STRUCT{"▣ l2_structural candidate"}
-  STRUCT -->|LLM confidence ≥ 0.85 disagrees| ARB
-  STRUCT -->|no strong veto| WB["workflow_builder (structural accelerator)"]
-  L1 -->|miss| L2
+ L1{"L1 — explicit trigger<br/>▣ regex CANDIDATE"}
+ L1 -->|hit| ARB["▨ LLM arbitrates (candidate only)"]
+ L1 -->|ordered step list| STRUCT{"▣ l2_structural candidate"}
+ STRUCT -->|LLM confidence ≥ 0.85 disagrees| ARB
+ STRUCT -->|no strong veto| WB["workflow_builder (structural accelerator)"]
+ L1 -->|miss| L2
 
-  L2{"L2 — pasted-content shape<br/>▣ roster / sequence signatures"}
-  L2 -->|strong signal| ARB
-  L2 -->|miss| L25
+ L2{"L2 — pasted-content shape<br/>▣ roster / sequence signatures"}
+ L2 -->|strong signal| ARB
+ L2 -->|miss| L25
 
-  L25{"L2.5 — pure-social<br/>▣ hi/thanks, ≤24 chars, not sticky"}
-  L25 -->|match| SOCIAL["bot0 (skip L3)"]
-  L25 -->|miss| L3
+ L25{"L2.5 — pure-social<br/>▣ hi/thanks, ≤24 chars, not sticky"}
+ L25 -->|match| SOCIAL["bot0 (skip L3)"]
+ L25 -->|miss| L3
 
-  L3["L3 — ▨ LLM classifier<br/>primary NL cognition"]
-  L3 -->|unclear| L4
-  ARB --> OUT["IntentRoute"]
-  L3 --> OUT
-  L4["L4 — ▣ safe default → bot0 (fail-closed)"] --> OUT
+ L3["L3 — ▨ LLM classifier<br/>primary NL cognition"]
+ L3 -->|unclear| L4
+ ARB --> OUT["IntentRoute"]
+ L3 --> OUT
+ L4["L4 — ▣ safe default → bot0 (fail-closed)"] --> OUT
 ```
 
 > `decide_turn` may still **override** the router's live route (precedence, continue, hot-potato). The trace then
@@ -182,29 +200,29 @@ write is its exclusive right (specialists only *declare* `TaskTransition`).
 
 ```mermaid
 flowchart TD
-  IN["router signal + get_control_state (DB)"] --> C0
-  C0{"reset confirmed?"}
-  C0 -->|yes| RST["complete/clear active_task → bot0"]
-  C0 -->|no| C1
+ IN["router signal + get_control_state (DB)"] --> C0
+ C0{"reset confirmed?"}
+ C0 -->|yes| RST["complete/clear active_task → bot0"]
+ C0 -->|no| C1
 
-  C1{"pending_switch open + reply accepts/declines?"}
-  C1 -->|accept| SW["resolve_switch → suspend_active + begin new"]
-  C1 -->|decline / stale TTL| C2
-  C1 -->|no pending| C2
+ C1{"pending_switch open + reply accepts/declines?"}
+ C1 -->|accept| SW["resolve_switch → suspend_active + begin new"]
+ C1 -->|decline / stale TTL| C2
+ C1 -->|no pending| C2
 
-  C2{"active_task mid-flight + turn is continue/ambiguous?"}
-  C2 -->|yes| RESUME["◆ RESUME active_task<br/>(a flaky handoff cannot auto-steal)"]
-  C2 -->|no| C3
+ C2{"active_task mid-flight + turn is continue/ambiguous?"}
+ C2 -->|yes| RESUME["◆ RESUME active_task<br/>(a flaky handoff cannot auto-steal)"]
+ C2 -->|no| C3
 
-  C3{"router proposes a DIFFERENT agent?"}
-  C3 -->|would A→B→A bounce| HP["hot-potato guard →<br/>bot0 detour (hot_potato_guard)"]
-  C3 -->|clean switch| PROP["propose_switch → pending_switch (Switch/Stay)"]
-  C3 -->|same agent| DISPATCH
+ C3{"router proposes a DIFFERENT agent?"}
+ C3 -->|would A→B→A bounce| HP["hot-potato guard →<br/>bot0 detour (hot_potato_guard)"]
+ C3 -->|clean switch| PROP["propose_switch → pending_switch (Switch/Stay)"]
+ C3 -->|same agent| DISPATCH
 
-  RESUME --> DISPATCH
-  PROP --> DISPATCH
-  HP --> DISPATCH
-  DISPATCH["TurnPlan.agent → dispatch + ledger write"]
+ RESUME --> DISPATCH
+ PROP --> DISPATCH
+ HP --> DISPATCH
+ DISPATCH["TurnPlan.agent → dispatch + ledger write"]
 ```
 
 Precedence in one line: **reset > switch-reply > continue-resumes > hot-potato-guard > propose-switch >
@@ -218,7 +236,7 @@ same-agent dispatch.** "Continue resumes" beating a flaky handoff classifier is 
 ### 4.1 L1 projection (routing authority)
 
 The control slice lives on `conversations.context` (JSONB). `_CONTROL_KEYS` /
-`LEDGER_CONTROL_KEYS` ([ledger_keys.py](../../api/services/conversation_control/ledger_keys.py)) =
+`LEDGER_CONTROL_KEYS` ([ledger_keys.py](../reference/api/services/conversation_control/ledger_keys.py)) =
 `active_task`, `suspended_tasks`, `pending_switch`, `pending_question`, `plan`, `shadow_plan`
 (+ transitional `advisor_active` / `pipeline_step` / `create_flow_state`, being retired).
 Meta fields: `_control_revision` (monotonic), `_turn_claim` (holder + heartbeat + TTL),
@@ -226,26 +244,26 @@ Meta fields: `_control_revision` (monotonic), `_turn_claim` (holder + heartbeat 
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Idle
-  Idle --> Active: begin_task(agent, kind, payload, task_id)
-  Active --> Active: update_phase(phase, awaiting) — preserves task_id
-  Active --> Suspended: suspend_active (on handoff)
-  Suspended --> Active: resume_task (return path)
-  Active --> PendingSwitch: propose_switch(to)
-  PendingSwitch --> Active: resolve_switch = stay
-  PendingSwitch --> Suspended: resolve_switch = switch (suspend prior)
-  Active --> Idle: complete_task(reason=complete) — task_completed
-  Active --> Idle: complete_task(reason=abandon) — task_abandoned
-  PendingSwitch --> Idle: pending_switch TTL expires
-  Suspended --> Idle: suspended_tasks TTL expires
+ [*] --> Idle
+ Idle --> Active: begin_task(agent, kind, payload, task_id)
+ Active --> Active: update_phase(phase, awaiting) — preserves task_id
+ Active --> Suspended: suspend_active (on handoff)
+ Suspended --> Active: resume_task (return path)
+ Active --> PendingSwitch: propose_switch(to)
+ PendingSwitch --> Active: resolve_switch = stay
+ PendingSwitch --> Suspended: resolve_switch = switch (suspend prior)
+ Active --> Idle: complete_task(reason=complete) — task_completed
+ Active --> Idle: complete_task(reason=abandon) — task_abandoned
+ PendingSwitch --> Idle: pending_switch TTL expires
+ Suspended --> Idle: suspended_tasks TTL expires
 
-  note right of Active
-    active_task = {task_id, agent, kind, phase,
-    payload, pending_ref}
-    Cross-turn working memory lives in
-    kind + payload — never parallel
-    *_active/_phase/_state flags
-  end note
+ note right of Active
+ active_task = {task_id, agent, kind, phase,
+ payload, pending_ref}
+ Cross-turn working memory lives in
+ kind + payload — never parallel
+ *_active/_phase/_state flags
+ end note
 ```
 
 Every write bumps `_control_revision` and emits a platform event. Finite picks (numbered menus) live in
@@ -253,8 +271,8 @@ Every write bumps `_control_revision` and emits a platform event. Finite picks (
 
 ### 4.2 L2 journal (historical authority — Model A)
 
-Append-only table `conversation_control_events` ([migration `a3b4c5d6e7f8`](../../alembic/versions/a3b4c5d6e7f8_conversation_control_events_journal.py),
-helpers [ledger_journal.py](../../api/services/conversation_control/ledger_journal.py)):
+Append-only table `conversation_control_events` ([migration `a3b4c5d6e7f8`](../reference/api/services/conversation_control/ledger_journal.py),
+helpers [ledger_journal.py](../reference/api/services/conversation_control/ledger_journal.py)):
 
 | Field | Role |
 |---|---|
@@ -266,10 +284,10 @@ helpers [ledger_journal.py](../../api/services/conversation_control/ledger_journ
 
 ```mermaid
 flowchart LR
-  CMD["Lifecycle command<br/>begin / complete / abandon"] --> PROJ["▣ L1 projection write<br/>active_task JSONB"]
-  CMD --> JRN["▣ L2 journal append<br/>conversation_control_events"]
-  PROJ --> REV["_control_revision++"]
-  JRN --> TEL["platform event (telemetry mirror)<br/>not ledger of record"]
+ CMD["Lifecycle command<br/>begin / complete / abandon"] --> PROJ["▣ L1 projection write<br/>active_task JSONB"]
+ CMD --> JRN["▣ L2 journal append<br/>conversation_control_events"]
+ PROJ --> REV["_control_revision++"]
+ JRN --> TEL["platform event (telemetry mirror)<br/>not ledger of record"]
 ```
 
 **Adopter rule:** specialists declare `TaskTransition` / `TaskTransitionRequest` (with `task_id` +
@@ -291,20 +309,20 @@ blocks the immediate bounce back.
 
 ```mermaid
 sequenceDiagram
-  participant U as User
-  participant DT as decide_turn
-  participant HG as handoff_guard
-  participant A as Agent A
-  participant B as Agent B
-  U->>DT: turn 1
-  DT->>A: dispatch (A owns)
-  A-->>DT: TaskTransition → hand to B
-  DT->>HG: append_handoff_trace(A→B)
-  DT->>B: dispatch (B owns)
-  B-->>DT: TaskTransition → hand back to A
-  DT->>HG: would_ping_pong(B→A)?
-  HG-->>DT: YES (A→B→A)
-  DT-->>U: bot0 detour (hot_potato_guard) — bounce blocked
+ participant U as User
+ participant DT as decide_turn
+ participant HG as handoff_guard
+ participant A as Agent A
+ participant B as Agent B
+ U->>DT: turn 1
+ DT->>A: dispatch (A owns)
+ A-->>DT: TaskTransition → hand to B
+ DT->>HG: append_handoff_trace(A→B)
+ DT->>B: dispatch (B owns)
+ B-->>DT: TaskTransition → hand back to A
+ DT->>HG: would_ping_pong(B→A)?
+ HG-->>DT: YES (A→B→A)
+ DT-->>U: bot0 detour (hot_potato_guard) — bounce blocked
 ```
 
 Complementary guards on the same class of loop: Switch/Stay confirmation (no silent bounce), `suspend_active`
@@ -322,9 +340,9 @@ and agent/skill/tool ontology: **[SDK §11.1](conversation-control-plane-sdk.md#
 
 ```mermaid
 flowchart LR
-  H1["Router (L0–L4)<br/>router_layer · router_intent · confidence"]
-    --> H2["Control plane (decide_turn)<br/>mode · plan_summary · intent_source · reason"]
-    --> H3["Delivery under active agent<br/>agent · delivery_kind · dispatch/why<br/>cognition_key · first_tool · tools"]
+ H1["Router (L0–L4)<br/>router_layer · router_intent · confidence"]
+ --> H2["Control plane (decide_turn)<br/>mode · plan_summary · intent_source · reason"]
+ --> H3["Delivery under active agent<br/>agent · delivery_kind · dispatch/why<br/>cognition_key · first_tool · tools"]
 ```
 
 | Concept on the strip | Meaning |
@@ -374,7 +392,7 @@ against.
 **2026-07-08 addendum — discovery detour precedence.** [SDK §2.1 discovery detour precedence](conversation-control-plane-sdk.md#discovery-detour-precedence-delivery-order-invariant):
 `decide_turn` supersedes active guided flows when `discovery_kind` ∈ `FRONT_DOOR_DETOUR_KINDS`;
 the chat entrypoint delivers front-door answers (`STAGE_FRONT_DOOR_DELIVERY`) **before**
-ledger-first continuations. New handlers must call `active_flow_handler_must_yield()` — not
+ledger-first continuations. New handlers must call `active_flow_handler_must_yield` — not
 ad-hoc `_plan_mode != "detour"` copies. Ratchet: `test_delivery_order_contract.py`.
 
 **2026-07-08 addendum — grounded glossary / concept gate (CAQ-15).** [SDK §2.1 grounded glossary](conversation-control-plane-sdk.md#grounded-glossary--concept-gate-mid-authoring-detour--caq-15):

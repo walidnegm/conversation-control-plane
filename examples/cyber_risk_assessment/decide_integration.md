@@ -1,23 +1,32 @@
-# decide_turn integration (copy pattern)
+# decide_turn + host wiring (copy pattern)
 
-Add a branch in your `decide_turn` implementation **after** front-door detour precedence
-(`delivery_order_contract.is_front_door_detour_kind`) and **before** generic fallthrough:
+## 0. Register KindSpec (once at process start)
 
 ```python
-# Sole-continue: while kind=cyber_risk_assessment and task_intent is continue,
-# do not re-open greenfield entity resolve (SDK §2.1 multi-turn stream).
+from examples.cyber_risk_assessment.kind_spec import register_in, CYBER_RISK_KIND_SPEC
+
+KIND_REGISTRY: dict = {}
+register_in(KIND_REGISTRY)
+# portable: merge into conversation_control.kind_spec.KIND_REGISTRY
+```
+
+## 1. Sole-continue branch in `decide_turn`
+
+After front-door detour precedence, before generic fallthrough:
+
+```python
 if _active_kind == "cyber_risk_assessment":
     active_task_obj = ActiveTask(**{
         k: v for k, v in current_active.items() if k in ACTIVE_FIELDS
     })
     # Perceive relative intent via bounded classifier — never keyword routing on query.
     if intent == "abandon":
-        # Model A: abandon is a distinct journal event (not complete).
         complete_task(
             db, tenant_id, conversation_id,
             agent="bot0",
             reason="abandon",
             task_id=current_active.get("task_id"),
+            command_id=new_command_id(),
         )
         return TurnPlan(agent="bot0", mode="command", reason="cyber_risk_assessment abandoned")
     if intent == "detour":
@@ -30,30 +39,32 @@ if _active_kind == "cyber_risk_assessment":
     )
 ```
 
-## Host dispatch (after decide_turn)
+## 2. Host dispatch (after decide_turn)
 
 ```python
 from multi_turn_stream_contract import (
-    phase_allows_entity_resolve,
     sole_continue_blocks_entity_resolve,
     ledger_entity_pins,
 )
 
-# Entity resolve / list openers only when phase allows:
 if sole_continue_blocks_entity_resolve(context, task_intent=intent):
     # continue under pin + specialist cognition — do not resolve_by_name(...)
     ...
 else:
-    # open / anchor / pick phases may resolve
+    # open / anchor may resolve
     ...
 
-# Identity authority after pin:
-pins = ledger_entity_pins(context)  # payload only — not ambient last_read alone
+pins = ledger_entity_pins(context)  # payload only
 
-# Map AgentTurnResult → ledger (sole writer):
-# apply_transition_request(db, tenant_id, conversation_id,
-#     agent="cyber_risk_assessment", request=result.transition)
-# or finish_active_task(..., reason="complete"|"abandon", context=context)
+result = agent.handle_turn(..., context=context, thread_id=conversation_id)
+# Persist domain_patch under result.pending_ref (specialist store) BEFORE or WITH ledger write
+# apply_transition_request(...)  # sole writer — maps begin/continue/complete/abandon
 ```
+
+## 3. Thin payload rule (P15)
+
+When applying `payload_patch`, **reject** keys outside `KindSpec.allowed_payload_keys`
+(or run `control_payload.sanitize_control_payload`). Domain IR must not land on
+`active_task.payload`.
 
 Register in `AGENT_REGISTRY` with `task_kind="bounded"`. Never import `ledger.py` from the agent module.

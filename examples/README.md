@@ -1,10 +1,13 @@
 # Examples
 
-Sanitized **design stubs** only. No tenant data, no private product engines.
+**Primary on-ramp is the package README** (lessons learnt + kickoff prompt), not this folder.
+SDK doc = spec. Examples are optional shape pins / token savers.
 
 | Example | Pattern | Status |
 |---|---|---|
-| [`cyber_risk_assessment/`](cyber_risk_assessment/) | Bounded multi-turn specialist + async job ([SDK §9.1](../docs/conversation-control-plane-sdk.md) + [§2.1 multi-turn stream](../docs/conversation-control-plane-sdk.md#21-multi-turn-stream-contract-every-sole-continue-kind)) | Design stub |
+| [`cyber_risk_assessment/`](cyber_risk_assessment/) | Sole-continue + host sketch (KindSpec, thin payload, HITL VERIFY) | Optional scaffold — not product scoring |
+| [`integrations/`](integrations/) | Host wraps (Python / OpenAI-style / LangGraph) | Optional sketches |
 
-**Copy:** ledger `kind`, phases, `TaskTransition`, `decide_turn` branch, multi-turn pin/phase gates.  
-**Do not copy:** anything that would appear only in a private monorepo (scoring formulas, backlogs, real agents).
+**Copy if useful:** KindSpec, thin pins, `TaskTransition`, host sole writer.  
+**Do not copy:** private monorepo scoring, full corpora, product UI.  
+**Do not require** full agent dumps — coding agents generate domain specialists from README lessons.
