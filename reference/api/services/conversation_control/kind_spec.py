@@ -145,6 +145,8 @@ KIND_REGISTRY: dict[str, KindSpec] = {
     AGENT_COST_PRICING_KIND: _spec(
         AGENT_COST_PRICING_KIND,
         owner="bot0",
+        # Shares cost_out exclusive owner (same chat cost surface; sole-continue sticky).
+        exclusive="cost_out",
         phases=frozenset({
             "open", "eliciting", "preview", "saved", "published", "complete", "terminal",
         }),

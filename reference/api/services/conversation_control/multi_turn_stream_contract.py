@@ -36,8 +36,11 @@ REALIZATION_KIND = "realization_intake"
 RISK_CATALOG_LEARNING_KIND = "risk_catalog_learning"
 SCORECARD_INTERROGATE_KIND = "scorecard_interrogate"
 
+# Portable fallback when task_pin_contract is not on the path (public extract).
+# Monorepo overwrites this from task_pin_contract.SOLE_CONTINUE_KINDS below.
 SOLE_CONTINUE_KINDS = frozenset({
     COST_OUT_KIND,
+    "agent_cost_pricing",
     CYBER_RISK_KIND,
     REALIZATION_KIND,
     OUTCOME_VALUE_KIND,
@@ -45,6 +48,7 @@ SOLE_CONTINUE_KINDS = frozenset({
     PROJECT_WORKSPACE_KIND,
     SCORECARD_INTERROGATE_KIND,
     RISK_CATALOG_LEARNING_KIND,
+    "workflow_build",
 })
 
 
@@ -321,6 +325,8 @@ STREAM_GATE_ADOPTER_PATHS: frozenset[str] = frozenset({
     "api/services/cyber_risk_subject_contract.py",
     "api/services/realization_intake_handler.py",
     "api/services/conversation_control/task_pin_contract.py",
+    # agent_cost_pricing multi-turn IR (shares cost_out exclusive owner)
+    "api/services/agent_cost_pricing_pipeline.py",
 })
 
 

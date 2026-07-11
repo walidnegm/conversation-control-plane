@@ -2632,7 +2632,8 @@ Bounded multi-turn shape (phases, pins, COMPLETE≠ABANDON): `examples/cyber_ris
 
 ### Open (adopter-facing)
 
-- **Phase 1b package** — `pip install conversation-control-plane`, adapter interfaces, decoupled imports
+- **Phase 1b package** — PyPI `pip install conversation-control-plane`; ledger already fail-open without
+  monorepo host; remaining work = host adapters so `decide_turn` / classifiers need no product imports
 - **New-agent scaffold generator** — copy [§1.1 adopter brief](#11-adopter-brief-copy-to-your-coding-agent) +
   [cyber risk assessment stub](../examples/cyber_risk_assessment/) until `create_agent <kind>` lands
 - **Property-test expansion** — arbitrary turn-sequence ↔ ledger parity in your host

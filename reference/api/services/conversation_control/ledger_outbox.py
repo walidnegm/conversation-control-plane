@@ -130,7 +130,11 @@ def export_batch_to_platform_events(
 
     Safe to call from a worker / cron. Failures leave rows pending for retry.
     """
-    from api.services.event_logger import log_platform_event
+    try:
+        from api.services.event_logger import log_platform_event
+    except ImportError:  # public extract without monorepo host
+        def log_platform_event(*_a, **_k):  # type: ignore[misc]
+            return None
 
     claimed = claim_export_batch(db, limit=limit, tenant_id=tenant_id)
     if not claimed:

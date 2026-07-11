@@ -26,7 +26,11 @@ from typing import Any, Literal, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from api.services.event_logger import log_platform_event
+try:
+    from api.services.event_logger import log_platform_event
+except ImportError:  # public extract / Phase 1b without monorepo host
+    def log_platform_event(*_a: Any, **_k: Any) -> None:  # type: ignore[misc]
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +38,26 @@ logger = logging.getLogger(__name__)
 # These are the minimal primitives needed for single-writer control key updates.
 # The old conversation_control_state.py can remain for transitional P0/P1 shim callers
 # but ledger no longer delegates to it.
-from api.services import conversation_staleness as _staleness
+try:
+    from api.services import conversation_staleness as _staleness
+except ImportError:  # public extract — use hardcoded TTL defaults
+    class _StalenessFallback:
+        _DEFAULTS = {
+            "control_pending_switch_ttl_minutes": 30.0,
+            "control_suspended_task_ttl_hours": 24.0,
+            "turn_claim_ttl_seconds": 240.0,
+            "turn_claim_orphan_steal_seconds": 30.0,
+        }
+
+        @classmethod
+        def default(cls, key: str) -> float:
+            return float(cls._DEFAULTS.get(key, 0.0))
+
+        @classmethod
+        def resolve_global(cls, _db: Any, key: str) -> float:
+            return cls.default(key)
+
+    _staleness = _StalenessFallback()  # type: ignore[assignment]
 
 
 def _pending_switch_ttl_minutes(db: Session | None = None) -> float:

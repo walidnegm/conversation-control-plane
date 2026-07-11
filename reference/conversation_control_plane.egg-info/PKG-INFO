@@ -1,3 +1,20 @@
+Metadata-Version: 2.4
+Name: conversation-control-plane
+Version: 0.1.0
+Summary: Conversation Control Plane SDK — reference implementation by Bot0.ai
+Author: Bot0.ai
+License: Proprietary
+Keywords: conversation,agents,ledger,multi-agent,control-plane
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+
 # Conversation Control Plane SDK
 
 *Conversation Control Plane SDK* — reference implementation by [Bot0.ai](https://bot0.ai)
@@ -338,8 +355,8 @@ No separate playbook. Optional wrap sketches: Traction §3 + `examples/integrati
 
 | Shipped | Still open (Phase 1b+) |
 |---|---|
-| README on-ramp (lessons + kickoff) + SDK spec + optional scaffold | PyPI `pip install conversation-control-plane` (registry) |
-| Reference modules (ledger fail-open without monorepo host; multi-turn stream) | Full host adapters so `decide_turn` needs no product imports |
+| README on-ramp (lessons + kickoff) + SDK spec + optional scaffold | `pip install conversation-control-plane` |
+| Reference modules (incl. multi-turn stream) | First-class LangGraph / CrewAI **adapter packages** |
 | Concurrency **contract** (§3.1) | Formal load **benchmark artifact** |
 | SQL-native **ops read model** | `ccp inspect` CLI + optional session dashboard |
 
