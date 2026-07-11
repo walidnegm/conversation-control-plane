@@ -11,7 +11,13 @@ project, scorecards, risk-catalog share the same disease when they violate this.
    never sole authority for "which entity they meant this turn".
 3. **LLM owns continue meaning** — sizing, verify chips, refine, detour labels;
    code owns finite path digits when a path menu was armed.
-4. **No NL wordlist as sole arbiter** of what the user meant (AGENTS.md).
+4. **Structural entity reference → code executes** — when the utterance contains
+   a finite-grammar entity id (``wf_…``, ``run_…``, ``proj_…``, risk ``PREFIX-N``)
+   or a finite ordinal into a pin list, code **must** call the authority
+   service (see ``stream_code_depth_contract``). Conversational freestyle about
+   that entity is forbidden. Applies to **all** agentic multi-turn streams, not
+   risk-catalog only.
+5. **No NL wordlist as sole arbiter** of what the user meant (AGENTS.md).
 
 Portable for the public SDK extract (no private product code). Optional
 ``task_pin_contract`` import when running inside the Bot0 monorepo.
@@ -87,6 +93,7 @@ else:
 # Anything not listed is treated as "continue" (no ambient re-resolve).
 ENTITY_RESOLVE_PHASES_BY_KIND: dict[str, frozenset[str]] = {
     COST_OUT_KIND: frozenset({"open", "entity_pick", ""}),
+    "agent_cost_pricing": frozenset({"open", ""}),  # no ambient re-resolve mid-IR
     CYBER_RISK_KIND: frozenset({"anchor", ""}),  # pin once at start
     REALIZATION_KIND: frozenset({"open", "entity_pick", "anchor", ""}),
     PROJECT_WORKSPACE_KIND: frozenset({"open", ""}),
@@ -94,12 +101,21 @@ ENTITY_RESOLVE_PHASES_BY_KIND: dict[str, frozenset[str]] = {
     RISK_CATALOG_LEARNING_KIND: frozenset({"browsing", ""}),
     OUTCOME_VALUE_KIND: frozenset({"collecting", ""}),
     DRAFTING_KIND: frozenset({"awaiting_domain", "awaiting_details", ""}),
+    # Multi-gate authoring (workflow_build) — resolve only at open/extract-ish
+    # phases; mid-ladder is continue. Full sole-continue adoption is known_gap
+    # until exclusive-owner map lands (sdk-grade-a); phase tables still closed.
+    "workflow_build": frozenset({"open", "extracting", "gathering", ""}),
 }
 
 # Phases where continue cognition owns the turn (no entity re-resolve).
 # Explicit sets where known; default = "not in ENTITY_RESOLVE_PHASES".
 CONTINUE_PHASES_BY_KIND: dict[str, frozenset[str]] = {
-    COST_OUT_KIND: frozenset({"anchored", "sizing", "estimated"}),
+    COST_OUT_KIND: frozenset({
+        "anchored", "sizing", "estimated", "save_confirm",
+    }),
+    "agent_cost_pricing": frozenset({
+        "eliciting", "preview", "saved", "published", "complete",
+    }),
     CYBER_RISK_KIND: frozenset({
         "discover", "project", "verify", "score", "complete",
     }),
@@ -111,6 +127,19 @@ CONTINUE_PHASES_BY_KIND: dict[str, frozenset[str]] = {
     RISK_CATALOG_LEARNING_KIND: frozenset({"detail", "complete"}),
     OUTCOME_VALUE_KIND: frozenset({"confirming", "complete", "active"}),
     DRAFTING_KIND: frozenset({"drafting", "refining", "ready_to_build", "active"}),
+    # Contract B ladder phases (authoring_gate_contract + dispatch_phase).
+    "workflow_build": frozenset({
+        "ir_review",
+        "role_proposal",
+        "domain_picker",
+        "operational_data",
+        "commit_plan",
+        "building",
+        "reviewing",
+        "editing",
+        "active",
+        "in_progress",
+    }),
 }
 
 
@@ -154,6 +183,10 @@ def phase_allows_entity_resolve(
         return False
     resolve_set = ENTITY_RESOLVE_PHASES_BY_KIND.get(kind)
     if resolve_set is not None:
+        # Empty phase + pin: inventory ordinal must not steal (cost/cyber fixtures
+        # and mid-stream before phase stamp). Treat as continue, not greenfield.
+        if has_ledger_pin and not ph:
+            return False
         if ph in resolve_set:
             return True
         # Unknown phase with pin → fail closed (no re-resolve).

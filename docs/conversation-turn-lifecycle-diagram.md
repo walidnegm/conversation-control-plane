@@ -36,6 +36,18 @@ path — **phase-gated** entity resolve, **ledger pins** for identity, **LLM** f
 ([SDK §2.1 multi-turn stream](conversation-control-plane-sdk.md#21-multi-turn-stream-contract-every-sole-continue-kind)).
 This is dispatch discipline inside active-flow continue, not a second state machine.
 
+**Ledger maturity — Model A L2 (2026-07-11):** the control plane has **two complementary stores**:
+
+| Store | Authority | Shape |
+|---|---|---|
+| **L1 projection** | *Routing* — who owns the next turn | `conversations.context` keys (`active_task`, `suspended_tasks`, …) |
+| **L2 journal** | *History* — immutable ordered transitions | `conversation_control_events` (`task_began` / `task_completed` / `task_abandoned` / …) |
+
+Every successful lifecycle command assigns an immutable **`task_id`**, uses **`command_id`** for
+idempotency, and appends a journal row in the same transaction as the projection write
+(`ledger_journal.py` + `begin_task` / `complete_task` / `finish_active_task`). COMPLETE and ABANDON
+are **distinct event types** — not one “clear stickiness” blob.
+
 
 **Cognition / execution on this map (2026-07-07).** ▨ blocks emit labels (intent, `user_wants`,
 `authoring_maturity`, gaps). ▣ blocks validate enums and run transitions. **Semantic readiness** (how good is
@@ -108,10 +120,10 @@ flowchart TD
   POST -->|prose intake owns turn| SHORT
   POST -->|else| DISP
 
-  DISP["▨ Dispatch specialist<br/>ConversationalAgent.handle_turn → TaskTransition"]
+  DISP["▨ Dispatch specialist<br/>ConversationalAgent.handle_turn → AgentTurnResult / TaskTransitionRequest<br/>(task_id · command_id · transition only)"]
   DISP --> LED
 
-  LED["▣ Ledger write — decide_turn only<br/>active_task / suspended_tasks / pending_switch / pending_question<br/>+ _control_revision++ + platform event"]
+  LED["▣ Ledger write — single writer<br/>L1 projection: active_task / suspended_tasks / pending_switch<br/>+ _control_revision++ · platform event<br/>L2 journal: conversation_control_events (task_id · command_id · seq)"]
   LED --> REL
   SHORT["⚡ short-circuit answer"] --> REL
   REL["▣ release_turn — finally<br/>+ persist 3-hop routing trace on the message"]
@@ -203,28 +215,32 @@ same-agent dispatch.** "Continue resumes" beating a flaky handoff classifier is 
 
 ## 4. The ledger state model (what "ledger-pinned" means)
 
-The control slice lives on `conversations.context` (JSONB). `_CONTROL_KEYS`
-([ledger.py:274](../../api/services/conversation_control/ledger.py#L274)) = `active_task`, `suspended_tasks`,
-`pending_switch`, `pending_question` (+ transitional `advisor_active` / `pipeline_step` / `create_flow_state`,
-being retired). Meta fields: `_control_revision` (monotonic), `_turn_claim` (holder + heartbeat + TTL),
+### 4.1 L1 projection (routing authority)
+
+The control slice lives on `conversations.context` (JSONB). `_CONTROL_KEYS` /
+`LEDGER_CONTROL_KEYS` ([ledger_keys.py](../../api/services/conversation_control/ledger_keys.py)) =
+`active_task`, `suspended_tasks`, `pending_switch`, `pending_question`, `plan`, `shadow_plan`
+(+ transitional `advisor_active` / `pipeline_step` / `create_flow_state`, being retired).
+Meta fields: `_control_revision` (monotonic), `_turn_claim` (holder + heartbeat + TTL),
 `_handoff_trace` (bookkeeping, not a control key).
 
 ```mermaid
 stateDiagram-v2
   [*] --> Idle
-  Idle --> Active: begin_task(agent, kind, payload)
-  Active --> Active: update_phase(phase, awaiting)
+  Idle --> Active: begin_task(agent, kind, payload, task_id)
+  Active --> Active: update_phase(phase, awaiting) — preserves task_id
   Active --> Suspended: suspend_active (on handoff)
   Suspended --> Active: resume_task (return path)
   Active --> PendingSwitch: propose_switch(to)
   PendingSwitch --> Active: resolve_switch = stay
   PendingSwitch --> Suspended: resolve_switch = switch (suspend prior)
-  Active --> Idle: complete_task (terminal — clears active)
+  Active --> Idle: complete_task(reason=complete) — task_completed
+  Active --> Idle: complete_task(reason=abandon) — task_abandoned
   PendingSwitch --> Idle: pending_switch TTL expires
   Suspended --> Idle: suspended_tasks TTL expires
 
   note right of Active
-    active_task = {agent, kind, phase,
+    active_task = {task_id, agent, kind, phase,
     payload, pending_ref}
     Cross-turn working memory lives in
     kind + payload — never parallel
@@ -232,9 +248,39 @@ stateDiagram-v2
   end note
 ```
 
-Every write bumps `_control_revision` and emits a platform event, so "why did routing choose X, and when?" is a
-SQL query, not a graph-checkpoint deserialization. Finite picks (numbered menus) live in `pending_question`, not
-free-text re-inference.
+Every write bumps `_control_revision` and emits a platform event. Finite picks (numbered menus) live in
+`pending_question`, not free-text re-inference.
+
+### 4.2 L2 journal (historical authority — Model A)
+
+Append-only table `conversation_control_events` ([migration `a3b4c5d6e7f8`](../../alembic/versions/a3b4c5d6e7f8_conversation_control_events_journal.py),
+helpers [ledger_journal.py](../../api/services/conversation_control/ledger_journal.py)):
+
+| Field | Role |
+|---|---|
+| `seq` | Per-conversation order |
+| `command_id` | Idempotency key (unique per tenant+conversation) |
+| `task_id` | Immutable task instance identity |
+| `event_type` | `task_began` · `task_completed` · `task_abandoned` · `task_failed` · `task_superseded` · … |
+| `control_revision_after` | Fence against the projection version |
+
+```mermaid
+flowchart LR
+  CMD["Lifecycle command<br/>begin / complete / abandon"] --> PROJ["▣ L1 projection write<br/>active_task JSONB"]
+  CMD --> JRN["▣ L2 journal append<br/>conversation_control_events"]
+  PROJ --> REV["_control_revision++"]
+  JRN --> TEL["platform event (telemetry mirror)<br/>not ledger of record"]
+```
+
+**Adopter rule:** specialists declare `TaskTransition` / `TaskTransitionRequest` (with `task_id` +
+`command_id` when known); only `decide_turn` / ledger APIs write. Prefer `finish_active_task(...)` from
+first-class handlers so cancel maps to **abandon** and save maps to **complete**. "Why did routing choose X?"
+is now: projection snapshot + journal sequence + routing trace — not a graph-checkpoint deserialization.
+
+**Production-grade write path (2026-07-11):** journal append is **fail-closed** (same TX as projection);
+invalid phase raises `TaskPhaseInvalidError` (no log-and-persist); outbox export runs on the **worker
+idle tick** (`BG_CONTROL_OUTBOX_INTERVAL`, default 30s) — never on the chat hot path. SDK claim:
+[§ Production grade](conversation-control-plane-sdk.md#production-grade-definition).
 
 ---
 
@@ -266,20 +312,30 @@ Complementary guards on the same class of loop: Switch/Stay confirmation (no sil
 
 ---
 
-## 6. The three-hop routing trace (observability)
+## 6. The routing trace (observability)
 
 Every turn persists one trace object (`route_data.routing` on the message; also streamed live and carried on
-async-job results). This is the ledger's audit companion.
+async-job results). This is the ledger's **audit companion**, not a second authority. Full field contract
+and agent/skill/tool ontology: **[SDK §11.1](conversation-control-plane-sdk.md#111-intent-router-layers-l0l4-and-per-turn-routing-trace)** (published). Export wiring samples: [trace export](conversation-control-plane-sdk.md#111-intent-router-layers-l0l4-and-per-turn-routing-trace).
+
+**Three-hop mental model** (still valid; delivery is richer than a single executor label):
 
 ```mermaid
 flowchart LR
   H1["Router (L0–L4)<br/>router_layer · router_intent · confidence"]
     --> H2["Control plane (decide_turn)<br/>mode · plan_summary · intent_source · reason"]
-    --> H3["Executor<br/>agent · executor · dispatch · capability_key · skill_key"]
+    --> H3["Delivery under active agent<br/>agent · delivery_kind · dispatch/why<br/>cognition_key · first_tool · tools"]
 ```
 
+| Concept on the strip | Meaning |
+|---|---|
+| **Active agent** (`agent`) | Session/turn **owner** — may fulfill via LLM+tools **or** deterministic code |
+| **Cognition** (`cognition_key`) | Bounded classifier/router/extractor — **not** the owner |
+| **Tools** (`first_tool`, `tools`) | Callables under that agent (or code path that is tool-shaped) |
+| **Dispatch / Why** | Code-owned delivery branch when not a full specialist loop |
+
 A short-circuit exit shows up as `plan_summary: 'Skipped decide_turn; <dispatch> short-circuit'` — the literal
-fingerprint of the gauntlet competing with the authoritative decision.
+fingerprint of the gauntlet competing with the authoritative decision (legal only for finite/code-owned paths).
 
 ---
 

@@ -27,19 +27,24 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "pending_question_pick",
     "pending_workflow_pick",
     "pending_entity_pick",
+    "inventory_dual_stream_clarify",
+    "referential_list",
     "ordinal_read",
     "reset",
     "catalog_role",
     "catalog_plan_exec",
     "ir_gate_role_proposal",
     "authoring_gate_proceed_early",
-    "prose_intake_early_enqueue",
+    "authoring_gate_ir_confirm_early",
+    "drafting_interpret_early",
+    "prose_intake_early_enqueue",  # legacy alias — prefer post_router
+    "prose_intake_post_router_enqueue",
+    "diagram_attachment_early_enqueue",
     "domain_gate_pick",
     "post_save_setup",
     "post_save_status",
     "catalog_precedent_variants",
     "gap_create_linked_project",
-    "authoring_gate_ir_confirm_early",
     "realization_gap_intake",
     "realization_gap_intake_enqueue",
     "realization_gap_intake_failed",
@@ -62,9 +67,12 @@ POST_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "orientation_detour",
     "surface_read_detour",
     "authoring_gate_proceed",
+    "authoring_gate_detour",
     "concept_gate",
+    "session_activities",
     "project_interrogation",
     "workflow_simulation_entry",
+    "workflow_surface_read",
     "post_save_status",
     "inventory_entity_resolve",
     "cost_out_anchor",
@@ -72,6 +80,11 @@ POST_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "cost_out_fork",
     "cost_out_sparse",
     "cost_out_estimate",
+    "save_agent_cost_profile",
+    "agent_cost_pricing",
+    "agent_cost_pricing_elicit",
+    "agent_cost_pricing_preview",
+    "agent_cost_pricing_publish",
 })
 
 # S4/S6 — must never skip decide_turn (routing trace must say post-decide delivery).
@@ -80,10 +93,30 @@ POST_DECIDE_ONLY_DISPATCHES: FrozenSet[str] = frozenset({
     "orientation_detour",
     "surface_read_detour",
     "concept_gate",
+    "session_activities",
     "project_interrogation",
     "workflow_simulation_entry",
+    "workflow_surface_read",
     "authoring_gate_proceed",
+    "authoring_gate_detour",
     "inventory_entity_resolve",
+    "save_agent_cost_profile",
+    "agent_cost_pricing",
+    "agent_cost_pricing_elicit",
+    "agent_cost_pricing_preview",
+    "agent_cost_pricing_publish",
+})
+
+# Union used by static inventory ratchets (#10s multi-detour steal seal).
+ALL_ALLOWLISTED_DISPATCHES: FrozenSet[str] = frozenset(
+    {*PRE_DECIDE_DISPATCHES, *POST_DECIDE_DISPATCHES}
+)
+
+# Optional internal / non-chat-finish labels that may appear in traces but are
+# not user-facing short-circuit leaves (not required in bot0 inventory).
+DISPATCH_INVENTORY_IGNORE: FrozenSet[str] = frozenset({
+    "untraced",
+    "project_registry",
 })
 
 
@@ -132,3 +165,33 @@ def plan_summary_for_dispatch(
     if pre_decide_short_circuit:
         return f"Skipped decide_turn; {dispatch} short-circuit"
     return f"Post-decide delivery; {dispatch}"
+
+
+def extract_dispatch_literals_from_text(source: str) -> set[str]:
+    """Collect ``dispatch=\"…\"`` and ``\"dispatch\": \"…\"`` string literals."""
+    import re
+
+    found: set[str] = set()
+    for m in re.finditer(
+        r'(?:dispatch\s*=\s*["\']|["\']dispatch["\']\s*:\s*["\'])([a-z0-9_]+)["\']',
+        source or "",
+    ):
+        found.add(m.group(1))
+    return found
+
+
+def extract_pre_decide_true_dispatches_from_text(source: str) -> set[str]:
+    """Dispatch ids near ``pre_decide_short_circuit=True`` (static window scan)."""
+    import re
+
+    found: set[str] = set()
+    lines = (source or "").splitlines()
+    for i, line in enumerate(lines):
+        if "pre_decide_short_circuit=True" not in line and (
+            "pre_decide_short_circuit = True" not in line
+        ):
+            continue
+        window = "\n".join(lines[max(0, i - 14) : i + 4])
+        for m in re.finditer(r'dispatch\s*=\s*["\']([a-z0-9_]+)["\']', window):
+            found.add(m.group(1))
+    return found

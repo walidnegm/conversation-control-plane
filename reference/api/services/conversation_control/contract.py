@@ -24,6 +24,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal, Optional, Protocol
 
+from api.services.conversation_control.ledger_keys import (
+    CONTROL_KEYS,
+    LEDGER_CONTROL_KEYS,
+)
+
 # -----------------------------------------------------------------------------
 # Task lifecycle (returned by agents; control plane maps to ledger writes)
 # -----------------------------------------------------------------------------
@@ -40,29 +45,6 @@ class TaskTransition(Enum):
     COMPLETE = "complete"    # Task finished successfully — control plane must release ALL stickiness
     ABANDON = "abandon"      # User explicitly bailed or reset — release ALL stickiness
     NONE = "none"            # Turn had no task semantics (pure Q&A / bot0). Never sticky.
-
-
-# The control-plane keys agents MUST NOT write (epic §9.2). The control plane is
-# their sole writer; an agent's context_updates is domain-only. Used by the
-# domain-only guard below and by the authority-matrix ratchet.
-CONTROL_KEYS = frozenset({
-    "agent_type",
-    "pending_switch",
-    "pending_question",
-    "active_task",
-    "suspended_tasks",
-    "advisor_active",
-    "pipeline_step",
-    "create_flow_state",
-    # Turn-serialization claim (T1, turn-integrity epic). Written only by
-    # ledger.claim_turn/release_turn on their own sessions; an agent must
-    # never be able to steal or drop another turn's claim via context_updates.
-    "_turn_claim",
-    # Last-completed-turn marker (T8) — ledger.mark_turn_completed only.
-    "_last_completed_turn",
-    # Monotonic control-coherence counter (epic §8.2) — ledger-bumped only.
-    "_control_revision",
-})
 
 
 def strip_control_keys(context_updates: Optional[dict]) -> dict:
@@ -104,6 +86,12 @@ class AgentTurnResult:
     awaiting: Optional[str] = None
     pending_ref: Optional[str] = None
     context_updates: dict = field(default_factory=dict)
+    # Model A lifecycle fields (optional for backward compatibility).
+    task_id: Optional[str] = None
+    kind: Optional[str] = None
+    payload_patch: Optional[dict] = None
+    outcome_reason: Optional[str] = None
+    command_id: Optional[str] = None
 
 
 class ConversationalAgent(Protocol):
@@ -198,8 +186,30 @@ class ActiveTask:
     # Ledger-tracked-task tier (agent-architecture §4b): `kind` names a sub-flow the
     # agent owns (e.g. "drafting"); `payload` is its conversation-scoped state (e.g.
     # the current draft) — carried in the LEDGER, not ad-hoc context flags.
+    # Payload must stay small (pins/gates only) — never IR/graph blobs.
     kind: Optional[str] = None
     payload: Optional[dict] = None
+    # Immutable task *instance* identity (resume/complete by id, not agent alone).
+    task_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class TaskTransitionRequest:
+    """Declarative lifecycle command from a specialist (Model A command surface).
+
+    Prefer this over loose kwargs when wiring new agents. ``task_id`` is required
+    for CONTINUE/COMPLETE/ABANDON once the task was begun with an id.
+    """
+    transition: TaskTransition
+    task_id: Optional[str] = None
+    kind: Optional[str] = None
+    phase: Optional[str] = None
+    awaiting: Optional[str] = None
+    pending_ref: Optional[str] = None
+    payload_patch: Optional[dict] = None
+    outcome_reason: Optional[str] = None
+    command_id: Optional[str] = None
+    expected_version: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -288,7 +298,8 @@ class DecisionEnvelope:
     source-message identity and the ledger ``control_revision`` it was issued
     against, so a worker can detect a *stale* decision (the ledger moved, or the
     message changed) before executing — without re-deriving lifecycle from the
-    transcript. ``decision_id`` is the idempotency key.
+    transcript. ``decision_id`` is the idempotency key (enforced at journal when
+    present as command_id).
     """
     decision_id: str
     conversation_id: str
@@ -299,11 +310,14 @@ class DecisionEnvelope:
     issued_at: str
     issued_by: str
     turn_plan: TurnPlan
+    # Schema for lossless queue round-trip (kind/payload/discovery must survive).
+    schema_version: int = 2
 
     def to_dict(self) -> dict:
         tp = self.turn_plan
         task = tp.task
         return {
+            "schema_version": self.schema_version,
             "decision_id": self.decision_id,
             "conversation_id": self.conversation_id,
             "tenant_id": self.tenant_id,
@@ -316,6 +330,7 @@ class DecisionEnvelope:
                 "agent": tp.agent,
                 "mode": tp.mode,
                 "reason": tp.reason,
+                "discovery_kind": tp.discovery_kind,
                 "task": (
                     {
                         "agent": task.agent,
@@ -323,6 +338,9 @@ class DecisionEnvelope:
                         "awaiting": task.awaiting,
                         "pending_ref": task.pending_ref,
                         "started_at": task.started_at,
+                        "kind": task.kind,
+                        "payload": task.payload,
+                        "task_id": task.task_id,
                     }
                     if task else None
                 ),
@@ -340,6 +358,9 @@ class DecisionEnvelope:
                 awaiting=task_d.get("awaiting"),
                 pending_ref=task_d.get("pending_ref"),
                 started_at=task_d.get("started_at"),
+                kind=task_d.get("kind"),
+                payload=task_d.get("payload") if isinstance(task_d.get("payload"), dict) else None,
+                task_id=task_d.get("task_id"),
             )
             if isinstance(task_d, dict) else None
         )
@@ -352,11 +373,13 @@ class DecisionEnvelope:
             control_revision=int(d.get("control_revision") or 0),
             issued_at=d.get("issued_at", ""),
             issued_by=d.get("issued_by", ""),
+            schema_version=int(d.get("schema_version") or 1),
             turn_plan=TurnPlan(
                 agent=tp.get("agent", "bot0"),
                 mode=tp.get("mode", "fresh"),
                 task=task,
                 reason=tp.get("reason", ""),
+                discovery_kind=str(tp.get("discovery_kind") or "none"),
             ),
         )
 

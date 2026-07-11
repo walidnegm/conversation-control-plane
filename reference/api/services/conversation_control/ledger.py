@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import os
 from typing import Any, Literal, Optional
 
@@ -26,6 +27,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from api.services.event_logger import log_platform_event
+
+logger = logging.getLogger(__name__)
 
 # Inlined from the former Stage-1 shim (now retired for the ledger writer per P3b).
 # These are the minimal primitives needed for single-writer control key updates.
@@ -197,34 +200,112 @@ def set_pending_switch_source_message_id(
     )
 
 
+def _revision_fence_sql(expected_version: Optional[int]) -> str:
+    """Optional WHERE clause fragment for optimistic concurrency (Model A)."""
+    if expected_version is None:
+        return ""
+    return (
+        " AND COALESCE((context->>'_control_revision')::int, 0) = :expected_version"
+    )
+
+
+def _raise_if_stale_update(
+    db: Session,
+    *,
+    tenant_id: str,
+    conversation_id: str,
+    expected_version: Optional[int],
+    rowcount: int,
+) -> None:
+    if expected_version is None:
+        return
+    if rowcount and rowcount > 0:
+        return
+    from api.services.conversation_control.failure_modes import StaleControlRevisionError
+
+    actual = get_control_revision(db, tenant_id, conversation_id)
+    raise StaleControlRevisionError(
+        expected=int(expected_version),
+        actual=actual,
+        conversation_id=conversation_id,
+        tenant_id=tenant_id,
+    )
+
+
+def assert_expected_version(
+    db: Session,
+    tenant_id: str,
+    conversation_id: str,
+    expected_version: Optional[int],
+) -> int:
+    """Fence a compound command: raise if expected_version mismatches live revision.
+
+    When ``expected_version`` is None, returns the current revision without error
+    (backward-compatible callers that do not yet carry a fence).
+    """
+    actual = get_control_revision(db, tenant_id, conversation_id)
+    if expected_version is None:
+        return actual
+    if int(expected_version) != actual:
+        from api.services.conversation_control.failure_modes import StaleControlRevisionError
+
+        raise StaleControlRevisionError(
+            expected=int(expected_version),
+            actual=actual,
+            conversation_id=conversation_id,
+            tenant_id=tenant_id,
+        )
+    return actual
+
+
 def _clear_context_keys(
     db: Session,
     *,
     conversation_id: str,
     tenant_id: str,
     keys: list[str] | tuple[str, ...],
+    expected_version: Optional[int] = None,
 ) -> None:
     if not keys:
         return
     # Bump _control_revision in the same statement: any control-key clear is a
     # control mutation, and the monotonic revision is what the decision envelope
-    # validates against (epic §8.2).
-    db.execute(
+    # validates against (epic §8.2). Optional expected_version is Model A fencing.
+    fence = _revision_fence_sql(expected_version)
+    result = db.execute(
         text(
-            """
+            f"""
             UPDATE conversations
                SET context = jsonb_set(
-                       COALESCE(context, '{}'::jsonb) - CAST(:keys AS text[]),
+                       COALESCE(context, '{{}}'::jsonb) - CAST(:keys AS text[]),
                        ARRAY['_control_revision']::text[],
                        to_jsonb(COALESCE((context->>'_control_revision')::int, 0) + 1),
                        true
                    ),
                    updated_at = now()
              WHERE conversation_id = :cid AND tenant_id = :tid
+             {fence}
             """
         ),
-        {"keys": list(keys), "cid": conversation_id, "tid": tenant_id},
+        {
+            "keys": list(keys),
+            "cid": conversation_id,
+            "tid": tenant_id,
+            **(
+                {"expected_version": int(expected_version)}
+                if expected_version is not None
+                else {}
+            ),
+        },
     )
+    _raise_if_stale_update(
+        db,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        expected_version=expected_version,
+        rowcount=int(getattr(result, "rowcount", 0) or 0),
+    )
+
 
 def _set_jsonb_key(
     db: Session,
@@ -233,6 +314,7 @@ def _set_jsonb_key(
     tenant_id: str,
     key: str,
     value: object,
+    expected_version: Optional[int] = None,
 ) -> None:
     # Only ledger-controlled keys for the writer.
     allowed = {
@@ -248,13 +330,14 @@ def _set_jsonb_key(
     # Set the control key AND bump _control_revision atomically in one UPDATE.
     # control_revision is monotonic metadata about control coherence (epic §8.2),
     # not rich content — it stays consistent with the lightweight-ledger model.
-    db.execute(
+    fence = _revision_fence_sql(expected_version)
+    result = db.execute(
         text(
-            """
+            f"""
             UPDATE conversations
                SET context = jsonb_set(
                        jsonb_set(
-                           COALESCE(context, '{}'::jsonb),
+                           COALESCE(context, '{{}}'::jsonb),
                            ARRAY[:key]::text[],
                            CAST(:value AS jsonb),
                            true
@@ -265,22 +348,33 @@ def _set_jsonb_key(
                    ),
                    updated_at = now()
              WHERE conversation_id = :cid AND tenant_id = :tid
+             {fence}
             """
         ),
-        {"key": key, "value": json.dumps(value), "cid": conversation_id, "tid": tenant_id},
+        {
+            "key": key,
+            "value": json.dumps(value),
+            "cid": conversation_id,
+            "tid": tenant_id,
+            **(
+                {"expected_version": int(expected_version)}
+                if expected_version is not None
+                else {}
+            ),
+        },
+    )
+    _raise_if_stale_update(
+        db,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        expected_version=expected_version,
+        rowcount=int(getattr(result, "rowcount", 0) or 0),
     )
 
 # Control keys that the ledger is allowed to touch (single-writer enforcement).
-_CONTROL_KEYS = {
-    "pending_switch",
-    "pending_question",
-    "active_task",
-    "suspended_tasks",
-    # Transitional — will be removed after P3b when legacy signals are fully retired.
-    "advisor_active",
-    "pipeline_step",
-    "create_flow_state",
-}
+from api.services.conversation_control.ledger_keys import LEDGER_MUTABLE_PROJECTION_KEYS
+
+_CONTROL_KEYS = set(LEDGER_MUTABLE_PROJECTION_KEYS)
 
 
 # -----------------------------------------------------------------------------
@@ -396,8 +490,15 @@ def propose_switch(
     decision_id: Optional[str] = None,
     control_revision: int = 0,
     task_text: Optional[str] = None,
+    command_id: Optional[str] = None,
+    expected_version: Optional[int] = None,
 ) -> dict[str, Any]:
     """Record a pending agent switch. Single writer for pending_switch key."""
+    from api.services.conversation_control.ledger_journal import (
+        append_control_event,
+        new_command_id,
+    )
+
     payload = _build_pending_switch(
         from_agent=from_agent,
         to_agent=to_agent,
@@ -407,12 +508,34 @@ def propose_switch(
         control_revision=control_revision,
         task_text=task_text,
     )
+    cmd = (command_id or new_command_id()).strip()
+    rev_before = get_control_revision(db, tenant_id, conversation_id)
     _set_jsonb_key(
         db,
         conversation_id=conversation_id,
         tenant_id=tenant_id,
         key="pending_switch",
         value=payload,
+        expected_version=expected_version,
+    )
+    rev = get_control_revision(db, tenant_id, conversation_id)
+    append_control_event(
+        db,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        event_type="switch_proposed",
+        command_id=cmd,
+        agent=from_agent,
+        control_revision_before=rev_before,
+        control_revision_after=rev,
+        source_message_id=source_message_id,
+        causation_id=decision_id,
+        payload={
+            "from_agent": from_agent,
+            "to_agent": to_agent,
+            "source_message_id": source_message_id,
+            "decision_id": decision_id,
+        },
     )
     _emit(
         db,
@@ -423,6 +546,7 @@ def propose_switch(
             "from_agent": from_agent,
             "to_agent": to_agent,
             "source_message_id": source_message_id,
+            "command_id": cmd,
         },
     )
     _emit(
@@ -446,12 +570,77 @@ def resolve_switch(
     conversation_id: str,
     *,
     accepted: bool,
+    command_id: Optional[str] = None,
+    expected_version: Optional[int] = None,
+    # Atomic AcceptSwitch compound options (ignored when accepted=False).
+    begin_target: bool = False,
+    begin_phase: str = "ready",
+    begin_awaiting: str = "task_request",
+    begin_pending_ref: Optional[str] = None,
+    begin_kind: Optional[str] = None,
+    begin_payload: Optional[dict[str, Any]] = None,
+    suspend_active_on_accept: bool = True,
 ) -> Optional[dict[str, Any]]:
-    """Accept or decline a pending switch. Clears the key and emits resolution events."""
+    """Accept or decline a pending switch.
+
+    Model A atomic AcceptSwitch (when ``accepted`` and ``begin_target``): under
+    one FOR UPDATE, optionally suspend active_task, clear pending_switch, begin
+    the target agent task, and append a single journal event.
+    """
+    from api.services.conversation_control.ledger_journal import (
+        append_control_event,
+        find_event_by_command_id,
+        new_command_id,
+    )
+
+    cmd = (command_id or new_command_id()).strip()
+    # Idempotency: prior switch resolution with same command_id → return prior pending snapshot.
+    try:
+        prior = find_event_by_command_id(
+            db, tenant_id=tenant_id, conversation_id=conversation_id, command_id=cmd,
+        )
+        if prior and str(prior.get("event_type") or "") in (
+            "switch_accepted",
+            "switch_declined",
+        ):
+            payload = prior.get("payload_json") or {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:  # noqa: BLE001
+                    payload = {}
+            if isinstance(payload, dict) and payload.get("pending"):
+                return payload.get("pending")
+            return {"_idempotent": True, "command_id": cmd}
+    except Exception:  # noqa: BLE001
+        pass
+
+    db.execute(
+        text(
+            """
+            SELECT 1 FROM conversations
+             WHERE conversation_id = :cid AND tenant_id = :tid
+             FOR UPDATE
+            """
+        ),
+        {"cid": conversation_id, "tid": tenant_id},
+    )
+    assert_expected_version(db, tenant_id, conversation_id, expected_version)
+
     current = get_control_state(db, tenant_id, conversation_id)
     pending = current.get("pending_switch")
     if not pending:
         return None
+
+    suspended_task_id = None
+    if accepted and suspend_active_on_accept and current.get("active_task"):
+        active = current.get("active_task")
+        if isinstance(active, dict) and active.get("agent"):
+            suspended_task_id = active.get("task_id")
+            # Fence already applied once for this compound; nested writes unfenced.
+            suspend_active(
+                db, tenant_id, conversation_id, reason="switch_accepted",
+            )
 
     _clear_context_keys(
         db,
@@ -460,20 +649,54 @@ def resolve_switch(
         keys=("pending_switch",),
     )
 
-    # T2: an accepted switch hands ownership to the target agent. The caller's
-    # begin_task for the target overwrites with the same value; this covers
-    # the paths that historically flipped only the column ("a handoff flips
-    # the column synchronously") so the flip is now ledger-owned.
-    if accepted and pending.get("to_agent"):
+    begun: Optional[dict[str, Any]] = None
+    to_agent = str(pending.get("to_agent") or "").strip()
+    if accepted and to_agent:
         _sync_agent_type_column(
             db,
             conversation_id=conversation_id,
             tenant_id=tenant_id,
-            agent=str(pending.get("to_agent")),
+            agent=to_agent,
         )
+        if begin_target:
+            ref = begin_pending_ref or f"handoff:{to_agent}:{conversation_id}"
+            begun = begin_task(
+                db,
+                tenant_id,
+                conversation_id,
+                agent=to_agent,
+                phase=begin_phase,
+                awaiting=begin_awaiting,
+                pending_ref=ref,
+                kind=begin_kind,
+                payload=begin_payload,
+            )
 
     resolution = "accepted" if accepted else "declined"
     event_name = "agent_switch_confirmed" if accepted else "agent_switch_declined"
+    journal_type = "switch_accepted" if accepted else "switch_declined"
+    rev = get_control_revision(db, tenant_id, conversation_id)
+    # Fail-closed journal (same TX as projection mutations).
+    append_control_event(
+        db,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        event_type=journal_type,
+        command_id=cmd,
+        task_id=(begun or {}).get("task_id") if begun else suspended_task_id,
+        agent=to_agent or pending.get("from_agent"),
+        kind=begin_kind,
+        control_revision_after=rev,
+        payload={
+            "resolution": resolution,
+            "from_agent": pending.get("from_agent"),
+            "to_agent": pending.get("to_agent"),
+            "pending": pending,
+            "begin_target": bool(begin_target and accepted),
+            "suspended_task_id": suspended_task_id,
+        },
+    )
+
     _emit(
         db,
         tenant_id=tenant_id,
@@ -483,9 +706,49 @@ def resolve_switch(
             "from_agent": pending.get("from_agent"),
             "to_agent": pending.get("to_agent"),
             "resolution": resolution,
+            "command_id": cmd,
+            "atomic_begin": bool(begun),
         },
     )
+    if begun is not None:
+        pending = {**pending, "_begun_task": begun, "_command_id": cmd}
     return pending
+
+
+def accept_switch(
+    db: Session,
+    tenant_id: str,
+    conversation_id: str,
+    *,
+    command_id: Optional[str] = None,
+    expected_version: Optional[int] = None,
+    begin_phase: str = "ready",
+    begin_awaiting: str = "task_request",
+    begin_pending_ref: Optional[str] = None,
+    begin_kind: Optional[str] = None,
+    begin_payload: Optional[dict[str, Any]] = None,
+    skip_begin: bool = False,
+) -> Optional[dict[str, Any]]:
+    """Atomic AcceptSwitch compound command (Model A).
+
+    FOR UPDATE → fence → suspend prior active → clear pending_switch →
+    begin target (unless ``skip_begin``) → one journal ``switch_accepted``.
+    """
+    return resolve_switch(
+        db,
+        tenant_id,
+        conversation_id,
+        accepted=True,
+        command_id=command_id,
+        expected_version=expected_version,
+        begin_target=not skip_begin,
+        begin_phase=begin_phase,
+        begin_awaiting=begin_awaiting,
+        begin_pending_ref=begin_pending_ref,
+        begin_kind=begin_kind,
+        begin_payload=begin_payload,
+        suspend_active_on_accept=True,
+    )
 
 
 def set_pending_question(
@@ -650,6 +913,9 @@ def begin_task(
     pending_ref: Optional[str] = None,
     kind: Optional[str] = None,
     payload: Optional[dict[str, Any]] = None,
+    task_id: Optional[str] = None,
+    command_id: Optional[str] = None,
+    expected_version: Optional[int] = None,
 ) -> dict[str, Any]:
     """Start (or re-start) an active task. Single writer.
 
@@ -658,56 +924,96 @@ def begin_task(
     writes-through the conversations.agent_type summary column (T2) so the
     two can no longer diverge.
 
-    ``kind`` names a sub-flow the agent owns (e.g. "drafting") so a ledger-tracked
-    TASK can carry conversation-scoped state without ad-hoc context flags; ``payload``
-    is that state (e.g. the current draft). Both are backward-compatible JSONB
-    additions — omit them for a plain task. See the ledger-tracked-task tier in
-    agent-architecture-reference-and-audit.md §4b.
+    Model A: assigns immutable ``task_id``, appends ``task_began`` journal row
+    (when events table exists), and emits platform telemetry.
+
+    ``kind`` names a sub-flow the agent owns (e.g. "drafting"); ``payload`` is
+    thin control metadata (pins/gates) — never IR/graph blobs.
+    ``expected_version`` fences the projection write (None = no fence).
     """
-    task = {
-        "agent": agent,
-        "phase": phase,
-        "awaiting": awaiting,
-        "pending_ref": pending_ref,
-        "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-    }
+    from api.services.conversation_control.ledger_journal import (
+        append_control_event,
+        find_event_by_command_id,
+        new_command_id,
+        new_task_id,
+    )
     from api.services.conversation_control.task_phase_registry import (
-        normalize_task_fields,
+        require_valid_task_fields,
     )
 
-    validation = normalize_task_fields(
+    cmd = (command_id or new_command_id()).strip()
+    # Idempotency: same command_id → return prior active_task snapshot if possible.
+    prior = find_event_by_command_id(
+        db, tenant_id=tenant_id, conversation_id=conversation_id, command_id=cmd,
+    )
+    if prior and prior.get("event_type") == "task_began":
+        state = get_control_state(db, tenant_id, conversation_id)
+        active = state.get("active_task")
+        if isinstance(active, dict) and active.get("task_id") == prior.get("task_id"):
+            return active
+
+    # Model A production-grade: invalid phase/awaiting is reject, not log-and-persist.
+    validation = require_valid_task_fields(
         agent=agent,
         phase=phase,
         awaiting=awaiting,
         kind=kind,
     )
     effective_kind = validation.normalized_kind if validation.normalized_kind else kind
+
+    rev_before = get_control_revision(db, tenant_id, conversation_id)
+    tid = (task_id or new_task_id()).strip()
+    task = {
+        "agent": agent,
+        "phase": phase,
+        "awaiting": awaiting,
+        "pending_ref": pending_ref,
+        "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "task_id": tid,
+    }
     if effective_kind is not None:
         task["kind"] = effective_kind
     if payload is not None:
-        task["payload"] = payload
+        from api.services.conversation_control.control_payload import (
+            sanitize_control_payload,
+        )
+
+        # B5: strip IR/draft/graph — pins only on the control projection.
+        task["payload"] = sanitize_control_payload(
+            payload, kind=effective_kind if isinstance(effective_kind, str) else None,
+        )
     _set_jsonb_key(
         db,
         conversation_id=conversation_id,
         tenant_id=tenant_id,
         key="active_task",
         value=task,
+        expected_version=expected_version,
     )
     _sync_agent_type_column(
         db, conversation_id=conversation_id, tenant_id=tenant_id, agent=agent,
     )
-    details: dict[str, Any] = {"agent": agent, "phase": phase, "awaiting": awaiting}
+    details: dict[str, Any] = {
+        "agent": agent, "phase": phase, "awaiting": awaiting, "task_id": tid,
+        "command_id": cmd,
+    }
     if effective_kind:
         details["kind"] = effective_kind
-    if not validation.ok:
-        details["task_phase_invalid"] = validation.message
-        _emit(
-            db,
-            tenant_id=tenant_id,
-            conversation_id=conversation_id,
-            event="task_phase_invalid",
-            details=details,
-        )
+    # Fail-closed journal (same TX as projection) — do not swallow.
+    rev = get_control_revision(db, tenant_id, conversation_id)
+    append_control_event(
+        db,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        event_type="task_began",
+        command_id=cmd,
+        task_id=tid,
+        agent=agent,
+        kind=effective_kind if isinstance(effective_kind, str) else None,
+        control_revision_before=rev_before,
+        control_revision_after=rev,
+        payload={"phase": phase, "awaiting": awaiting, "pending_ref": pending_ref},
+    )
     _emit(
         db,
         tenant_id=tenant_id,
@@ -907,6 +1213,7 @@ def update_phase(
     pending_ref: Optional[str] = None,
     kind: Optional[str] = None,
     payload: Optional[dict[str, Any]] = None,
+    expected_version: Optional[int] = None,
 ) -> dict[str, Any]:
     """Update the phase/awaiting of the current active task (no change to agent).
 
@@ -915,7 +1222,8 @@ def update_phase(
     ``pending_ref`` is preserved. ``payload`` (a ledger-tracked task's carried
     state, e.g. a draft being refined) is likewise updated when supplied and
     preserved when None. ``kind`` is preserved automatically, or set when supplied
-    by a caller that is upgrading a generic active task into a typed sub-flow."""
+    by a caller that is upgrading a generic active task into a typed sub-flow.
+    ``expected_version`` fences the projection write (None = no fence)."""
     # Lock for concurrency safety (invariant 7) on active_task.
     db.execute(
         text(
@@ -923,6 +1231,7 @@ def update_phase(
         ),
         {"cid": conversation_id, "tid": tenant_id},
     )
+    assert_expected_version(db, tenant_id, conversation_id, expected_version)
     current = get_control_state(db, tenant_id, conversation_id)
     task = current.get("active_task") or {}
     if task.get("agent") != agent:
@@ -930,11 +1239,13 @@ def update_phase(
         task = {"agent": agent}
 
     from api.services.conversation_control.task_phase_registry import (
-        normalize_task_fields,
+        require_valid_task_fields,
     )
 
+    # Preserve task_id across phase updates (immutable instance identity).
+    existing_task_id = task.get("task_id") if isinstance(task, dict) else None
     effective_kind = kind if kind is not None else task.get("kind")
-    validation = normalize_task_fields(
+    validation = require_valid_task_fields(
         agent=agent,
         phase=phase,
         awaiting=awaiting,
@@ -942,6 +1253,8 @@ def update_phase(
     )
     task["phase"] = phase
     task["awaiting"] = awaiting
+    if existing_task_id:
+        task["task_id"] = existing_task_id
     if pending_ref is not None:
         task["pending_ref"] = pending_ref
     if validation.normalized_kind:
@@ -949,21 +1262,19 @@ def update_phase(
     elif kind is not None:
         task["kind"] = kind
     if payload is not None:
-        task["payload"] = payload
-    if not validation.ok:
-        _emit(
-            db,
-            tenant_id=tenant_id,
-            conversation_id=conversation_id,
-            event="task_phase_invalid",
-            details={
-                "agent": agent,
-                "phase": phase,
-                "awaiting": awaiting,
-                "kind": task.get("kind"),
-                "message": validation.message,
-            },
+        from api.services.conversation_control.control_payload import (
+            sanitize_control_payload,
         )
+
+        task["payload"] = sanitize_control_payload(
+            payload,
+            kind=(
+                validation.normalized_kind
+                if isinstance(validation.normalized_kind, str)
+                else (kind if isinstance(kind, str) else None)
+            ),
+        )
+    # Fence already applied at lock time; nested write unfenced in same transaction.
     _set_jsonb_key(db, conversation_id=conversation_id, tenant_id=tenant_id, key="active_task", value=task)
     # T2: keep the summary column aligned on continuation turns too.
     _sync_agent_type_column(
@@ -1034,9 +1345,15 @@ def resume_task(
     tenant_id: str,
     conversation_id: str,
     *,
-    agent: str,
+    agent: Optional[str] = None,
+    task_id: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
-    """Resume a previously suspended task (after resolve_pending succeeded)."""
+    """Resume a previously suspended task (after resolve_pending succeeded).
+
+    Prefer ``task_id`` (immutable instance identity). ``agent`` alone is
+    ambiguous when multiple suspended tasks share a specialist — used only as
+    fallback when ``task_id`` is absent.
+    """
     # Lock for concurrency safety (invariant 7) on suspended_tasks / active_task.
     db.execute(
         text(
@@ -1047,29 +1364,40 @@ def resume_task(
     current = get_control_state(db, tenant_id, conversation_id)
     suspended = [t for t in (current.get("suspended_tasks") or []) if isinstance(t, dict)]
     target = None
-    remaining = []
+    remaining: list[dict[str, Any]] = []
+    want_tid = (task_id or "").strip() or None
+    want_agent = (agent or "").strip() or None
     for t in suspended:
-        if t.get("agent") == agent and target is None:
-            target = t
-        else:
-            remaining.append(t)
+        if target is None:
+            if want_tid and t.get("task_id") == want_tid:
+                target = t
+                continue
+            if not want_tid and want_agent and t.get("agent") == want_agent:
+                target = t
+                continue
+        remaining.append(t)
 
     if not target:
         return None
 
+    resume_agent = str(target.get("agent") or want_agent or "bot0")
     _set_jsonb_key(db, conversation_id=conversation_id, tenant_id=tenant_id, key="active_task", value=target)
     if remaining != suspended:
         _set_jsonb_key(db, conversation_id=conversation_id, tenant_id=tenant_id, key="suspended_tasks", value=remaining)
     # T2: the resumed task's agent owns the conversation again.
     _sync_agent_type_column(
-        db, conversation_id=conversation_id, tenant_id=tenant_id, agent=agent,
+        db, conversation_id=conversation_id, tenant_id=tenant_id, agent=resume_agent,
     )
     _emit(
         db,
         tenant_id=tenant_id,
         conversation_id=conversation_id,
         event="task_resumed",
-        details={"agent": agent, "resume_kind": "ledger_resume"},
+        details={
+            "agent": resume_agent,
+            "task_id": target.get("task_id"),
+            "resume_kind": "ledger_resume_by_task_id" if want_tid else "ledger_resume",
+        },
     )
     return target
 
@@ -1135,10 +1463,36 @@ def complete_task(
     conversation_id: str,
     *,
     agent: str,
+    reason: str = "complete",
+    task_id: Optional[str] = None,
+    command_id: Optional[str] = None,
+    expected_version: Optional[int] = None,
 ) -> None:
     """Task is done. Clear active_task + pending_switch + all legacy sticky signals.
-    This is the canonical release point (replaces the various ad-hoc clears).
+
+    ``reason`` must distinguish business outcomes:
+      complete | abandon | failed | expired | superseded
+
+    Journal event types: task_completed | task_abandoned | task_failed | …
+    Projection clear is shared; event identity is not.
+    ``expected_version`` fences the clear (None = no fence).
     """
+    from api.services.conversation_control.ledger_journal import (
+        append_control_event,
+        find_event_by_command_id,
+        new_command_id,
+    )
+
+    reason = (reason or "complete").strip().lower() or "complete"
+    event_type = {
+        "complete": "task_completed",
+        "abandon": "task_abandoned",
+        "failed": "task_failed",
+        "expired": "task_expired",
+        "superseded": "task_superseded",
+    }.get(reason, "task_completed")
+    cmd = (command_id or new_command_id()).strip()
+
     # Use a single FOR UPDATE transaction for the multi-key clear (invariant 7 for concurrency;
     # single-writer is invariant 8).
     db.execute(
@@ -1151,12 +1505,27 @@ def complete_task(
         ),
         {"cid": conversation_id, "tid": tenant_id},
     )
+    assert_expected_version(db, tenant_id, conversation_id, expected_version)
+
+    # Idempotency: prior complete/abandon with same command_id → no-op.
+    prior = find_event_by_command_id(
+        db, tenant_id=tenant_id, conversation_id=conversation_id, command_id=cmd,
+    )
+    if prior and str(prior.get("event_type") or "").startswith("task_"):
+        return
+
+    state = get_control_state(db, tenant_id, conversation_id)
+    active = state.get("active_task") if isinstance(state.get("active_task"), dict) else {}
+    resolved_task_id = task_id or (active or {}).get("task_id")
+    kind = (active or {}).get("kind")
+    rev_before = int(state.get("control_revision") or 0)
 
     # Clear the control keys we own.
     keys_to_clear = ["active_task", "pending_switch"]
     # Also clear transitional legacy signals so nothing can resurrect them.
     keys_to_clear.extend(["advisor_active", "pipeline_step", "create_flow_state"])
 
+    # Fence already applied; nested clear unfenced in same transaction.
     _clear_context_keys(
         db,
         conversation_id=conversation_id,
@@ -1169,12 +1538,76 @@ def complete_task(
         db, conversation_id=conversation_id, tenant_id=tenant_id, agent="bot0",
     )
 
+    # Fail-closed journal — same TX as projection clear.
+    rev = get_control_revision(db, tenant_id, conversation_id)
+    append_control_event(
+        db,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        event_type=event_type,
+        command_id=cmd,
+        task_id=resolved_task_id,
+        agent=agent,
+        kind=kind if isinstance(kind, str) else None,
+        control_revision_before=rev_before,
+        control_revision_after=rev,
+        payload={"reason": reason},
+    )
+
     _emit(
         db,
         tenant_id=tenant_id,
         conversation_id=conversation_id,
-        event="task_completed",
-        details={"agent": agent, "reason": "complete"},
+        event=event_type,
+        details={
+            "agent": agent,
+            "reason": reason,
+            "task_id": resolved_task_id,
+            "command_id": cmd,
+        },
+    )
+
+
+def finish_active_task(
+    db: Session,
+    tenant_id: str,
+    conversation_id: str,
+    *,
+    agent: str,
+    context: Optional[dict[str, Any]] = None,
+    reason: str = "complete",
+    task_id: Optional[str] = None,
+    command_id: Optional[str] = None,
+    expected_version: Optional[int] = None,
+) -> None:
+    """Complete or abandon the active task with Model A identity fields.
+
+    Prefer this over bare ``complete_task`` from first-class handlers so
+    ``task_id`` is always resolved from the ledger projection when the
+    caller only has the turn ``context`` snapshot.
+    """
+    resolved = task_id
+    if not resolved:
+        active: dict[str, Any] = {}
+        if isinstance(context, dict):
+            at = context.get("active_task")
+            if isinstance(at, dict):
+                active = at
+        if not active:
+            state = get_control_state(db, tenant_id, conversation_id)
+            at2 = state.get("active_task")
+            if isinstance(at2, dict):
+                active = at2
+        resolved = active.get("task_id") if isinstance(active.get("task_id"), str) else None
+    complete_task(
+        db,
+        tenant_id,
+        conversation_id,
+        agent=agent,
+        reason=reason,
+        task_id=resolved,
+        command_id=command_id,
+        expected_version=expected_version,
     )
 
 
@@ -1188,13 +1621,20 @@ def apply_transition(
     phase: Optional[str] = None,
     awaiting: Optional[str] = None,
     pending_ref: Optional[str] = None,
+    kind: Optional[str] = None,
+    payload: Optional[dict[str, Any]] = None,
+    task_id: Optional[str] = None,
+    command_id: Optional[str] = None,
+    outcome_reason: Optional[str] = None,
+    expected_version: Optional[int] = None,
 ) -> None:
     """The single mapping from an agent's declared lifecycle transition to ledger
     writes (epic §9.1). Agents are executors that DECLARE a ``TaskTransition``;
     the control plane (here) is the sole writer that effects it.
 
         BEGIN    → begin_task          CONTINUE → update_phase
-        COMPLETE → complete_task       ABANDON  → complete_task (abandon reason)
+        COMPLETE → complete_task(reason=complete)
+        ABANDON  → complete_task(reason=abandon)  # distinct event identity
         NONE     → no control mutation (the transcript still persists upstream)
 
     Centralizing this is what lets the retirement slices delete the scattered
@@ -1207,19 +1647,81 @@ def apply_transition(
             db, tenant_id, conversation_id,
             agent=agent, phase=phase or "active",
             awaiting=awaiting, pending_ref=pending_ref,
+            kind=kind, payload=payload, task_id=task_id, command_id=command_id,
+            expected_version=expected_version,
         )
     elif t == TaskTransition.CONTINUE:
         update_phase(
             db, tenant_id, conversation_id,
             agent=agent, phase=phase or "active",
             awaiting=awaiting, pending_ref=pending_ref,
+            kind=kind, payload=payload,
+            expected_version=expected_version,
         )
     elif t == TaskTransition.COMPLETE:
-        complete_task(db, tenant_id, conversation_id, agent=agent)
+        complete_task(
+            db, tenant_id, conversation_id, agent=agent,
+            reason=outcome_reason or "complete",
+            task_id=task_id, command_id=command_id,
+            expected_version=expected_version,
+        )
     elif t == TaskTransition.ABANDON:
-        # Same clear semantics; the abandon reason rides the task_completed event.
-        complete_task(db, tenant_id, conversation_id, agent=agent)
+        complete_task(
+            db, tenant_id, conversation_id, agent=agent,
+            reason=outcome_reason or "abandon",
+            task_id=task_id, command_id=command_id,
+            expected_version=expected_version,
+        )
     # TaskTransition.NONE → intentional no-op (no control mutation).
+
+
+def apply_transition_request(
+    db: Session,
+    tenant_id: str,
+    conversation_id: str,
+    *,
+    agent: str,
+    request: Any,
+    payload: Optional[dict[str, Any]] = None,
+) -> None:
+    """Map a ``TaskTransitionRequest`` (or compatible AgentTurnResult fields) to ledger writes."""
+    from api.services.conversation_control.contract import TaskTransitionRequest
+
+    if isinstance(request, TaskTransitionRequest):
+        apply_transition(
+            db,
+            tenant_id,
+            conversation_id,
+            agent=agent,
+            transition=request.transition,
+            phase=request.phase,
+            awaiting=request.awaiting,
+            pending_ref=request.pending_ref,
+            kind=request.kind,
+            payload=payload if payload is not None else request.payload_patch,
+            task_id=request.task_id,
+            command_id=request.command_id,
+            outcome_reason=request.outcome_reason,
+            expected_version=request.expected_version,
+        )
+        return
+    # AgentTurnResult-shaped object (duck typing)
+    apply_transition(
+        db,
+        tenant_id,
+        conversation_id,
+        agent=agent,
+        transition=getattr(request, "transition", None),
+        phase=getattr(request, "phase", None),
+        awaiting=getattr(request, "awaiting", None),
+        pending_ref=getattr(request, "pending_ref", None),
+        kind=getattr(request, "kind", None),
+        payload=payload if payload is not None else getattr(request, "payload_patch", None),
+        task_id=getattr(request, "task_id", None),
+        command_id=getattr(request, "command_id", None),
+        outcome_reason=getattr(request, "outcome_reason", None),
+        expected_version=getattr(request, "expected_version", None),
+    )
 
 
 # -----------------------------------------------------------------------------

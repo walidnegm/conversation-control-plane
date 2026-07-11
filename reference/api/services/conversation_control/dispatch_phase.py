@@ -164,7 +164,10 @@ def next_step_for_authoring_phase(phase: str | None, pending: dict[str, Any] | N
     if phase == PHASE_IR_REVIEW:
         return "Review the tasks and roles, then reply **yes** to build it."
     if phase == PHASE_ROLE_PROPOSAL:
-        return "Reply **accept**, **skip**, or **try again** for the proposed roles."
+        return (
+            "Reply **accept** or **go ahead** to use the ★ roles, **skip** to name "
+            "them yourself, or **try again** for new suggestions."
+        )
     if phase == PHASE_DOMAIN_PICKER:
         candidates = (pending or {}).get("_domain_candidates") or []
         if candidates:
@@ -264,12 +267,25 @@ def _unified_signals_authoring_resume(signal: object) -> bool:
 def authoring_snapshot_ledger_payload(
     pending: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    """Compact payload slice persisted on active_task.payload."""
+    """Compact payload slice persisted on active_task.payload.
+
+    Includes multi-gate projection (phase + gates.*.armed/satisfied) so front
+    door and agent agree — authoring_gate_contract / SDK B4.
+    """
     snap = project_authoring_snapshot(pending)
     if not snap:
         return None
+    from api.services.conversation_control.authoring_gate_contract import (
+        authoring_gate_ledger_slice,
+    )
+
+    gate_slice = authoring_gate_ledger_slice(pending)
     return {
         "authoring_phase": snap["authoring_phase"],
+        # Canonical coarse phase for multi-turn stream (prefer gate-derived).
+        "phase": gate_slice.get("phase") or snap["authoring_phase"],
+        "gates": gate_slice.get("gates") or {},
+        "staffed_ir_satisfied": gate_slice.get("staffed_ir_satisfied"),
         "next_step": snap["next_step"],
         "workflow_name": snap["workflow_name"],
         "task_count": snap["task_count"],
@@ -301,12 +317,18 @@ def sync_authoring_snapshot_to_ledger(
     try:
         from api.services.conversation_control.ledger import update_phase
 
+        _ledger_phase = str(
+            payload.get("phase")
+            or payload.get("authoring_phase")
+            or active.get("phase")
+            or "active"
+        )
         task = update_phase(
             db,
             tenant_id,
             conversation_id,
             agent=agent,
-            phase=str(active.get("phase") or "active"),
+            phase=_ledger_phase,
             awaiting=payload.get("authoring_phase") or active.get("awaiting"),
             pending_ref=active.get("pending_ref"),
             payload=payload,
@@ -443,9 +465,33 @@ WORKFLOW_CONFIRMATION_REPLIES = frozenset({
     "no", "n", "nope", "cancel", "stop", "save",
 })
 
-ROLE_PROPOSAL_REPLIES = frozenset({
+# Menu tokens for Staffed IR (role proposal review).
+ROLE_PROPOSAL_MENU_REPLIES = frozenset({
     "accept", "skip", "try again",
 })
+
+# Natural advance affirmatives at the armed Staffed IR gate — same finite
+# control-token class as Draft IR structure confirm (not free-text NL cognition).
+# Staging conv_96197869: user said "Go ahead" after Staffed IR; only the menu
+# word "accept" was recognized → card re-rendered.
+ROLE_PROPOSAL_DECLINE_REPLIES = frozenset({
+    "no", "n", "nope", "cancel", "stop", "skip", "reject",
+})
+ROLE_PROPOSAL_REPROPOSE_REPLIES = frozenset({
+    "try again", "repropose",
+})
+ROLE_PROPOSAL_ACCEPT_REPLIES = frozenset({"accept"}) | frozenset(
+    t for t in WORKFLOW_CONFIRMATION_REPLIES
+    if t not in ROLE_PROPOSAL_DECLINE_REPLIES
+    and t not in ROLE_PROPOSAL_REPROPOSE_REPLIES
+    and t != "save"
+)
+# Structural gate ownership: menu + natural accept (authoring_gate_turn).
+ROLE_PROPOSAL_REPLIES = (
+    ROLE_PROPOSAL_MENU_REPLIES
+    | ROLE_PROPOSAL_ACCEPT_REPLIES
+    | ROLE_PROPOSAL_REPROPOSE_REPLIES
+)
 
 
 _GATE_REPLY_ALIASES = {
@@ -455,11 +501,25 @@ _GATE_REPLY_ALIASES = {
     "let's continue": "continue",
     "lets go": "proceed",
     "let's go": "proceed",
+    "this is fine": "fine",
+    "this is fine lets proceed": "proceed",
+    "this is fine let's proceed": "proceed",
+    # Common menu typos at Staffed IR (conv_5f2fd7a7: "accep").
+    "accep": "accept",
+    "acept": "accept",
+    "accpet": "accept",
 }
 
 
 def normalize_short_gate_reply(query: str) -> str:
-    reply = (query or "").strip().lower().rstrip(".!?")
+    # Collapse apostrophes / whitespace so "let's proceed" matches alias keys.
+    try:
+        from api.services.conversation_control.finite_confirm_grammar import (
+            normalize_confirm_control_text,
+        )
+        reply = normalize_confirm_control_text(query or "")
+    except Exception:  # noqa: BLE001 — keep simple strip path
+        reply = (query or "").strip().lower().rstrip(".!?")
     return _GATE_REPLY_ALIASES.get(reply, reply)
 
 
@@ -971,7 +1031,11 @@ __all__ = [
     "PHASE_OPERATIONAL_DATA",
     "PHASE_REVIEWING",
     "PHASE_ROLE_PROPOSAL",
+    "ROLE_PROPOSAL_ACCEPT_REPLIES",
+    "ROLE_PROPOSAL_DECLINE_REPLIES",
+    "ROLE_PROPOSAL_MENU_REPLIES",
     "ROLE_PROPOSAL_REPLIES",
+    "ROLE_PROPOSAL_REPROPOSE_REPLIES",
     "WORKFLOW_CONFIRMATION_REPLIES",
     "authoring_resume_in_progress",
     "authoring_snapshot_ledger_payload",

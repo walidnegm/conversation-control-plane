@@ -68,10 +68,27 @@ class DetourDeliveryRow:
 # ``bot0.chat()`` and ratcheted in ``test_delivery_order_contract.py``.
 DETOUR_DELIVERY_ORDER_TABLE: tuple[DetourDeliveryRow, ...] = (
     DetourDeliveryRow(
+        detour_id="prose_intake_post_router_enqueue",
+        timing="pre_decide",
+        runs_after="apply_unified_router_authorities",
+        runs_before=STAGE_DECIDE_TURN,
+        suppresses_labels=(
+            "workflow_draft_request+draft_help",
+            "discovery_kind",
+            "sparse_intake_copy",
+            "orchestrator_preamble",
+        ),
+        authority_module=(
+            "unified_turn_router.workflow_draft_request+"
+            "input_shape.looks_like_rich_workflow_spec"
+        ),
+    ),
+    # Legacy id kept for pin compatibility; same delivery as post_router.
+    DetourDeliveryRow(
         detour_id="prose_intake_early_enqueue",
         timing="pre_decide",
-        runs_after=STAGE_PRE_DECIDE_FINITE,
-        runs_before="unified_turn_router",
+        runs_after="apply_unified_router_authorities",
+        runs_before=STAGE_DECIDE_TURN,
         suppresses_labels=(
             "workflow_draft_request+draft_help",
             "discovery_kind",
@@ -125,10 +142,27 @@ DETOUR_DELIVERY_ORDER_TABLE: tuple[DetourDeliveryRow, ...] = (
             "task_pin_contract.sole_continue_blocks_greenfield_start"
         ),
     ),
+    # Ledger session status (active activities / resume) — before concept_gate
+    # so product-knowledge cannot package "What is Home?" (conv_f116cd1f).
+    DetourDeliveryRow(
+        detour_id="session_activities",
+        timing="post_decide_front_door",
+        runs_after=STAGE_DECIDE_TURN,
+        runs_before="concept_gate",
+        suppresses_labels=(
+            "concept_gate",
+            "product_concept_kind",
+            "discovery_kind",
+        ),
+        authority_module=(
+            "session_activities.try_session_activities_answer + "
+            "concept_packaging_query_eligible session-status block"
+        ),
+    ),
     DetourDeliveryRow(
         detour_id="concept_gate",
         timing="post_decide_front_door",
-        runs_after=STAGE_DECIDE_TURN,
+        runs_after="session_activities",
         runs_before=STAGE_FRONT_DOOR_DELIVERY,
         suppresses_labels=(
             "discovery_kind=scorecards",
@@ -215,6 +249,7 @@ def _discovery_kind_candidates(
 EXCLUSIVE_TURN_OWNER_PRIORITY: tuple[str, ...] = (
     "cost_out",
     "draft",
+    "workflow_build",  # multi-gate authoring sole-continue (WB ladder)
     "cyber_risk",
     "realization",
     "outcome_value",
@@ -231,6 +266,7 @@ EXCLUSIVE_TURN_OWNER_PRIORITY: tuple[str, ...] = (
 ACTION_EXCLUSIVE_OWNERS = frozenset({
     "cost_out",
     "draft",
+    "workflow_build",
     "cyber_risk",
     "realization",
     "outcome_value",
@@ -273,6 +309,21 @@ def select_exclusive_turn_owner(
         if signal is not None
         else "continue"
     )
+    # Pin refine enum (post-authority) always owns cost_out — never draft/abandon.
+    if signal is not None:
+        try:
+            from api.services.conversation_control.cost_pin_refine import (
+                is_pin_refine_kind as _is_pin_refine,
+            )
+
+            _ctk = str(getattr(signal, "cost_turn_kind", None) or "none")
+            if _is_pin_refine(_ctk):
+                return ExclusiveTurnOwner(
+                    "cost_out",
+                    f"cost_turn_kind={_ctk}",
+                )
+        except Exception:  # noqa: BLE001
+            pass
     try:
         from api.services.conversation_control.task_pin_contract import (
             exclusive_owner_for_active_kind,
@@ -374,9 +425,17 @@ def select_exclusive_turn_owner(
                 query,
                 product_concept_kind=product,
                 context=packaging_ctx,
+                task_intent=task_intent,
             )
         except Exception:  # noqa: BLE001
             packaging_eligible = False
+    # Explicit sole-continue refuse even if a caller forced packaging_eligible=True.
+    if packaging_eligible and sole_continue_blocks_concept_gate_owner(
+        active_task=active_task,
+        context=packaging_ctx,
+        task_intent=task_intent,
+    ):
+        packaging_eligible = False
     if packaging_eligible:
         return ExclusiveTurnOwner("concept_gate", "definitional packaging eligible")
 
@@ -389,8 +448,43 @@ def exclusive_owner_allows_front_door_discovery(owner: ExclusiveTurnOwner | str)
 
 
 def exclusive_owner_allows_concept_gate(owner: ExclusiveTurnOwner | str) -> bool:
+    """Concept gate only when it *is* the exclusive owner.
+
+    Action sole-continue owners (cost_out, draft, cyber, …) never allow packaging.
+    ``default`` also refuses — residual orchestrator path, not glossary.
+    """
     oid = owner.owner_id if isinstance(owner, ExclusiveTurnOwner) else str(owner)
     return oid == "concept_gate"
+
+
+def sole_continue_blocks_concept_gate_owner(
+    *,
+    active_task: Any = None,
+    context: Any = None,
+    task_intent: str | None = None,
+) -> bool:
+    """True when live sole-continue must refuse concept_gate for this turn.
+
+    Portable seal for #10s: sole-continue active + continue intent ⇒ packaging
+    and exclusive concept_gate ownership are both blocked. Detour/new_task
+    releases (classifier-owned).
+    """
+    try:
+        from api.services.conversation_control.task_pin_contract import (
+            active_kind_blocks_front_door_leaves,
+        )
+
+        ctx: dict = {}
+        if isinstance(context, dict):
+            ctx = dict(context)
+        if active_task is not None and isinstance(active_task, dict):
+            ctx = {**ctx, "active_task": active_task}
+        intent = (task_intent or str(ctx.get("task_intent") or "continue")).strip().lower()
+        return bool(
+            active_kind_blocks_front_door_leaves(ctx, task_intent=intent or "continue")
+        )
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def exclusive_owner_allows_product_concept(owner: ExclusiveTurnOwner | str) -> bool:
@@ -501,4 +595,5 @@ __all__ = [
     "exclusive_owner_allows_concept_gate",
     "exclusive_owner_allows_front_door_discovery",
     "exclusive_owner_allows_product_concept",
+    "sole_continue_blocks_concept_gate_owner",
 ]

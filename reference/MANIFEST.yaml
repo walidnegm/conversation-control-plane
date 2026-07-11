@@ -17,6 +17,12 @@ modules:
   - api/services/conversation_control/dispatch_phase.py
   - api/services/conversation_control/discovery_intent.py
   - api/services/conversation_control/ledger.py
+  - api/services/conversation_control/ledger_keys.py
+  - api/services/conversation_control/ledger_journal.py
+  - api/services/conversation_control/ledger_outbox.py
+  - api/services/conversation_control/control_payload.py
+  - api/services/conversation_control/kind_spec.py
+  - api/services/conversation_control/projection_rebuild.py
   - api/services/conversation_control/handoff_guard.py
   - api/services/conversation_control/post_save_setup_entry.py
   # Portable multi-turn continue gates (self-contained; no private product handlers).

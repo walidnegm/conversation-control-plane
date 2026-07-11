@@ -166,6 +166,12 @@ def decide_turn(
                     tenant_id,
                     conversation_id,
                     agent=current_active.get("agent") or "bot0",
+                    reason="superseded",
+                    task_id=(
+                        current_active.get("task_id")
+                        if isinstance(current_active.get("task_id"), str)
+                        else None
+                    ),
                 )
             except Exception:  # noqa: BLE001
                 pass
@@ -239,7 +245,18 @@ def decide_turn(
         if wf_ref:
             if current_active:
                 try:
-                    complete_task(db, tenant_id, conversation_id, agent=current_active.get("agent"))
+                    complete_task(
+                        db,
+                        tenant_id,
+                        conversation_id,
+                        agent=current_active.get("agent") or "bot0",
+                        reason="superseded",
+                        task_id=(
+                            current_active.get("task_id")
+                            if isinstance(current_active.get("task_id"), str)
+                            else None
+                        ),
+                    )
                 except Exception:  # noqa: BLE001
                     pass
             target = _canonical(
@@ -452,7 +469,15 @@ def decide_turn(
             )
 
         if intent == "abandon":
-            complete_task(db, tenant_id, conversation_id, agent="bot0")
+            complete_task(
+                db, tenant_id, conversation_id, agent="bot0",
+                reason="abandon",
+                task_id=(
+                    current_active.get("task_id")
+                    if isinstance(current_active.get("task_id"), str)
+                    else None
+                ),
+            )
             plan = TurnPlan(
                 agent="bot0",
                 mode="command",
@@ -513,7 +538,15 @@ def decide_turn(
             )
 
         if intent == "abandon":
-            complete_task(db, tenant_id, conversation_id, agent="bot0")
+            complete_task(
+                db, tenant_id, conversation_id, agent="bot0",
+                reason="abandon",
+                task_id=(
+                    current_active.get("task_id")
+                    if isinstance(current_active.get("task_id"), str)
+                    else None
+                ),
+            )
             plan = TurnPlan(
                 agent="bot0",
                 mode="command",
@@ -574,7 +607,15 @@ def decide_turn(
             )
 
         if intent == "abandon":
-            complete_task(db, tenant_id, conversation_id, agent="bot0")
+            complete_task(
+                db, tenant_id, conversation_id, agent="bot0",
+                reason="abandon",
+                task_id=(
+                    current_active.get("task_id")
+                    if isinstance(current_active.get("task_id"), str)
+                    else None
+                ),
+            )
             plan = TurnPlan(
                 agent="bot0",
                 mode="command",
@@ -667,7 +708,15 @@ def decide_turn(
             intent_source = str(getattr(perceived, "source", None) or "heuristic")
 
         if intent == "abandon":
-            complete_task(db, tenant_id, conversation_id, agent="bot0")
+            complete_task(
+                db, tenant_id, conversation_id, agent="bot0",
+                reason="abandon",
+                task_id=(
+                    current_active.get("task_id")
+                    if isinstance(current_active.get("task_id"), str)
+                    else None
+                ),
+            )
             plan = TurnPlan(agent="bot0", mode="command", task=active_task_obj,
                             reason="drafting task abandoned")
             _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent,
@@ -695,7 +744,15 @@ def decide_turn(
         if _fresh_drafting_domain:
             # Trust the LLM classifier's "intent" (which now has strong instructions for cost+agent+describe = bot0, not drafting).
             # We no longer use keyword catches here to decide — that would violate the NL/LLM-owned intent rule.
-            complete_task(db, tenant_id, conversation_id, agent="bot0")
+            complete_task(
+                db, tenant_id, conversation_id, agent="bot0",
+                reason="superseded",
+                task_id=(
+                    current_active.get("task_id")
+                    if isinstance(current_active.get("task_id"), str)
+                    else None
+                ),
+            )
             from api.services.conversation_control.workflow_intake import (
                 drafting_pending_ref as _drafting_pending_ref,
             )
@@ -728,7 +785,15 @@ def decide_turn(
                     "draft_handoff": _carried_draft,
                     "domain": _draft_payload.get("domain"),
                 }
-            complete_task(db, tenant_id, conversation_id, agent="bot0")
+            complete_task(
+                db, tenant_id, conversation_id, agent="bot0",
+                reason="superseded",
+                task_id=(
+                    current_active.get("task_id")
+                    if isinstance(current_active.get("task_id"), str)
+                    else None
+                ),
+            )
             # S5: unified handoff
             from api.services.conversation_control.ledger import handoff as _unified_handoff
             _unified_handoff(
@@ -1006,11 +1071,60 @@ def decide_turn(
                                 live_route_layer, "D4 new_task suspends active")
             return plan
 
-        # 2) Explicit abandon.
+        # 2) Explicit abandon — destructive sole-continue wipe.
+        # Low-confidence abandon (abuse/vent/mislabeled control) must NOT complete
+        # the active task (conv_4ee886cf: "you are an idiot" → D4 abandon @0.7 →
+        # cost_out destroyed + drafting gibberish). Same confidence floor as T4
+        # mid-flight route claims (0.7 is not enough for permanent complete).
         if intent == "abandon":
-            complete_task(db, tenant_id, conversation_id, agent=agent)
-            plan = TurnPlan(agent="bot0", mode="command",
-                            reason=f"D4 abandon active ({intent_source})")
+            if _route_conf < 0.85:
+                # Fail soft: resume active; never open a new stream from the insult.
+                plan = TurnPlan(
+                    agent=agent,
+                    mode="continue",
+                    task=ActiveTask(
+                        agent=str(current_active.get("agent") or agent),
+                        phase=str(current_active.get("phase") or "active"),
+                        awaiting=awaiting or "in_progress",
+                        kind=str(current_active.get("kind") or "") or None,
+                        payload=(
+                            current_active.get("payload")
+                            if isinstance(current_active.get("payload"), dict)
+                            else None
+                        ),
+                        pending_ref=current_active.get("pending_ref"),
+                    ) if isinstance(current_active, dict) else None,
+                    reason=(
+                        f"D4 abandon low_conf={_route_conf:.2f} "
+                        f"— resume active ({intent_source})"
+                    ),
+                )
+                _maybe_log_conflict(
+                    db, tenant_id, conversation_id, plan, live_route_intent,
+                    live_route_layer, "D4 abandon low_conf fail-soft",
+                )
+                return plan
+            # Model A: abandon is a distinct journal event (not complete).
+            complete_task(
+                db,
+                tenant_id,
+                conversation_id,
+                agent=agent,
+                reason="abandon",
+                task_id=(
+                    current_active.get("task_id")
+                    if isinstance(current_active.get("task_id"), str)
+                    else None
+                ),
+            )
+            # High-conf abandon is a full wipe of sole-continue streams —
+            # stamp abandon so chat clears cost pin / drafting seed and
+            # never "destroy then reopen" a gibberish draft (conv_4ee886cf).
+            plan = TurnPlan(
+                agent="bot0",
+                mode="command",
+                reason=f"D4 abandon active ({intent_source})",
+            )
             _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent,
                                 live_route_layer, "D4 abandon")
             return plan
@@ -1095,7 +1209,17 @@ def decide_turn(
             (intent == "continue" and not bot0_midflight_detour)
             or (intent in (None, "unclear", "handoff") and heuristic_answers and not route_broke_to_bot0)
         ) and not fresh_new_spec  # fresh new spec wins over heuristic continue for same agent
-        if continues and at_specific_gate:
+        # Session reorient: specific gates OR sole-continue mid-stream after long gap.
+        # (Silent "continue" after hours is a multi-turn trust failure — all paints.)
+        _kind_for_stale = str(current_active.get("kind") or "").strip()
+        try:
+            from api.services.conversation_control.multi_turn_stream_contract import (
+                is_sole_continue_kind as _is_sole_cont,
+            )
+            _sole_for_stale = _is_sole_cont(_kind_for_stale) or _kind_for_stale == "workflow_build"
+        except Exception:  # noqa: BLE001
+            _sole_for_stale = _kind_for_stale == "workflow_build"
+        if continues and (at_specific_gate or _sole_for_stale):
             from api.services.conversation_control.session_staleness import (
                 should_reorient_before_acting as _should_reorient,
             )
