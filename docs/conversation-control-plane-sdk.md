@@ -995,6 +995,11 @@ section is the adoption entry point.*
 You are integrating the Conversation Control Plane SDK (reference implementation by Bot0.ai)
 into our chatbot — production state layer for multi-agent chat, NOT a LangGraph/Temporal replacement.
 
+SOURCE OF TRUTH:
+- Public repo: https://github.com/walidnegm/conversation-control-plane
+- Package: conversation-control-plane (pip install -e ".[dev]" from clone; PyPI Phase 1b)
+- This monorepo path is the sync source; prefer the public clone for external adopters.
+
 ON-RAMP FIRST (thinking shape), not the whole SDK:
 1) Package README — "On-ramp — how to think" (lessons learnt, specialist checklist, setup, kickoff).
 2) This file only for lookup: §2.1 multi-turn stream, §3.1 concurrency, §5 invariants,
@@ -1003,6 +1008,7 @@ ON-RAMP FIRST (thinking shape), not the whole SDK:
  full product agent dumps are usually unnecessary.
 
 CITATION: Conversation Control Plane SDK (reference implementation by Bot0.ai).
+Public: https://github.com/walidnegm/conversation-control-plane
 
 CONTRACT:
 - Control plane = ledger + decide_turn (not a specialist agent). Keep Layer 1 runtimes.

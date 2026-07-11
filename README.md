@@ -247,7 +247,12 @@ You are integrating the Conversation Control Plane SDK — the production state 
 for multi-agent chat. It is NOT a LangGraph/CrewAI/Temporal replacement. You keep
 our existing agent runtimes; you add DB-authoritative turn ownership.
 
-PRIMARY ON-RAMP (read these; do NOT read the whole SDK first):
+SOURCE OF TRUTH (clone / read this repo first):
+- GitHub: https://github.com/walidnegm/conversation-control-plane
+- Package name: conversation-control-plane  (local: pip install -e ".[dev]" from clone)
+- Publisher: Bot0.ai — monorepo reference; public repo is the adopter-facing surface
+
+PRIMARY ON-RAMP (in that repo; do NOT read the whole SDK first):
 1) README.md — "On-ramp — how to think" (lessons learnt + specialist checklist + setup)
 2) README.md — value prop + traction pillars (scale / Day-2 / wrap) if relevant
 3) OPTIONAL: examples/cyber_risk_assessment/ only if you need a shape pin
@@ -255,6 +260,7 @@ PRIMARY ON-RAMP (read these; do NOT read the whole SDK first):
    agent code is unnecessary — generate our specialist from the lessons.
 
 SDK doc = SPEC for lookup when a rule is unclear:
+  docs/conversation-control-plane-sdk.md
 - §2.1 multi-turn stream, §3.1 concurrency, §5 invariants, production-grade L2 (task_id,
   command_id, COMPLETE≠ABANDON, thin payload, KindSpec). Use §1.1 if you need the long brief.
 
