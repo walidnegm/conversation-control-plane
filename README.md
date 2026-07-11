@@ -191,7 +191,6 @@ finally:
 
 ## On-ramp — how to think about this SDK
 
-**Do not** ask humans or coding agents to “read the whole SDK and run.”  
 The **SDK document is the spec** (lookup). This README is the **on-ramp**: lessons, setup, and a kickoff
 prompt that gets the model thinking in the right shape. Optional code under `examples/` saves tokens when
 useful — coding agents can generate a specialist from the lessons alone.
