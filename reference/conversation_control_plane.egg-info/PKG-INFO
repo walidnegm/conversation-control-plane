@@ -1,3 +1,22 @@
+Metadata-Version: 2.4
+Name: conversation-control-plane
+Version: 0.1.0
+Summary: Conversation Control Plane SDK — reference implementation by Bot0.ai
+Author: Bot0.ai
+License: Proprietary
+Keywords: conversation,agents,ledger,multi-agent,control-plane
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: pydantic>=2.0
+Requires-Dist: sqlalchemy>=2.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+
 # Conversation Control Plane SDK
 
 *Conversation Control Plane SDK* — reference implementation by [Bot0.ai](https://bot0.ai)
@@ -65,7 +84,7 @@ flowchart TB
     CCP --> LG["LangGraph subgraphs"]
     CCP --> TMP["Temporal / durable work"]
     CCP --> HUM["Human operator"]
-    AS --> DOM["Domain tools · specialist state · scoring"]
+    AS --> DOM["Domain tools · IR · scoring"]
     LG --> DOM
     TMP --> DOM
 ```
@@ -206,7 +225,7 @@ These are the failures this contract exists to prevent. Internalize them before 
 | **0 inherent LLM calls** | “Control plane = another prompt / router model” | Plane is **deterministic code**; models only optional **around** it |
 | **Cognition ≠ execution** | Regex/wordlists or free LLM prose decide routing | LLM proposes **enums**; code owns transitions and side effects |
 | **Single writer** | Specialist or tool writes `active_task` | Agent returns `TaskTransition`; **only** host/`decide_turn` writes control keys |
-| **Projection is thin** | Dump full domain artifacts into conversation context JSON | Pins + phase + `pending_ref`; domain depth in a **specialist store** |
+| **Projection is thin** | Dump IR/draft/graph into conversation context JSON | Pins + phase + `pending_ref`; domain depth in a **specialist store** |
 | **Identity is pinned** | Re-resolve “the workflow” from ambient `last_read_*` every turn | After pin, **payload ids** are authority; phase gates greenfield resolve |
 | **COMPLETE ≠ ABANDON** | Cancel clears with the same path as success | Distinct journal reasons / event types |
 | **Locks are per conversation** | Fear “Postgres can’t scale chat” | Short TX + turn claim; LLM work **off** the row lock; many rows in parallel |
@@ -224,7 +243,7 @@ These are the failures this contract exists to prevent. Internalize them before 
 | **Pin identity** | Typed ids on thin payload | Ambient `last_read_*` as sole authority after pin |
 | **Phase owns dispatch** | Entity resolve only in open/pick phases | Re-resolve by name on every continue |
 | **Handoffs** | Declare begin / continue / complete / abandon | Agent imports `ledger.py` |
-| **Thin projection** | Pins + phase + `pending_ref` | Fat domain blobs (drafts, graphs, full specs) in control payload |
+| **Thin projection** | Pins + phase + `pending_ref` | Fat IR/draft/graph in control payload |
 
 Helpers: `reference/api/services/conversation_control/multi_turn_stream_contract.py`.  
 Optional shape reference: [examples/cyber_risk_assessment/](examples/cyber_risk_assessment/) (scaffold, not product scoring).
@@ -234,7 +253,7 @@ Optional shape reference: [examples/cyber_risk_assessment/](examples/cyber_risk_
 1. Map your chat store to a **control slice** (`active_task`, `suspended_tasks`, `pending_switch`, `_control_revision`, optional journal table).  
 2. Port **`decide_turn` + ledger** writers from `reference/` (or reimplement against the SDK contract).  
 3. Host loop: `claim_turn` → router labels → `decide_turn` → `handle_turn` → `apply_transition` → `release_turn`.  
-4. Register each multi-turn **KindSpec**; first sticky turn **begin**; keep domain working state off-projection.  
+4. Register each multi-turn **KindSpec**; first sticky turn **begin**; domain IR off-projection.  
 5. Pin five tests: continue resumes · complete clears · abandon ≠ complete · no auto-switch · **no re-resolve after pin**.  
 6. Optional: `cd examples/cyber_risk_assessment && python3 host_sketch.py` to see the dialogue shape once.
 
@@ -247,12 +266,7 @@ You are integrating the Conversation Control Plane SDK — the production state 
 for multi-agent chat. It is NOT a LangGraph/CrewAI/Temporal replacement. You keep
 our existing agent runtimes; you add DB-authoritative turn ownership.
 
-SOURCE OF TRUTH (clone / read this repo first):
-- GitHub: https://github.com/walidnegm/conversation-control-plane
-- Package name: conversation-control-plane  (local: pip install -e ".[dev]" from clone)
-- Publisher: Bot0.ai — monorepo reference; public repo is the adopter-facing surface
-
-PRIMARY ON-RAMP (in that repo; do NOT read the whole SDK first):
+PRIMARY ON-RAMP (read these; do NOT read the whole SDK first):
 1) README.md — "On-ramp — how to think" (lessons learnt + specialist checklist + setup)
 2) README.md — value prop + traction pillars (scale / Day-2 / wrap) if relevant
 3) OPTIONAL: examples/cyber_risk_assessment/ only if you need a shape pin
@@ -260,14 +274,13 @@ PRIMARY ON-RAMP (in that repo; do NOT read the whole SDK first):
    agent code is unnecessary — generate our specialist from the lessons.
 
 SDK doc = SPEC for lookup when a rule is unclear:
-  docs/conversation-control-plane-sdk.md
 - §2.1 multi-turn stream, §3.1 concurrency, §5 invariants, production-grade L2 (task_id,
   command_id, COMPLETE≠ABANDON, thin payload, KindSpec). Use §1.1 if you need the long brief.
 
 THINK THIS WAY:
 - Classifiers propose labels; decide_turn enforces. Specialists return TaskTransition only.
 - Never write active_task from the agent. Never invent task_id after begin.
-- Thin projection: pins + phase + pending_ref. Domain working state in specialist store (P15).
+- Thin projection: pins + phase + pending_ref. Domain IR in specialist store (P15).
 - Register KindSpec before begin. Phase owns dispatch; pin owns identity.
 - No phrase-laundry wordlists for NL meaning; finite grammar only when a gate/menu is armed.
 - Host: claim_turn → decide_turn → handle_turn → apply_transition → release_turn.
@@ -276,7 +289,7 @@ THINK THIS WAY:
 ANTI-PATTERNS (do not generate):
 - Parallel *_active / *_phase flags fighting the ledger
 - Ambient last_read_* as sole identity after pin
-- Full domain artifacts stuffed into control payload
+- IR/draft/graph stuffed into control payload
 - Cancel implemented as complete
 - Keyword routing as sole arbiter of user meaning
 - Re-resolve entity by name on every continue turn

@@ -12,7 +12,7 @@ related:
 # Conversation Turn Lifecycle — the ledger-pinned flow
 
 **What this is.** A single, code-grounded map of one chat turn for Bot0: HTTP/SSE entry
-(`api/routers/host chat module (monorepo)`) → `api/services/host chat module (monorepo)::chat` → `conversation_control/`. It shows where
+(`api/routers/host chat module`) → `api/services/host chat module::chat` → `conversation_control/`. It shows where
 perception, short-circuits, `decide_turn`, delivery, and ledger writes happen.
 
 **Honest framing.** This documents the flow **as it is**, not the idealized "one router → `decide_turn`"
@@ -71,7 +71,7 @@ are **distinct event types** — not one “clear stickiness” blob.
 
 | Stage | Where (prefer symbolsymbols** over lines) |
 |---|---|
-| Turn claim / release | `api/routers/host chat module (monorepo)` → `ledger.claim_turn` / `release_turn` (not inside `chat`) |
+| Turn claim / release | `api/routers/host chat module` → `ledger.claim_turn` / `release_turn` (not inside `chat`) |
 | `chat` entry | `bot0.chat` ~L10550 — ledger overlay via `get_control_state` |
 | Early finite / FE | `_try_catalog_handoff_dispatch` · domain/IR/authoring gate helpers · early scorecard/entity picks |
 | Perception | `classify_unified_turn` + `apply_unified_router_authorities` (~L11141+) |
@@ -108,7 +108,7 @@ Legend: **▨ = LLM cognition** · **▣ = code / finite-grammar / ledger-state*
 flowchart TD
  MSG["User message — HTTP/SSE /chat"] --> CLAIM
 
- CLAIM{"▣ claim_turn — router boundary<br/>api/routers/host chat module (monorepo)<br/>one _turn_claim per conversation"}
+ CLAIM{"▣ claim_turn — router boundary<br/>api/routers/host chat module<br/>one _turn_claim per conversation"}
  CLAIM -->|busy| REJECT["⚡ 409 conversation_turn_in_flight<br/>reject, don't queue"]
  CLAIM -->|claimed| CHAT
 
@@ -169,7 +169,7 @@ flowchart TD
  L1 -->|hit| ARB["▨ LLM arbitrates (candidate only)"]
  L1 -->|ordered step list| STRUCT{"▣ l2_structural candidate"}
  STRUCT -->|LLM confidence ≥ 0.85 disagrees| ARB
- STRUCT -->|no strong veto| WB["workflow_builder (structural accelerator)"]
+ STRUCT -->|no strong veto| WB["specialist agent (structural accelerator)"]
  L1 -->|miss| L2
 
  L2{"L2 — pasted-content shape<br/>▣ roster / sequence signatures"}

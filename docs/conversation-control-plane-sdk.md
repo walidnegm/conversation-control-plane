@@ -132,7 +132,7 @@ reference implementation and portable contract:
 | # | Guarantee | Evidence |
 |---|---|---|
 | P14 | **L2.1 projection rebuild** | `projection_rebuild.rebuild_control_projection` + equivalence tests (audit path; hot path still projection) |
-| P15 | **B5 strict control_payload** | `control_payload.sanitize_control_payload` strips `ir`/`draft`/`graph`; handlers pin + domain store |
+| P15 | **B5 strict control_payload** | `control_payload.sanitize_control_payload` strips fat domain keys (`ir`/`draft`/`graph`); handlers pin + domain store |
 | P16 | **B6 KindSpec registry** | `kind_spec.KIND_REGISTRY` covers every `SOLE_CONTINUE_KINDS` + `workflow_build` gates |
 | P17 | **L3 hash-chain notary** | Journal `event_hash` / `prev_event_hash` + `verify_hash_chain` + `merkle_root` (optional external anchor) |
 
@@ -142,7 +142,7 @@ reference implementation and portable contract:
 |---|---|
 | Replay journal every turn | Latency — projection is routing authority |
 | Public blockchain | Optional notary of Merkle roots only — never live chat |
-| Domain IR in ledger | **Forbidden** — use `pending_ref` + specialist store |
+| Domain intermediate representation (typed specialist working state) in ledger | **Forbidden** — use `pending_ref` + specialist store |
 
 **Publish gate:** public extract claims production-grade L2 + P14–P17 when monorepo tests + extract sync are green.
 
@@ -381,7 +381,7 @@ flowchart TB
 
 | Layer | Typical hosts | Owns | Does *not* own |
 |---|---|---|---|
-| **1 — In-agent execution** | LangGraph node/subgraph, Crew task loop, Temporal activity behind an adapter, plain `handle_turn` | Planning, tools, IR pipelines, **mid-turn** checkpoint/resume *inside* one specialist | Which specialist is foreground in the **shared chat thread** |
+| **1 — In-agent execution** | LangGraph node/subgraph, Crew task loop, Temporal activity behind an adapter, plain `handle_turn` | Planning, tools, domain pipelines, **mid-turn** checkpoint/resume *inside* one specialist | Which specialist is foreground in the **shared chat thread** |
 | **2 — Multi-agent meta** | LangGraph supervisor/swarm **or** this control plane (`decide_turn` + ledger) | Turn ownership, Switch/Stay handoffs, suspend/resume across specialists, routing audit | Tool-loop mechanics inside a specialist |
 | **3 — Memory** | Postgres ledger slice, vector/RAG vendors, Redis, crew memory, Letta-style session APIs, your OLTP | **Varies by store** — see below | One universal memory blob (anti-pattern) |
 
@@ -399,7 +399,7 @@ execution — not either/or.
 
 | Memory class | Owner | Examples | Routing / control plane uses it? |
 |---|---|---|---|
-| **Routing + working memory** | **Ledger** (`active_task`, `payload`) | Drafting phase, gate flags, `intake_seed`, IR checkpoint mid-flow | **Yes** — canonical for cross-turn routing (§3.1 Q3) |
+| **Routing + working memory** | **Ledger** (`active_task`, `payload`) | Phase, gate flags, thin pins, pointers mid-flow | **Yes** — canonical for cross-turn routing (§3.1 Q3) |
 | **Classifier hydration** | Code renders ledger facts + bounded recent transcript | `{drafting_context}`, `{active_task}`, `recent_context.py` | **Feeds** routing cognition; not a second source of truth |
 | **Third-party / vendor memory** | External or app-chosen store | Vector RAG, crew snapshots, Redis session, hosted memory APIs | **No** for control keys — specialists may read/write; ledger still owns foreground |
 | **Domain depth** | Specialist + your data model | Workflow pending rows, assessment artifacts, tenant corpora | **No** — loaded selectively per `handle_turn` |
@@ -428,7 +428,7 @@ not two products.*
 | Concern | Owner | What it is | Does *not* own |
 |---|---|---|---|
 | **Front door** | `bot0` **agent** + `bot0.chat` entry | HTTP/SSE entry, guardrails shell, tool loop when delivery owner is `default`, product Q&A (`list_risks`, marketplace, …) | Writing `active_task` / `pending_switch` (single-writer ledger); inventing multi-turn stream ownership |
-| **Multi-agent turn ownership** | **Control plane** | Unified router labels → sealed authorities → **`select_exclusive_turn_owner`** → `decide_turn` → `TurnPlan` | How a specialist implements tools/IR mid-turn |
+| **Multi-agent turn ownership** | **Control plane** | Unified router labels → sealed authorities → **`select_exclusive_turn_owner`** → `decide_turn` → `TurnPlan` | How a specialist implements tools / domain logic mid-turn |
 | **Sole-continue streams** | **Ledger** `active_task.kind` | e.g. `cost_out`, `cyber_risk_assessment`, `drafting` — own follow-ups until `task_intent` is detour / new_task / abandon | Answering product detours (risk catalog learning, glossary) while still "sticky" if labels say detour |
 | **Delivery leaves** | **Control plane + front-door dispatch** | Exclusive owner ids: `cost_out`, `draft`, `cyber_risk`, `discovery`, `concept_gate`, `default`, … | Specialist private state machines |
 | **Specialist execution** | **Agent architecture** | Builder StateGraph, advisor tool-loop, cyber subgraph, personal_score phases | Cross-agent foreground ownership in shared chat |
@@ -1015,12 +1015,12 @@ CONTRACT:
 - Specialists implement ConversationalAgent; return TaskTransition only.
 - Only decide_turn / host writes control keys (active_task, suspended_tasks, pending_switch).
 - LLM proposes enums; code owns transitions, math, user-visible tables.
-- Thin projection: kind/phase/pins/pending_ref — domain IR in specialist store (P15), not payload.
+- Thin projection: kind/phase/pins/pending_ref — domain working state in specialist store (P15).
 - Model A: task_id on begin (never invent after); command_id; COMPLETE ≠ ABANDON.
 - Multi-turn stream: phase-gated resolve, ledger pins only, LLM continue meaning,
  finite grammar only when armed — no per-agent glue, no ambient last_read sole authority.
 
-ANTI-PATTERNS: parallel *_active flags; IR in control payload; cancel-as-complete;
+ANTI-PATTERNS: parallel *_active flags; fat domain blobs in control payload; cancel-as-complete;
 keyword sole-arbiter NL routing; re-resolve by name every continue turn.
 
 YOUR TASK:
@@ -1476,7 +1476,7 @@ route through the same gates — do not ship a second private stickiness model.
 #### Multi-gate authoring stream (projection + leave) {#21-multi-gate-authoring-stream}
 
 **Companion to sole-continue streams.** Some specialists are not “one pin + sizing” — they are a
-**ladder of ceremonies** (e.g. Draft IR → Staffed IR → domain → KPI → commit). The disease here is
+**ladder of ceremonies** (e.g. structure review → staffing review → domain → KPI → commit). The disease here is
 different: **private pending flags fight the product ladder**, and **data completeness is mistaken for
 gate leave**.
 
@@ -1488,11 +1488,11 @@ Reference code: `api/services/conversation_control/authoring_gate_contract.py` (
 | # | Invariant | Means | Forbidden |
 |---|---|---|---|
 | **G1** | **Gate table** | Each ceremony has `gate_id`, armed flags, **satisfied key**, finite accept/decline, next phase | Ad-hoc `_awaiting_*` clears with no table row |
-| **G2** | **Completeness ≠ leave** | Roles allocated / domain string present / plan “looks ready” **never** clear an armed gate alone | Stale reconcile: “allocation complete ⇒ leave Staffed” |
-| **G3** | **Single leave API** | All clears of armed flags go through `clear_authoring_gate(pending, gate_id, reason=…)` | Bare `pop("_awaiting_role_proposal_review")` in leaf code |
-| **G4** | **Shared finite advance** | Armed gates share `yes` / `go ahead` / `proceed` / … plus per-gate menu (`accept`, `skip`, …) | Draft IR understands “go ahead”; Staffed only “accept” |
+| **G2** | **Completeness ≠ leave** | Roles allocated / domain string present / plan “looks ready” **never** clear an armed gate alone | Stale reconcile: “allocation complete ⇒ leave staffing gate” |
+| **G3** | **Single leave API** | All clears of armed flags go through `clear_authoring_gate(pending, gate_id, reason=…)` | Bare `pop("_awaiting_*")` in leaf code |
+| **G4** | **Shared finite advance** | Armed gates share `yes` / `go ahead` / `proceed` / … plus per-gate menu (`accept`, `skip`, …) | One gate accepts “go ahead”; the next only “accept” |
 | **G5** | **Ledger projects every turn** | `payload.phase` + `payload.gates.{id}.{armed,satisfied}` (+ `pending_ref`) | Front door sees only coarse agent while pending owns leave |
-| **G6** | **pending_ref holds depth** | IR, graph, proposal tables stay specialist-side | Full IR/graph in ledger payload |
+| **G6** | **pending_ref holds depth** | Domain artifacts, graphs, proposal tables stay specialist-side | Full domain blobs in ledger payload |
 
 **Allowed leave reasons:** `accept_done` / `reject_done` / `skip_done` / `reset` / `start_over` /
 `transition` always; `already_satisfied` / `dual_flag_reconcile` **only if** satisfied key is already true.
@@ -1560,7 +1560,7 @@ dispatcher your specialists plug into:
 - **`decide_turn`** is the deterministic dispatcher. It reads DB-authoritative ledger state +
  a structured intent signal, returns a `TurnPlan`, and performs the ledger writes. Agents do not write
  control keys directly.
-- **Specialists** (`workflow_builder`, `transformation_advisor`, …) are the brains. They implement
+- **Specialists** (`specialist_agent`, `transformation_advisor`, …) are the brains. They implement
  `ConversationalAgent`, own domain prompts/tools/private tables, and return `TaskTransition` *declarations*.
  The ledger owns *who* is foreground and *what coarse phase* the conversation remembers.
 - **Cognition** (classifiers, unified router) emits labels and enums; **procedure** (code) owns transitions,
@@ -1602,7 +1602,7 @@ same conversation.
 | **Row locks** | `ledger.complete_task`, multi-key transitions | `SELECT … FOR UPDATE` before multi-key clears so two writers cannot interleave |
 | **Revision gate** | `_control_revision` + `ConversationTurnEnvelope` + optional `expected_version` | Every control mutation bumps revision monotonically; stale envelopes no-op; `StaleControlRevisionError` on fenced writes |
 | **Session boundary commit** | `commit_conversation_session_boundary` | Commit ledger writes before long LLM awaits so heartbeat renewals are not blocked by an open transaction |
-| **Async jobs** | `workflow_builder_turn` handler | Claims at job start, renews during work, releases in `finally` — same contract as sync `/chat` |
+| **Async jobs** | `specialist agent_turn` handler | Claims at job start, renews during work, releases in `finally` — same contract as sync `/chat` |
 
 **Horizontal scale model (answer to “10k users chatting”):**
 
@@ -1673,7 +1673,7 @@ Hydration is **layered**: ledger snapshot for ownership, compact recent block fo
 
 | Registry | What it is | Used for routing? |
 |---|---|---|
-| **Internal** — `AGENT_REGISTRY` + `ConversationalAgent` in `contract.py` | Orchestration participants (`bot0`, `workflow_builder`, `transformation_advisor`, …) | **Yes** — sole delegation toolset |
+| **Internal** — `AGENT_REGISTRY` + `ConversationalAgent` in `contract.py` | Orchestration participants (`bot0`, `specialist_agent`, `transformation_advisor`, …) | **Yes** — sole delegation toolset |
 | **Marketplace** — `agents` SQL table | Procurable vendor agents users deploy | **No** — data for search/tools only |
 
 When this document says "agent," it means a **ConversationalAgent** unless explicitly noted otherwise.
@@ -1686,8 +1686,8 @@ The recurring control-plane bugs are not unrelated surface defects. They share o
 
 | System | What it holds | Example |
 |---|---|---|
-| **Ledger** (control plane) | `active_task`, `suspended_tasks`, `pending_switch` in the conversation control slice | `{agent: workflow_builder, kind: workflow_build, phase: role_proposal_review}` |
-| **Per-agent state** | Private durable records (full execution machine) | Builder `workflow_builder_pending` + IR; scorer artifacts; LangGraph checkpoint |
+| **Ledger** (control plane) | `active_task`, `suspended_tasks`, `pending_switch` in the conversation control slice | `{agent: specialist agent, kind: workflow_build, phase: role_proposal_review}` |
+| **Per-agent state** | Private durable records (full execution machine) | Builder `specialist pending store` + IR; scorer artifacts; LangGraph checkpoint |
 
 **Target (see §0.1.3 for the full contract):**
 
@@ -1855,7 +1855,7 @@ The control plane does not mandate *how* a specialist thinks (tool loop vs state
 It mandates **how ownership is declared** (`TaskTransition`, `classify_phase`, no control-key writes).
 
 **This section is for publishable SDK consumers.** It describes **integration shapes** any adopter can map
-to their own domain agents. It is **not** a list of Bot0 product surfaces (`workflow_builder`,
+to their own domain agents. It is **not** a list of Bot0 product surfaces (`specialist_agent`,
 `transformation_advisor`, …) — that inventory is **internal** and lives in
  §1.1.
 
@@ -2082,7 +2082,7 @@ classifier entry point — `classify_authoring_gate_turn` — returns a typed `A
 
 | Kind | Meaning | Executor | Authority boundary |
 |---|---|---|---|
-| `gate_proceed` | User supplied the gate's required answer or an advance/resume at the open step | `workflow_builder` | Structural finite grammar + unified `AUTHORING_GATE_PROCEED`; KPI gate owns **all** turns while open |
+| `gate_proceed` | User supplied the gate's required answer or an advance/resume at the open step | `specialist_agent` | Structural finite grammar + unified `AUTHORING_GATE_PROCEED`; KPI gate owns **all** turns while open |
 | `gate_status` | User asks where the session stands or whether the draft was saved — without advancing | `bot0` orientation **or** builder save-status handler | Save inquiries: DB truth + prior code-owned `✅ Workflow saved` transcript + `last_read_workflow_id`; re-echo pre-commit UI **only** when still pre-commit (`resolve_save_status_authority`) |
 | `gate_detour` | Unrelated product Q&A while a gate is open | `bot0` detour + resume tail | `strip_authoring_save_fabrication` backstop when detour prose claims persistence |
 | `none` | Not an authoring-gate turn | Normal router / `decide_turn` | — |
@@ -2132,11 +2132,11 @@ All conversation/control timing lives in **`api/services/conversation_staleness.
 | Parameter | Home | Default |
 |---|---|---|
 | Inline SSE turn cap | `turn_timeout.inline_chat_turn_timeout_seconds` | 45s (`BOT0_CHAT_TURN_TIMEOUT_SECONDS`) |
-| Async job poll budget | `bot0.py` stream handoff | 600s (`BOT0_ASYNC_JOB_POLL_MAX_WAIT_SECONDS`) |
-| SSE heartbeat | `bot0.py` stream | 5s (`BOT0_SSE_HEARTBEAT_INTERVAL_SECONDS`) |
+| Async job poll budget | `host chat module` stream handoff | 600s (`BOT0_ASYNC_JOB_POLL_MAX_WAIT_SECONDS`) |
+| SSE heartbeat | `host chat module` stream | 5s (`BOT0_SSE_HEARTBEAT_INTERVAL_SECONDS`) |
 
 **Call sites:** `ledger.claim_turn` / `renew_turn_claim` / `turn_claim_busy_details`; `ledger.prune_stale_ledger_state`;
-`workflow_builder_pending` purge/cache; worker idle reset. Regression:
+`specialist pending store` purge/cache; worker idle reset. Regression:
 `test_conversation_staleness_slice6.py`, `test_turn_claim.py`.
 
 ### 11.3 Prompt library, classifiers, and tool registry / MCP — adjacent substrates
@@ -2312,22 +2312,26 @@ responsibility** alongside the ledger — same as registering classifiers before
 
 ---
 
-## 12. Multi-turn setup — IR pipeline template
+## 12. Multi-turn setup — domain intermediate representation (IR) pipeline
+
+> **Naming:** **IR** here means a **typed intermediate representation of domain working state** for a
+> multi-turn setup (Pydantic/JSON schema + validators) — not “Bot0 Workflow IR” product branding.
+> Keep that blob **out of** the ledger projection (P15); store under `pending_ref` / specialist tables.
 
 **Compose with §2.1 multi-turn stream first.** The stream contract owns *outer* turn ownership: kind, phase,
 entity pin, when resolve vs continue cognition is legal. This section owns *inner* setup elicitation once a
-setup kind is active (typed IR, validators, Stage 0–7). Do not implement IR stages while still re-resolving
-identity every turn — that is A14, not an IR bug.
+setup kind is active (typed domain IR, validators, Stage 0–7). Do not implement setup stages while still
+re-resolving identity every turn — that is A14, not a domain-schema bug.
 
-Multi-turn setup flows must not spawn parallel context-flag state machines. Use ledger `kind` + `payload`
-holding a typed IR and validator-driven elicitation.
+Multi-turn setup flows must not spawn parallel context-flag state machines. Use ledger `kind` + thin payload
+plus a typed domain IR (specialist store) and validator-driven elicitation.
 
 **Stage map** (domain-agnostic):
 
 ```
 Stage 0 — entry: decide_turn opens/resumes ledger task (kind + payload, not context flags)
 Stage 1 — authority context: code-owned catalog/workflow reads; stamp provenance
-Stage 2 — LLM extract: one bounded call → IR delta (JSON matching Pydantic model)
+Stage 2 — LLM extract: one bounded call → domain IR delta (JSON matching Pydantic model)
 Stage 3 — validate: stable rule codes (e.g. C1_missing_volume)
 Stage 4 — elicit/repair: clarifier from validator gaps, not prompt prose alone
 Stage 5 — resolve: code overrides non-negotiable source signals
@@ -2503,7 +2507,7 @@ flowchart TB
  L[(Ledger: active / suspended / pending_switch)]
  end
  subgraph exec["Specialist execution (your runtime — pluggable)"]
- WB["workflow_builder\nConversationalAgent"]
+ WB["specialist agent\nConversationalAgent"]
  AD["advisor\nConversationalAgent"]
  ED["workflow_editor\nConversationalAgent"]
  end
