@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "conversation-control-plane"
 version = "0.1.0"
-description = "Conversation turn-ownership ledger for multi-agent chat, portable across execution runtimes (reference by Bot0.ai)"
+description = "Conversation turn-ownership ledger for multi-agent chat, portable across how each turn is run (agent frameworks, code, workers, human) (reference by Bot0.ai)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
