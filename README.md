@@ -67,10 +67,10 @@ Everything else in the stack stays yours:
 - **Provable** — thin projection (L1) + event journal (L2). Query *why this turn routed here* in
   the SQL store you already run.
 
-**Not** an all-encompassing agent framework — and **not** meant to absorb the rest of the ecosystem
-(orchestration, prompts, tools/MCP, memory, models). Those capabilities stay in their own layers;
-see the compose table above and the [stack map](#where-we-sit-in-the-stack) below. This package owns
-one slice: **conversational authority**.
+**Not a full-stack framework** for multi-agent products, and **not** a layer meant to swallow the
+ecosystem around it (orchestration, prompts, tools/MCP, memory, models). Those stay where they are —
+compose table above · [stack map](#where-we-sit-in-the-stack) below. This package owns one slice:
+**conversational authority**.
 
 ### Where we sit in the stack
 
