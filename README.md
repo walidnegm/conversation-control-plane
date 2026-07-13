@@ -13,7 +13,7 @@ Package: `conversation-control-plane` · MIT · reference implementation by [Bot
 
 ---
 
-Multi-agent **orchestration is real** — and maturing every day — in the tools people already use.
+Multi-agent **orchestration is real** — and maturing every day — in the tools developers already use.
 LangGraph supervisors and swarms, OpenAI Agents SDK handoffs, CrewAI crews, Rasa dialogue
 management, OpenAI ChatKit sessions, Temporal workflows: all can route, hand off, checkpoint,
 and keep a conversation going across multiple agents.
