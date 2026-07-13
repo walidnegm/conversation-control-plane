@@ -39,8 +39,71 @@ Temporal, the OpenAI Agents SDK, or plain Python for **execution**. The ledger o
 
 **Not** an agent framework · **not** a memory store (Letta / mem0 / Zep — the ledger is what the
 *system obeys*, not what the *model reads*) · **not** a LangGraph or Temporal replacement.
-Keep those for **how** specialists think and **how** long work survives a crash. Details:
-[Why this exists](#why-this-exists) · [§14 ecosystem layering](docs/conversation-control-plane-sdk.md#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane).
+Keep those for **how** specialists think and **how** long work survives a crash.
+
+### Where we sit in the stack
+
+```text
+  Your product chat (host loop)
+  claim → decide_turn → handle → apply → release
+              │
+              ▼
+  ┌─────────────────────────────────────────────┐
+  │  Conversation Control Plane   ← this package │
+  │  ledger L1/L2 · gates · resume · audit      │
+  │  conversational authority (who is foreground)│
+  └─────────────────────────────────────────────┘
+              │  dispatches into
+              ▼
+  ┌─────────────────────────────────────────────┐
+  │  Execution runtimes  (keep / mix these)      │
+  │  LangGraph · OpenAI Agents SDK · CrewAI     │
+  │  plain Python · Temporal / job workers      │
+  └─────────────────────────────────────────────┘
+              │  uses
+              ▼
+  ┌─────────────────────────────────────────────┐
+  │  Models · tools / MCP · domain DBs          │
+  │  Model memory: Letta / mem0 / Zep (theirs)  │
+  └─────────────────────────────────────────────┘
+```
+
+```mermaid
+flowchart TB
+  HOST["Your host loop<br/>claim · decide · apply · release"]
+  CCP["Conversation Control Plane<br/><b>this package</b><br/>ledger · gates · resume"]
+  HOST --> CCP
+  CCP --> LG["LangGraph"]
+  CCP --> OAI["OpenAI Agents SDK"]
+  CCP --> CREW["CrewAI / peers"]
+  CCP --> PY["Plain Python"]
+  CCP --> TMP["Temporal / jobs"]
+  LG --> LLM["LLM APIs"]
+  OAI --> LLM
+  CREW --> LLM
+  PY --> LLM
+  LLM --> TOOL["Tools · MCP · APIs"]
+  LG -.-> MEM["Model memory<br/>Letta · mem0 · Zep"]
+  OAI -.-> MEM
+```
+
+| Layer | Examples | Owns |
+|---|---|---|
+| **Host** | Your API / worker | Claim, call `decide_turn`, apply transitions, release |
+| **Conversational authority** | **This package** | Foreground task, gates, phase, suspend/resume, journal |
+| **Execution** | LangGraph, OpenAI Agents SDK, CrewAI, plain Python | How a specialist *thinks and acts* this turn |
+| **Durable work** | Temporal, your job queue | Retries, timers, long-running activities (optional) |
+| **Model memory** | Letta, mem0, Zep | What the *model* can recall — not system authority |
+| **Models & tools** | LLM providers, MCP, domain APIs | Tokens and side effects |
+
+Same Postgres can hold a LangGraph checkpointer **and** this ledger — different questions:
+
+| Store | Answers |
+|---|---|
+| **Checkpointer** | What was graph state at step N? |
+| **This ledger** | Why did this **turn** route here, and what task is foreground? |
+
+Deep dive: [Why this exists](#why-this-exists) · [§14 ecosystem layering](docs/conversation-control-plane-sdk.md#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane).
 
 ### Quickstart (5 minutes)
 
@@ -61,12 +124,11 @@ from conversation_control_plane import (
 # Specialists return TaskTransition; strip_control_keys on agent context_updates.
 ```
 
-Lookup: [design principles](#on-ramp--how-to-think-about-this-sdk) · [SDK contract](docs/conversation-control-plane-sdk.md) · [lifecycle diagram](docs/conversation-turn-lifecycle-diagram.md)
+Lookup: [design principles](#on-ramp--how-to-think-about-this-package) · [contract](docs/conversation-control-plane-sdk.md) · [lifecycle diagram](docs/conversation-turn-lifecycle-diagram.md) · [stack map](#where-we-sit-in-the-stack)
 
 **Naming:** *conversation control plane* is the short brand; plain terms: **turn-ownership ledger**
-(who owns the thread, gates, resume). It sits **above** agent runtimes — compose with LangGraph /
-CrewAI / Temporal / plain Python, don’t replace them. See [Why this exists](#why-this-exists) and
-[SDK §14 ecosystem layering](docs/conversation-control-plane-sdk.md#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane).
+(foreground task, gates, resume). It sits **above** agent runtimes — compose, don’t replace.
+See the [stack map](#where-we-sit-in-the-stack) and [§14](docs/conversation-control-plane-sdk.md#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane).
 
 ---
 
@@ -82,26 +144,17 @@ Most orchestration and agent frameworks **contain** conversational control logic
 | **Temporal** | Workflow state, signals, workflow code |
 | **App code** | Controllers, prompts, session objects, ad hoc flags |
 
-We **splice that responsibility out** into an independent control plane.
+We **splice that responsibility out** into an independent control plane — see the
+[stack map](#where-we-sit-in-the-stack) above.
 
 **Not the claim:** “Other systems cannot manage conversational state.”  
 **The claim:** Other systems usually treat conversational **ownership and lifecycle** as implementation
 details of an agent, graph, or workflow. This package makes them an **independent, authoritative,
 portable system contract** — so authority survives changes in the execution layer.
 
-```text
-              Conversation Control Plane
-         ownership · gates · phases · authority
-                        │
-         ┌──────────────┼──────────────┐
-         ▼              ▼              ▼
-     Agent SDK      LangGraph       Temporal
-      agents         graphs      durable work
-```
-
 The **same conversational task** can run via a direct agent call today, a LangGraph subgraph tomorrow,
 a Temporal workflow for long-running work, a human operator, or a deterministic service — without the
-control plane changing **who owns** the task merely because the **execution mechanism** changed.
+control plane changing **who is foreground** merely because the **execution mechanism** changed.
 
 ### Four concerns (usually collapsed)
 
@@ -113,36 +166,10 @@ control plane changing **who owns** the task merely because the **execution mech
 | **Durable execution** — retries, timers, worker recovery | Temporal / infra (optional) |
 
 A typical framework combines two or three of these. Separating them is the architectural contribution.
-Full write-up: [SDK §0](docs/conversation-control-plane-sdk.md#0-value-proposition--conversational-control-in-a-layered-stack) · ecosystem: [§14](docs/conversation-control-plane-sdk.md#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane).
-
----
-
-## Where we sit (compose, don't rip-and-replace)
-
-```mermaid
-flowchart TB
-    CCP["Conversation Control Plane<br/>ownership · gates · phases · authority"]
-    CCP --> AS["Agent SDK / plain Python"]
-    CCP --> LG["LangGraph subgraphs"]
-    CCP --> TMP["Temporal / durable work"]
-    CCP --> HUM["Human operator"]
-    AS --> DOM["Domain tools · specialist state · scoring"]
-    LG --> DOM
-    TMP --> DOM
-```
-
-| Layer | What | This repo |
-|---|---|---|
-| **Conversational authority** | Foreground task, gates, phase, resume | **This package** — `decide_turn` + ledger |
-| **Execution** | How a specialist runs tools/graph/workflow | LangGraph / Crew / OpenAI / Temporal / plain Python |
-| **Memory / domain** | RAG, artifacts, specialist stores | Yours — **ledger owns control keys only** |
-
-Same Postgres can host a LangGraph checkpointer **and** this ledger — different shapes, different questions:
-
-- Checkpointer → “what was graph state at step N?”
-- Ledger → “why did this **turn** route to agent X, and what task is foreground?”
 
 **Rule (convention + boundary strip):** classifiers propose labels; **`decide_turn` / host** should be the only writers of control keys. Specialists return `TaskTransition`; `strip_control_keys` removes control keys from agent `context_updates`. This is **not** a hard runtime sandbox — an agent that imports the ledger can still write; treat that as a host policy violation.
+
+Full write-up: [contract §0](docs/conversation-control-plane-sdk.md#0-value-proposition--conversational-control-in-a-layered-stack) · [§14 ecosystem](docs/conversation-control-plane-sdk.md#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane).
 
 ### Authority path is deterministic (not “zero LLM in the whole folder”)
 
@@ -251,9 +278,9 @@ finally:
 
 ---
 
-## On-ramp — how to think about this SDK
+## On-ramp — how to think about this package
 
-The **SDK document is the spec** (lookup). This README is the **on-ramp**: design principles, setup,
+The **contract document is the spec** (lookup). This README is the **on-ramp**: design principles, setup,
 and a kickoff prompt that puts coding agents in the right shape. Optional code under `examples/`
 saves tokens when useful — agents can generate a specialist from the principles alone.
 
