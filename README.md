@@ -18,7 +18,7 @@ LangGraph supervisors and swarms, OpenAI Agents SDK handoffs, CrewAI crews, Rasa
 management, OpenAI ChatKit sessions, Temporal workflows: all can route, hand off, checkpoint,
 and keep a conversation going across multiple agents.
 
-This package targets multi-agent products where **chat is long-lived** and **authority must stay
+This package targets multi-agent apps where **chat is long-lived** and **authority must stay
 clear across specialists** — often as size and complexity grow. Typical shape: several
 half-finished tasks in one thread, ordered steps *and* disordered detours, leave mid-stream and
 resume later, sometimes across specialists that do not share one graph, dialogue model, or runtime.
@@ -36,7 +36,7 @@ resume later, sometimes across specialists that do not share one graph, dialogue
 **“Runtime” here** = *how a dispatched turn executes* (graph engine, agent SDK, job worker, human),
 not the chat session store and not the LLM API. Hosted chat (e.g. ChatKit) and dialogue engines
 (e.g. Rasa) already own a **session**; orchestration engines own **runs and jobs**. If one platform
-session and one leaf are enough, stay there. This ledger is for product-owned authority that must
+session and one leaf are enough, stay there. This ledger is for **app-owned** authority that must
 **compose across** those layers.
 
 Example shape: onboarding with one specialist, research or setup with another, support or reporting
@@ -72,18 +72,18 @@ in a long product chat. Dimensions below name those objectives; no single layer 
 | **Node / step** | Next node, tool call, or activity *inside one run* |
 | **Agent / role** | Which agent role is delegated *inside one runtime topology* |
 | **Chat thread** | Shared conversation the user sees as one session (usually human-facing) |
-| **Multi-task** | Several half-finished product tasks; suspend / resume / foreground |
+| **Multi-task** | Several half-finished app tasks; suspend / resume / foreground |
 | **Cross-runtime** | Same authority if the turn’s **run leaf** changes (LangGraph / agent SDK / Temporal / human) — not which LLM |
 | **HITL** | Human as conversation counterpart and/or gated approver / operator leaf |
 | **Durable job** | Infra-level workflow instance, retries, timers, worker claim |
 
 | Grain | What “who’s next?” means here | Framework / product examples | Node/step | Agent/role | Chat | Multi-task | Cross-runtime | HITL | Durable job |
 |---|---|---|---|---|---|---|---|---|---|
-| **Run step** | Next hop *inside one execution* (not which product task is open for the user) | **LangGraph:** next graph node · **Temporal:** next activity · **CrewAI:** next crew task step · plain tool-loop iteration | ✓ | — | — | — | — | optional | sometimes |
+| **Run step** | Next hop *inside one execution* (not which app task is open for the user) | **LangGraph:** next graph node · **Temporal:** next activity · **CrewAI:** next crew task step · plain tool-loop iteration | ✓ | — | — | — | — | optional | sometimes |
 | **Runtime multi-agent** | Which *agent role* is delegated *inside one graph/crew topology* | **LangGraph** supervisor → worker subgraph · **langgraph-swarm** handoff · **CrewAI** manager → specialist role · **OpenAI Agents SDK** agent-as-tool handoff | ✓ | ✓ | sometimes | DIY | — | optional | sometimes |
 | **Hosted chat / dialogue session** | Which *platform/bot session* this human is in (one surface, one vendor model) | **OpenAI ChatKit** thread · **Rasa** tracker / stories · Assistants-style conversation id · many helpdesk chat widgets | — | sometimes | ✓ | limited | — | ✓ user | — |
 | **Long workflow job** | Which *durable job instance* is live (retries, timers, workers) — not chat foreground law | **Temporal** workflow id · Celery/RQ job · queue worker claim on a background job | ✓ | — | — | — | — | optional | ✓ |
-| **Product chat-thread authority** | Which *product task* is foreground on a thread **you** own; suspend/resume; complete ≠ abandon; leaf can change | **This package** (`decide_turn`, `active_task`, pins, L1/L2) · host may still call LangGraph/ChatKit/Temporal *under* `handle` | — | via dispatch | ✓ | ✓ | ✓ | ✓ | via host claim |
+| **App chat-thread authority** | Which *app task* is foreground on a thread **you** own; suspend/resume; complete ≠ abandon; leaf can change | **This package** (`decide_turn`, `active_task`, pins, L1/L2) · host may still call LangGraph/ChatKit/Temporal *under* `handle` | — | via dispatch | ✓ | ✓ | ✓ | ✓ | via host claim |
 
 ✓ = first-class for that grain · — = not the primary model · *limited / DIY / optional / sometimes* = possible, not the native portable contract.
 
@@ -96,7 +96,7 @@ people already buy. The cut is not “they lack chat”; it is **session grain v
 
 | | ChatKit / hosted chat | Rasa / dialogue | LangGraph / CrewAI | Temporal | **This package** |
 |---|---|---|---|---|---|
-| **Sweet spot** | Hosted human chat + their agents | NLU → dialogue policies | Multi-agent runs inside one topology | Durable jobs | Product multi-task thread authority |
+| **Sweet spot** | Hosted human chat + their agents | NLU → dialogue policies | Multi-agent runs inside one topology | Durable jobs | App multi-task thread authority |
 | **Chat session** | ✓ Platform-owned | ✓ Bot tracker | App / graph | — | ✓ App-owned ledger |
 | **Multi-task foreground law** | Limited / app DIY | Limited | DIY on graph state | — | ✓ First-class |
 | **Cross-runtime authority** | Bound to that platform | Bound to that bot runtime | Bound to that graph/crew | Job model, not chat law | ✓ `handle` is pluggable |
@@ -105,7 +105,7 @@ people already buy. The cut is not “they lack chat”; it is **session grain v
 
 When the objective is **run, role, or durable job**, use orchestration / workflow engines. When the
 objective is a **hosted single-stack chat session**, ChatKit or Rasa may be enough. When the objective
-is **product-owned multi-task authority** that must stay coherent **across runtimes and HITL**, this
+is **app-owned multi-task authority** that must stay coherent **across runtimes and HITL**, this
 ledger is the natural focus — compose with the tools above; do not replace them.
 
 | Product question | Typical session / run answer | This ledger |
@@ -117,7 +117,7 @@ ledger is the natural focus — compose with the tools above; do not replace the
 | Swap execution leaf (incl. human)? | Re-map that engine or platform’s state | Authority row stays; only `handle` changes |
 
 **One-line USP:** session and run tools answer *who owns this ChatKit/Rasa session or this graph/job
-step*; this package answers *who owns the foreground product task on a thread that may span
+step*; this package answers *who owns the foreground app task on a thread that may span
 runtimes and human gates* — as typed fields your host, UI, and tests can obey without deserializing
 a whole run or locking to one chat platform.
 
