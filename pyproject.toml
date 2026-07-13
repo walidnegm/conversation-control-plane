@@ -1,45 +1,17 @@
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "conversation-control-plane"
 version = "0.1.0"
-description = "Conversation turn-ownership ledger for multi-agent chat, portable across how each turn is run (agent frameworks, code, workers, human) (reference by Bot0.ai)"
+description = "DB-authoritative conversation control plane for multi-agent chat"
 readme = "README.md"
-requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Bot0.ai" }]
-keywords = ["conversation", "agents", "ledger", "multi-agent", "turn-ownership"]
-classifiers = [
-  "Development Status :: 3 - Alpha",
-  "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-]
+requires-python = ">=3.11"
 dependencies = [
   "pydantic>=2.0",
-  "sqlalchemy>=2.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
-
-[project.urls]
-Homepage = "https://github.com/walidnegm/conversation-control-plane"
-Documentation = "https://github.com/walidnegm/conversation-control-plane#readme"
-Repository = "https://github.com/walidnegm/conversation-control-plane"
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["conversation_control_plane*"]
-# Never ship a top-level `api` package — monorepo layout is not the public surface.
-
-[tool.setuptools.package-data]
-conversation_control_plane = ["py.typed"]
+dev = ["pytest>=8.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["test_*.py"]
+pythonpath = ["reference"]

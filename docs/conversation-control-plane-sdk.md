@@ -1293,6 +1293,30 @@ never regex-slot topic text into a blank form.
 `test_intake_engagement_contract.py`. **Anti-pattern:** template-filling `{process_topic}` without
 assessor understanding — users feel unheard.
 
+#### Cold system-suggest open (authoring leaf — portable)
+
+**Failure mode (plain):** cold system-suggest miss. 
+**Slug (id):** `cold_system_suggest_miss` (Conjecture portable seed).
+
+**Law (vocabulary-independent — not product wordlists):**
+
+Cold open for a **new multi-step activity** where the user asks the system to **invent or
+sketch a first structure** for a **named domain** (little or no process body yet) must:
+
+1. Enter the **collaborative-authoring leaf** for that activity — not “finalize / structure
+ empty seed.”
+2. **Produce a first structured sketch** when the ask is system-suggest.
+3. On a **short re-ask** without restating the domain, **bind the prior open** (domain /
+ activity pin + authoring owner) — not front-door amnesia.
+4. **Packaging must not contradict the artifact** (no “stages missing” beside listed steps;
+ no “improve step X” when X is not on the sketch).
+
+Product verbs and host enums (`create workflow`, `draft_help`, `structure_now`, …) are
+**bindings**, not the law. Host example (Bot0): greenfield typo + starting-point open →
+`draft_help` + `draft_workflow`; short insist rebinds prior G1; card gaps/ideas grounded
+on draft steps. **Enforced (host):** `test_greenfield_system_suggest_leaf_matrix`. 
+**Portable seed:** Conjecture `patterns/cold_system_suggest_miss/`.
+
 #### Single-writer and no competing routers
 
 | Rule | Enforcement |
