@@ -168,7 +168,7 @@ Community adoption lives or dies on three questions. Here is the contract answer
 
 ### 1. Scale — concurrent chats without a global lock
 
-**Criticism:** “DB-authoritative = locking bottleneck at 10k users.”
+**Question:** does DB-authoritative control become a locking bottleneck at high concurrency?
 
 **Model (by design):** the isolation unit is **one conversation row**, not a global agent table.
 
@@ -224,9 +224,9 @@ We deliberately **do not** ship graph Studio inside the ledger package — pipe 
 
 ### 3. Streamlined integrations — wrap the agent, don't rewrite it
 
-**Criticism:** “Nobody wants to rewrite agents for a new SDK.”
+**Question:** do teams have to rewrite agents for a new package?
 
-Correct. **This SDK is not the agent.** It is a thin host loop around whatever you already run.
+No. **This is not the agent.** It is a thin host loop around whatever you already run.
 
 | Integration | Pattern | Example |
 |---|---|---|
