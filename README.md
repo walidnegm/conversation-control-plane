@@ -10,9 +10,11 @@ LangGraph, agent SDKs, and similar tools are built around a **single agent call 
 execution** — start work, finish work, done. Real products are a **long chat**: many messages
 over days, several half-finished tasks in one thread, people who leave mid-stream and come back.
 
-Example: someone starts building a workflow, pauses to ask a risk question, closes the laptop,
-and returns Thursday. The product still has to know what is open, what they interrupted, and
-how to continue — without re-deriving that from the full transcript every time.
+Think of a multi-agent product: custom onboarding with one specialist, research or setup with
+another, support or reporting with a third. Work is sometimes **ordered** (finish A before B)
+and sometimes **disordered** (detour, jump topics, leave half-done, come back later). The
+product still has to know what is open, what is foreground, and how to continue — without
+re-deriving that from the full transcript every time.
 
 Most frameworks fold that bookkeeping into graph state, handoffs, workflow signals, or session
 flags. It works for one specialist; it gets messy across specialists, restarts, and long threads.
