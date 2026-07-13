@@ -11,24 +11,22 @@ LangGraph supervisors and swarms, OpenAI Agents SDK handoffs, CrewAI crews, Rasa
 management, OpenAI ChatKit sessions, Temporal workflows: all can route, hand off, checkpoint,
 and keep a conversation going across multiple agents.
 
-What **some development teams** hit next depends on **size and complexity** — not every app, and
-not a claim we have surveyed the whole market. This package is aimed at a **subset**: multi-agent
-products where chat is long-lived and authority has to stay clear across specialists. Typical
-shape: several half-finished tasks in one thread, ordered steps *and* disordered detours, leave
-mid-stream and resume later — often across specialists that do not share one graph, one dialogue
-model, or one runtime. Smaller or single-runtime apps may never need a separate authority layer;
-orchestration tools alone are enough.
+This package targets multi-agent products where **chat is long-lived** and **authority must stay
+clear across specialists** — often as size and complexity grow. Typical shape: several
+half-finished tasks in one thread, ordered steps *and* disordered detours, leave mid-stream and
+resume later, sometimes across specialists that do not share one graph, dialogue model, or runtime.
+If a single runtime and short sessions are enough, orchestration tools alone may be the right stop.
 
-Think of that subset: custom onboarding with one specialist, research or setup with another,
-support or reporting with a third. Work is sometimes **ordered** (finish A before B) and sometimes
-**disordered** (detour, jump topics, leave half-done, come back later). Those products still need
-to know what is open, what is foreground, and how to continue — without re-deriving that from the
-full transcript every time.
+Example shape: onboarding with one specialist, research or setup with another, support or reporting
+with a third. Work is sometimes **ordered** (finish A before B) and sometimes **disordered**
+(detour, jump topics, leave half-done, come back later). The product still needs to know what is
+open, what is foreground, and how to continue — without re-deriving that from the full transcript
+every time.
 
 Those systems **do** track state — in-process, in a checkpointer, or in a store you plug in.
-**DB-backed is not the differentiator.** LangGraph checkpointers, Rasa trackers, Temporal
-workflow state, ChatKit sessions, and custom app tables all persist. Teams *can* put ownership
-outside a single agent. Many do.
+**DB-backed is not the differentiator.** LangGraph checkpointers, Rasa trackers, Temporal workflow
+state, ChatKit sessions, and custom app tables all persist; ownership can live outside a single
+agent.
 
 What usually stays **coupled to one orchestration model** is the *meaning* of that state:
 
@@ -41,9 +39,8 @@ What usually stays **coupled to one orchestration model** is the *meaning* of th
 | **Temporal** | Durable workflows, signals, retries | Workflow state for **that workflow type** |
 | **App code** | Product-specific glue | Ad hoc flags — flexible, easy to diverge per specialist |
 
-So for that niche the gap is not “frameworks cannot store state outside the agent.” They can.
-The gap is a **portable conversational-authority contract** — same semantics whether a turn is
-served by LangGraph, plain Python, Temporal, or a human — that answers product questions
+The value-add is a **portable conversational-authority contract** — same semantics whether a turn
+is served by LangGraph, plain Python, Temporal, or a human — aimed at product questions
 orchestration stores are not built to answer first:
 
 | Question | Typical orchestration / checkpointer answer | This ledger |
