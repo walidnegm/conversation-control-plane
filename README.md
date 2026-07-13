@@ -67,9 +67,10 @@ Everything else in the stack stays yours:
 - **Provable** — thin projection (L1) + event journal (L2). Query *why this turn routed here* in
   the SQL store you already run.
 
-**Not** an agent runtime · **not** a dialogue engine · **not** a prompt registry · **not** a tool/MCP
-host · **not** a memory store · **not** a LangGraph / Rasa / ChatKit / Temporal replacement.
-Those own their layer; this package owns **authority**.
+**Not** an all-encompassing agent framework — and **not** meant to absorb the rest of the ecosystem
+(orchestration, prompts, tools/MCP, memory, models). Those capabilities stay in their own layers;
+see the compose table above and the [stack map](#where-we-sit-in-the-stack) below. This package owns
+one slice: **conversational authority**.
 
 ### Where we sit in the stack
 
@@ -86,14 +87,14 @@ Those own their layer; this package owns **authority**.
               │  dispatches into
               ▼
   ┌─────────────────────────────────────────────┐
-  │  Orchestration / execution  (keep / mix)     │
-  │  LangGraph · OpenAI Agents · CrewAI · Rasa  │
+  │  Orchestration  (keep / mix)                 │
+  │  LangGraph · Agents SDK · CrewAI · Rasa     │
   │  ChatKit · plain Python · Temporal / jobs   │
   └─────────────────────────────────────────────┘
               │  uses
               ▼
   ┌─────────────────────────────────────────────┐
-  │  Models · tools / MCP · domain DBs          │
+  │  Prompts · tools / MCP · models · domain DB │
   │  Model memory: Letta / mem0 / Zep (theirs)  │
   └─────────────────────────────────────────────┘
 ```
