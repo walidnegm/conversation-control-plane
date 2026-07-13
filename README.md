@@ -41,8 +41,9 @@ What usually stays **coupled to one orchestration model** is the *meaning* of th
 
 ### Who owns the next turn? (granularity + dimensions)
 
-Something always answers “who’s next.” Differentiator is **which dimensions** that answer covers
-(not whether ownership exists at all):
+Something always answers “who’s next.” **Which tool and state shape fit depends on the objective** —
+progressing a graph run, running a durable job, holding a dialogue, or keeping multi-task authority
+in a long product chat. Dimensions below name those objectives; no single layer owns all of them.
 
 | Dimension | Meaning |
 |---|---|
