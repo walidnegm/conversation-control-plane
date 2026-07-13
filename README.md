@@ -75,16 +75,19 @@ compose table above · [stack map](#where-we-sit-in-the-stack) below. This packa
 ### Where we sit in the stack
 
 ```text
-  Your product chat (host loop)
-  claim → decide_turn → handle → apply → release
-              │
+  Your product chat / API / worker
+              │  implements the cycle below
               ▼
   ┌─────────────────────────────────────────────┐
-  │  Conversation Control Plane   ← this package │
-  │  ledger L1/L2 · gates · resume · audit      │
+  │  Host turn cycle          ← this package    │
+  │  claim → decide_turn → handle → apply → release │
+  │  (handle, single-writer, per conversation)  │
+  ├─────────────────────────────────────────────┤
+  │  Ledger + authority        ← this package    │
+  │  L1 projection · L2 journal · gates · resume│
   │  conversational authority (who is foreground)│
   └─────────────────────────────────────────────┘
-              │  dispatches into
+              │  handle dispatches into
               ▼
   ┌─────────────────────────────────────────────┐
   │  Orchestration  (keep / mix)                 │
@@ -101,16 +104,19 @@ compose table above · [stack map](#where-we-sit-in-the-stack) below. This packa
 
 ```mermaid
 flowchart TB
-  HOST["Your host loop<br/>claim · decide · apply · release"]
-  CCP["Conversation Control Plane<br/><b>this package</b><br/>ledger · gates · resume"]
-  HOST --> CCP
-  CCP --> LG["LangGraph<br/>supervisor / swarm"]
-  CCP --> OAI["OpenAI Agents SDK"]
-  CCP --> CREW["CrewAI / peers"]
-  CCP --> RASA["Rasa dialogue"]
-  CCP --> CK["OpenAI ChatKit"]
-  CCP --> PY["Plain Python"]
-  CCP --> TMP["Temporal / jobs"]
+  subgraph thisPkg["This package"]
+    CYCLE["Host turn cycle<br/>claim → decide_turn → handle → apply → release"]
+    LEDGER["Ledger + authority<br/>L1 · L2 · gates · resume"]
+    CYCLE --- LEDGER
+  end
+  PROD["Your product chat / API / worker"] --> CYCLE
+  CYCLE -->|"handle"| LG["LangGraph<br/>supervisor / swarm"]
+  CYCLE --> OAI["OpenAI Agents SDK"]
+  CYCLE --> CREW["CrewAI / peers"]
+  CYCLE --> RASA["Rasa dialogue"]
+  CYCLE --> CK["OpenAI ChatKit"]
+  CYCLE --> PY["Plain Python"]
+  CYCLE --> TMP["Temporal / jobs"]
   LG --> LLM["LLM APIs"]
   OAI --> LLM
   CREW --> LLM
@@ -123,9 +129,10 @@ flowchart TB
 
 | Layer | Examples | Owns |
 |---|---|---|
-| **Host** | Your API / worker | Claim, call `decide_turn`, apply transitions, release |
-| **Conversational authority** | **This package** | Foreground task, gates, phase, suspend/resume, journal |
-| **Orchestration / execution** | LangGraph, Agents SDK, CrewAI, Rasa, ChatKit, plain Python | Multi-agent routing *inside* a runtime; how a specialist acts |
+| **Product host** | Your API / worker | Wire transport; run the turn cycle |
+| **Host turn cycle** | **This package** | `claim → decide_turn → handle → apply → release` |
+| **Ledger + authority** | **This package** | Foreground task, gates, phase, suspend/resume, journal |
+| **Orchestration / execution** | LangGraph, Agents SDK, CrewAI, Rasa, ChatKit, plain Python | Multi-agent routing *inside* a runtime; specialist work |
 | **Durable work** | Temporal, your job queue | Retries, timers, long-running activities (optional) |
 | **Model memory** | Letta, mem0, Zep | What the *model* can recall — not system authority |
 | **Models & tools** | LLM providers, MCP, domain APIs | Tokens and side effects |
