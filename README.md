@@ -39,22 +39,33 @@ What usually stays **coupled to one orchestration model** is the *meaning* of th
 | **Temporal** | Durable workflows, signals, retries | Workflow state for **that workflow type** |
 | **App code** | Product-specific glue | Ad hoc flags — flexible, easy to diverge per specialist |
 
-### Who owns the next turn? (granularity)
+### Who owns the next turn? (granularity + dimensions)
 
-Something always answers “who’s next.” The **unit of ownership** differs:
+Something always answers “who’s next.” Differentiator is **which dimensions** that answer covers
+(not whether ownership exists at all):
 
-| Granularity | “Who owns…?” means | Typical home | Examples |
-|---|---|---|---|
-| **Step in a run** | Next node, tool call, or activity in *this* execution | Orchestration / workflow engine | LangGraph node, Temporal activity, crew task step |
-| **Role in a crew / graph** | Which agent role is delegated the work | Multi-agent runtime | CrewAI manager → worker, LangGraph supervisor → specialist node |
-| **Dialogue / bot session** | Which intent, story, or form slot path is active | Dialogue / chat platform | Rasa tracker, ChatKit session |
-| **Long workflow job** | Which durable workflow instance is live | Job / workflow platform | Temporal workflow id, queue worker claim |
-| **Foreground task in a shared human chat thread** | Which multi-turn product task is in front, what is suspended, complete vs abandon | **This package** | `active_task`, pins, phase, `decide_turn`, L1/L2 journal |
+| Dimension | Meaning |
+|---|---|
+| **Node / step** | Next node, tool call, or activity *inside one run* |
+| **Agent / role** | Which agent role is delegated *inside one runtime topology* |
+| **Chat thread** | Shared human conversation the user sees as one session |
+| **Multi-task** | Several half-finished product tasks; suspend / resume / foreground |
+| **Cross-runtime** | Same authority if `handle` is LangGraph today, Python or Temporal tomorrow |
+| **Durable job** | Infra-level workflow instance, retries, timers, worker claim |
 
-Orchestration engines **must** answer ownership at the **run / role / job** grain. That is real and necessary.
-This ledger is for the **chat-thread** grain: long-lived multi-specialist product chat where the user
-sees one conversation and several half-finished tasks — not a substitute for Temporal’s job ownership
-or LangGraph’s node ownership.
+| Grain | Description | Examples | Node/step | Agent/role | Chat thread | Multi-task | Cross-runtime | Durable job |
+|---|---|---|---|---|---|---|---|---|
+| **Run step** | Next hop in *this* execution | LangGraph node, Temporal activity, crew step | ✓ | — | — | — | — | sometimes |
+| **Runtime multi-agent** | Who is delegated in *this* graph/crew | LangGraph supervisor/swarm, CrewAI manager→worker | ✓ | ✓ | sometimes | DIY | — | sometimes |
+| **Dialogue / bot session** | Intent, story, or slot path for *this* bot | Rasa tracker, ChatKit session | — | sometimes | ✓ | limited | — | — |
+| **Long workflow job** | Which durable job instance is live | Temporal workflow id, queue worker claim | ✓ | — | — | — | — | ✓ |
+| **Chat-thread authority** | Foreground product task in a shared thread; complete ≠ abandon | **This package** (`active_task`, pins, phase, `decide_turn`) | — | via dispatch | ✓ | ✓ | ✓ | via host claim |
+
+✓ = first-class for that grain · — = not the primary model · *sometimes/DIY/limited* = possible but not the native contract.
+
+Orchestration engines **must** cover **node/step**, **agent/role**, and/or **durable job**. That is real
+and necessary. This ledger is for **chat thread + multi-task + cross-runtime** authority — not a
+substitute for Temporal’s job ownership or LangGraph’s node ownership.
 
 | Product question (chat grain) | Typical run-grain answer | This ledger |
 |---|---|---|
