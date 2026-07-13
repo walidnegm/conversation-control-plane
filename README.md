@@ -25,22 +25,38 @@ support or reporting with a third. Work is sometimes **ordered** (finish A befor
 to know what is open, what is foreground, and how to continue — without re-deriving that from the
 full transcript every time.
 
-Those systems **do** track conversational state — but usually **inside** their own orchestration
-model (not as a portable contract you can share across runtimes):
+Those systems **do** track state — in-process, in a checkpointer, or in a store you plug in.
+**DB-backed is not the differentiator.** LangGraph checkpointers, Rasa trackers, Temporal
+workflow state, ChatKit sessions, and custom app tables all persist. Teams *can* put ownership
+outside a single agent. Many do.
 
-| System class | Strong at | Where thread ownership usually lives |
+What usually stays **coupled to one orchestration model** is the *meaning* of that state:
+
+| System class | Strong at | Typical authority shape |
 |---|---|---|
-| **LangGraph** (incl. supervisor / swarm) | Multi-agent graphs, checkpoints, interrupts | Graph state / checkpointer for that topology |
-| **OpenAI Agents SDK · CrewAI · peers** | Handoffs, agent loops, tool routing | Handoff + session / crew context |
-| **Rasa** | Dialogue policies, stories, NLU → action | Tracker / dialogue state |
-| **OpenAI ChatKit** | Hosted chat UI + agent session wiring | Platform session / thread model |
-| **Temporal** | Durable workflows, signals, retries | Workflow state |
-| **App code** | Product-specific glue | Controllers, session flags, ad hoc stores |
+| **LangGraph** (incl. supervisor / swarm) | Multi-agent graphs, checkpoints, interrupts | Graph channels / checkpointer for **that topology** |
+| **OpenAI Agents SDK · CrewAI · peers** | Handoffs, agent loops, tool routing | Handoff + session / crew context for **that runtime** |
+| **Rasa** | Dialogue policies, stories, NLU → action | Tracker slots / dialogue state for **that bot** |
+| **OpenAI ChatKit** | Hosted chat UI + agent session wiring | Platform session for **that product surface** |
+| **Temporal** | Durable workflows, signals, retries | Workflow state for **that workflow type** |
+| **App code** | Product-specific glue | Ad hoc flags — flexible, easy to diverge per specialist |
 
-So for that niche the gap is not “nobody can orchestrate multi-agent chat.” It is **independent
-conversational authority** — foreground task, gates, suspend/resume, audit — that survives changing
-*how* a specialist runs (LangGraph today, plain Python or Temporal tomorrow) without rewriting
-lifecycle.
+So for that niche the gap is not “frameworks cannot store state outside the agent.” They can.
+The gap is a **portable conversational-authority contract** — same semantics whether a turn is
+served by LangGraph, plain Python, Temporal, or a human — that answers product questions
+orchestration stores are not built to answer first:
+
+| Question | Typical orchestration / checkpointer answer | This ledger |
+|---|---|---|
+| What is **foreground** in the shared chat thread? | Often implicit in graph/session topology | Explicit `active_task` + pins + phase |
+| **Who may write** ownership next? | Edges, handoff tools, manager prompts — flexible | **`decide_turn` single-writer**; specialists return transitions |
+| Why did this **turn** route to X? | Reconstruct from graph/run history | Queryable projection + event journal (L1/L2) |
+| Complete vs cancel? | Often one “clear” / end path | **`COMPLETE ≠ ABANDON`** as distinct contracts |
+| Swap the execution runtime? | Re-map that framework’s state shape | Authority row stays; only `handle` changes |
+
+**One-line USP:** orchestration tools answer *how a run or dialogue progressed*; this package answers
+*who owns the conversation, what task is foreground, and which handoff rules applied* — as typed
+fields your host, UI, and tests can obey without deserializing a whole graph.
 
 This package is that **ledger**: durable, single-writer, with an event journal. On the authority
 path, **code** decides what is foreground (`decide_turn`) — not a model guessing the next speaker.
