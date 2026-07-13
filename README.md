@@ -39,21 +39,34 @@ What usually stays **coupled to one orchestration model** is the *meaning* of th
 | **Temporal** | Durable workflows, signals, retries | Workflow state for **that workflow type** |
 | **App code** | Product-specific glue | Ad hoc flags — flexible, easy to diverge per specialist |
 
-The value-add is a **portable conversational-authority contract** — same semantics whether a turn
-is served by LangGraph, plain Python, Temporal, or a human — aimed at product questions
-orchestration stores are not built to answer first:
+### Who owns the next turn? (granularity)
 
-| Question | Typical orchestration / checkpointer answer | This ledger |
+Something always answers “who’s next.” The **unit of ownership** differs:
+
+| Granularity | “Who owns…?” means | Typical home | Examples |
+|---|---|---|---|
+| **Step in a run** | Next node, tool call, or activity in *this* execution | Orchestration / workflow engine | LangGraph node, Temporal activity, crew task step |
+| **Role in a crew / graph** | Which agent role is delegated the work | Multi-agent runtime | CrewAI manager → worker, LangGraph supervisor → specialist node |
+| **Dialogue / bot session** | Which intent, story, or form slot path is active | Dialogue / chat platform | Rasa tracker, ChatKit session |
+| **Long workflow job** | Which durable workflow instance is live | Job / workflow platform | Temporal workflow id, queue worker claim |
+| **Foreground task in a shared human chat thread** | Which multi-turn product task is in front, what is suspended, complete vs abandon | **This package** | `active_task`, pins, phase, `decide_turn`, L1/L2 journal |
+
+Orchestration engines **must** answer ownership at the **run / role / job** grain. That is real and necessary.
+This ledger is for the **chat-thread** grain: long-lived multi-specialist product chat where the user
+sees one conversation and several half-finished tasks — not a substitute for Temporal’s job ownership
+or LangGraph’s node ownership.
+
+| Product question (chat grain) | Typical run-grain answer | This ledger |
 |---|---|---|
-| What is **foreground** in the shared chat thread? | Often implicit in graph/session topology | Explicit `active_task` + pins + phase |
+| What is **foreground** in the shared thread? | Implicit in graph / session / workflow topology | Explicit `active_task` + pins + phase |
 | **Who may write** ownership next? | Edges, handoff tools, manager prompts — flexible | **`decide_turn` single-writer**; specialists return transitions |
-| Why did this **turn** route to X? | Reconstruct from graph/run history | Queryable projection + event journal (L1/L2) |
+| Why did this **chat turn** route to X? | Reconstruct from run / checkpoint / workflow history | Queryable projection + event journal (L1/L2) |
 | Complete vs cancel? | Often one “clear” / end path | **`COMPLETE ≠ ABANDON`** as distinct contracts |
-| Swap the execution runtime? | Re-map that framework’s state shape | Authority row stays; only `handle` changes |
+| Swap the execution runtime? | Re-map that engine’s state shape | Authority row stays; only `handle` changes |
 
-**One-line USP:** orchestration tools answer *how a run or dialogue progressed*; this package answers
-*who owns the conversation, what task is foreground, and which handoff rules applied* — as typed
-fields your host, UI, and tests can obey without deserializing a whole graph.
+**One-line USP:** run-grain tools answer *who owns the next step in a graph, crew, or workflow*; this
+package answers *who owns the foreground task in the shared chat thread* — as typed fields your host,
+UI, and tests can obey without deserializing a whole run.
 
 This package is that **ledger**: durable, single-writer, with an event journal. On the authority
 path, **code** decides what is foreground (`decide_turn`) — not a model guessing the next speaker.
