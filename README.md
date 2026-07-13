@@ -67,15 +67,17 @@ in a long product chat. Dimensions below name those objectives; no single layer 
 | **HITL** | Human as conversation counterpart and/or gated approver / operator leaf |
 | **Durable job** | Infra-level workflow instance, retries, timers, worker claim |
 
-| Grain | Description | Examples | Node/step | Agent/role | Chat | Multi-task | Cross-runtime | HITL | Durable job |
+| Grain | What “who’s next?” means here | Framework / product examples | Node/step | Agent/role | Chat | Multi-task | Cross-runtime | HITL | Durable job |
 |---|---|---|---|---|---|---|---|---|---|
-| **Run step** | Next hop in *this* execution | LangGraph node, Temporal activity, crew step | ✓ | — | — | — | — | optional | sometimes |
-| **Runtime multi-agent** | Who is delegated in *this* graph/crew | LangGraph supervisor/swarm, CrewAI manager→worker | ✓ | ✓ | sometimes | DIY | — | optional | sometimes |
-| **Hosted chat / dialogue session** | Platform or bot session for *this* surface | **ChatKit**, Rasa tracker, Assistants-style threads | — | sometimes | ✓ | limited | — | ✓ user | — |
-| **Long workflow job** | Which durable job instance is live | Temporal workflow id, queue worker claim | ✓ | — | — | — | — | optional | ✓ |
-| **Product chat-thread authority** | Foreground task law on a thread you own; complete ≠ abandon | **This package** | — | via dispatch | ✓ | ✓ | ✓ | ✓ | via host claim |
+| **Run step** | Next hop *inside one execution* (not which product task is open for the user) | **LangGraph:** next graph node · **Temporal:** next activity · **CrewAI:** next crew task step · plain tool-loop iteration | ✓ | — | — | — | — | optional | sometimes |
+| **Runtime multi-agent** | Which *agent role* is delegated *inside one graph/crew topology* | **LangGraph** supervisor → worker subgraph · **langgraph-swarm** handoff · **CrewAI** manager → specialist role · **OpenAI Agents SDK** agent-as-tool handoff | ✓ | ✓ | sometimes | DIY | — | optional | sometimes |
+| **Hosted chat / dialogue session** | Which *platform/bot session* this human is in (one surface, one vendor model) | **OpenAI ChatKit** thread · **Rasa** tracker / stories · Assistants-style conversation id · many helpdesk chat widgets | — | sometimes | ✓ | limited | — | ✓ user | — |
+| **Long workflow job** | Which *durable job instance* is live (retries, timers, workers) — not chat foreground law | **Temporal** workflow id · Celery/RQ job · queue worker claim on a background job | ✓ | — | — | — | — | optional | ✓ |
+| **Product chat-thread authority** | Which *product task* is foreground on a thread **you** own; suspend/resume; complete ≠ abandon; leaf can change | **This package** (`decide_turn`, `active_task`, pins, L1/L2) · host may still call LangGraph/ChatKit/Temporal *under* `handle` | — | via dispatch | ✓ | ✓ | ✓ | ✓ | via host claim |
 
-✓ = first-class · — = not primary · *limited/DIY/optional* = possible but not the native portable contract.
+✓ = first-class for that grain · — = not the primary model · *limited / DIY / optional / sometimes* = possible, not the native portable contract.
+
+**How to read Examples:** each cell names **tools people use for that grain** — not competitors to “delete.” A product can use Temporal (job grain) *and* LangGraph (run grain) *and* this ledger (chat-thread grain) together.
 
 #### Worth comparing (including ChatKit)
 
