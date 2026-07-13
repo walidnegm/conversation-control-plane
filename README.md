@@ -3,7 +3,7 @@
 *A durable, deterministic **turn-ownership ledger** for multi-agent chat — portable across how
 each turn is **run** (agent frameworks, plain code, durable workers, or a human).*
 
-**Elevator (replaces older “DB-authoritative SDK” blurbs):** Conversation Control Plane — product
+**Elevator (replaces older “DB-authoritative SDK” blurbs):** Conversation Control Plane — package for
 chat-thread **authority**: multi-task foreground law, deterministic handoffs and resume, HITL-ready,
 **portable across run leaves** (LangGraph · agent SDKs · Temporal · plain code · human operator).
 Single-writer `decide_turn` + thin projection + event journal in **your** SQL store. Persistence is
@@ -23,7 +23,7 @@ clear across specialists** — often as size and complexity grow. Typical shape:
 half-finished tasks in one thread, ordered steps *and* disordered detours, leave mid-stream and
 resume later, sometimes across specialists that do not share one graph, dialogue model, or runtime.
 
-**Product USP (control-authority dimensions we treat as first-class):**
+**Package focus (control-authority dimensions treated as first-class):**
 
 1. **Cross-runtime (how the turn is run)** — same thread authority if the specialist leaf is
    LangGraph, CrewAI, plain Python, a Temporal activity, ChatKit-backed agent, or a **human
