@@ -142,6 +142,7 @@ Community adoption lives or dies on three questions. Here is the contract answer
 | **Row locks** | `SELECT … FOR UPDATE` only on multi-key lifecycle writes — not for the duration of the LLM call |
 | **Orphan steal** | Claim TTL + heartbeat renew; crashed worker does not wedge the thread forever |
 | **Horizontal workers** | Many API workers; contention is **per conversation**, not cluster-wide |
+| **Host envelopes** | `turn_timeout` (inline wall-clock), `turn_session_discipline` (claim after session boundary), `session_staleness` (idle Resume / Start Fresh) — long-turn law; job poll UI stays host |
 
 **What “10k concurrent users” means here:** 10k *conversations* can progress in parallel. What you must *not* do is two writers racing the **same** conversation without a claim — that is a correctness bug, not a scale feature.
 
@@ -239,12 +240,20 @@ These held under production multi-agent chat. Build against them; do not invent 
 
 ### Writing a specialist (checklist)
 
+**You own the machine.** The ledger records ownership; it does not run your product
+phases. Each specialist must implement **its own** finite machinery — legal next
+step, honest CTAs, advance on confirm (not silent redisplay). If the surface
+advertises “continue to staffing” while the gate still requires “confirm fixes,”
+that is a **specialist bug**, not a ledger bug. Full note:
+[Host transition discipline §0](docs/host-transition-discipline.md#0-specialists-own-their-own-machinery).
+
 | Step | Shape |
 |---|---|
 | **Register a kind** | Closed enum + `KindSpec` phases — not free-text kinds from RAG |
 | **Start the stream** | `begin_task` — host assigns `task_id` (not “tool succeeded” as ownership) |
 | **Pin identity** | Typed ids on the thin payload |
 | **Phase owns dispatch** | Entity resolve only in open / pick phases — not re-resolve by name on every continue |
+| **Honest surface** | Primary CTA matches current phase — do not advertise the *next* step while this phase is still blocking |
 | **Handoffs** | Declare begin / continue / complete / abandon; agent never imports `ledger.py` |
 | **Thin projection** | Pins + phase + `pending_ref` only |
 
@@ -258,9 +267,10 @@ Optional shape reference: [examples/cyber_risk_assessment/](examples/cyber_risk_
 3. Host loop: `claim_turn` → router labels → `decide_turn` → `handle_turn` → `apply_transition` → `release_turn`.  
 4. Register each multi-turn **KindSpec**; first sticky turn **begin**; keep domain working state off-projection.  
 5. Pin five tests: continue resumes · complete clears · abandon ≠ complete · no auto-switch · **no re-resolve after pin**.  
-6. Run `python examples/e2e_host_loop.py` then optional cyber `host_sketch.py` for dialogue shape.
+6. Run `python examples/e2e_host_loop.py` then optional cyber `host_sketch.py` for dialogue shape.  
+7. Read **[Host transition discipline](docs/host-transition-discipline.md)** — every result names begin/continue/complete/abandon/none; **reorient ≠ COMPLETE**; how to seal a new kind (laws vs goldens).
 
-Lookup when stuck (not cover-to-cover): SDK **Getting started** · **§2.1** multi-turn · **§3.1** concurrency · **§5** invariants · **production-grade L2**.
+Lookup when stuck (not cover-to-cover): SDK **Getting started** · **§2.1** multi-turn · **[host transition discipline](docs/host-transition-discipline.md)** · **§3.1** concurrency · **§5** invariants · **production-grade L2**.
 
 ### Coding-agent kickoff (paste this)
 
@@ -300,8 +310,17 @@ DO NOT:
 - Ambient last_read_* as sole identity after pin
 - Full domain artifacts stuffed into control payload
 - Cancel implemented as complete
+- COMPLETE on idle reorient / Resume gate / status ask (those are continue or none)
+- Infer COMPLETE from missing agent_type or empty context_updates
 - Keyword routing as sole arbiter of user meaning
 - Re-resolve entity by name on every continue turn
+
+HOST TRANSITION DISCIPLINE (docs/host-transition-discipline.md):
+- Specialists own their own phase machine; ledger only records honest transitions
+- Surface must not lie about phase (no "next step" CTA while this phase still blocks)
+- Every ownership-affecting result names transition: begin|continue|complete|abandon|none
+- New multi-turn kind: KindSpec + pins + legal COMPLETE moments; 1–3 Conjecture scripts
+  for THAT kind (portable templates — not another product's goldens)
 
 DELIVER:
 1) Port ledger + decide_turn to our conversations store

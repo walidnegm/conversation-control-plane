@@ -28,6 +28,9 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "pending_workflow_pick",
     "pending_entity_pick",
     "inventory_dual_stream_clarify",
+    # Exact inventory name on armed lists — exclusive owner vs referential_list LLM
+    # (conv_9c5f24a6 Keynote / Eligibility Screening).
+    "inventory_name_resolve",
     "referential_list",
     "ordinal_read",
     "reset",

@@ -1001,7 +1001,7 @@ def begin_task(
             sanitize_control_payload,
         )
 
-        # B5: strip IR/draft/graph — pins only on the control projection.
+        # B5: strip IR/graph; kind=drafting may keep bounded draft.steps + seed.
         task["payload"] = sanitize_control_payload(
             payload, kind=effective_kind if isinstance(effective_kind, str) else None,
         )

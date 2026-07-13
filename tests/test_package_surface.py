@@ -13,6 +13,27 @@ class PackageImportTests(unittest.TestCase):
         self.assertTrue(hasattr(ccp, "TaskTransition"))
         self.assertTrue(hasattr(ccp, "strip_control_keys"))
         self.assertEqual(ccp.__version__, "0.1.0")
+        # Host envelopes (long-turn / reattach law) — portable slice.
+        self.assertTrue(hasattr(ccp, "claim_turn_for_conversation"))
+        self.assertTrue(hasattr(ccp, "prepare_session_for_second_connection"))
+        self.assertTrue(hasattr(ccp, "inline_chat_turn_timeout_seconds"))
+        self.assertTrue(hasattr(ccp, "build_session_staleness_reorientation"))
+        self.assertEqual(ccp.CHAT_TURN_TIMEOUT_ERROR_CODE, "chat_turn_timed_out")
+
+    def test_host_transition_discipline_doc_ships(self) -> None:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        doc = root / "docs" / "host-transition-discipline.md"
+        self.assertTrue(doc.is_file(), msg=str(doc))
+        text = doc.read_text(encoding="utf-8")
+        self.assertIn("reorient", text.lower())
+        self.assertIn("COMPLETE", text)
+        self.assertIn("Adding a new multi-turn", text)
+        self.assertIn("Laws vs goldens", text)
+        # Adopter doctrine: specialists own phase machine + honest surface
+        self.assertIn("Specialists own their own machinery", text)
+        self.assertIn("Surface must not lie about phase", text)
 
     def test_no_top_level_api_package_required(self) -> None:
         """Public package must not require or squat top-level ``api``."""

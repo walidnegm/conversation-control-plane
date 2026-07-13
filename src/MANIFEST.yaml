@@ -3,6 +3,8 @@
 #
 # Public package surface: src/conversation_control_plane/ (NOT top-level api/).
 # Sync rewrites monorepo api.services.conversation_control.* → conversation_control_plane.*
+# Keep the public surface intentionally small: authority path + host envelopes only
+# (no monorepo product lattice / LLM classifiers).
 
 sdk_version: "0.1.0"
 contract_doc: docs/epics/conversation-control-plane-sdk.md
@@ -30,6 +32,10 @@ modules:
   - api/services/conversation_control/multi_turn_stream_contract.py
   - api/services/conversation_control/reset_commands.py
   - api/services/conversation_control/failure_modes.py
+  # Host envelopes (long-turn / reattach law) — portable, transport-agnostic.
+  - api/services/conversation_control/turn_timeout.py
+  - api/services/conversation_control/turn_session_discipline.py
+  - api/services/conversation_control/session_staleness.py
 
 docs:
   - docs/epics/conversation-control-plane-sdk.md

@@ -530,7 +530,14 @@ def resolve_conversational_agent(agent_id: str, db: Any, tenant_id: str) -> Any:
                 # Domain-only: strip any control keys the builder result still
                 # carries so they cannot leak into the ledger (epic §9.2).
                 cu = strip_control_keys(res.get("context_updates"))
-                answer = {"answer": res.get("reply", ""), "sources": [], "blocks": []}
+                # Preserve content blocks (IR review, domain picker, ops KPI card,
+                # commit plan). Empty blocks=[] was dropping every authoring card
+                # on the control-plane adapter path (KPI markdown essay only).
+                answer = {
+                    "answer": res.get("reply", ""),
+                    "sources": [],
+                    "blocks": list(res.get("blocks") or []),
+                }
                 return AgentTurnResult(
                     answer=answer,
                     transition=transition,
@@ -631,7 +638,11 @@ def resolve_conversational_agent(agent_id: str, db: Any, tenant_id: str) -> Any:
                 if res.get("workflow_edited") or res.get("graph_changed"):
                     transition = TaskTransition.COMPLETE
                 cu = strip_control_keys(res.get("context_updates"))
-                answer = {"answer": res.get("reply", ""), "sources": [], "blocks": []}
+                answer = {
+                    "answer": res.get("reply", ""),
+                    "sources": [],
+                    "blocks": list(res.get("blocks") or []),
+                }
                 return AgentTurnResult(
                     answer=answer,
                     transition=transition,

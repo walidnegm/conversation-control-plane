@@ -838,7 +838,116 @@ def decide_turn(
                                 live_route_layer, "drafting handoff")
             return plan
 
-        if intent != "detour" and db is not None and tenant_id and (query or "").strip():
+        # Finite product actions on an open drafting task: interpret / save must
+        # NEVER become "drafting detour (retrieval_grounding)" (staging
+        # conv_dc75f5f4 / conv_119bdab7 — bare "Interpret" re-drafted forever).
+        _interpret_or_save = False
+        try:
+            from agent.workflow_builder.input_shape import (
+                looks_like_draft_finalize_command_request as _looks_finalize,
+                looks_like_interpret_command_request as _looks_interpret,
+            )
+
+            _q_gate = (query or "").strip()
+            _interpret_or_save = bool(
+                _looks_interpret(_q_gate) or _looks_finalize(_q_gate)
+            )
+        except Exception:  # noqa: BLE001
+            _interpret_or_save = False
+
+        if _interpret_or_save and intent != "handoff":
+            # Re-try handoff when steps exist; otherwise stay on drafting so
+            # bot0 early interpret can thin-refuse or hand off — not detour.
+            if isinstance(_carried_draft, dict) and _carried_draft.get("steps"):
+                intent = "handoff"
+                target = "workflow_builder"
+                confidence = max(float(confidence or 0.0), 0.9)
+                intent_source = "drafting_interpret_finite_grammar"
+            else:
+                plan = TurnPlan(
+                    agent="bot0",
+                    mode="drafting",
+                    task=active_task_obj,
+                    reason="drafting interpret/save gate (no detour; material check in bot0)",
+                )
+                _maybe_log_conflict(
+                    db, tenant_id, conversation_id, plan, live_route_intent,
+                    live_route_layer, "drafting interpret gate",
+                )
+                return plan
+
+        # Re-enter handoff after finite-grammar upgrade.
+        if intent == "handoff" and target == "workflow_builder" and confidence >= 0.5:
+            _handoff_payload2: dict[str, Any] = {}
+            if isinstance(_carried_draft, dict) and _carried_draft.get("steps"):
+                _handoff_payload2 = {
+                    "draft_handoff": _carried_draft,
+                    "domain": _draft_payload.get("domain"),
+                }
+            if _handoff_payload2:
+                complete_task(
+                    db, tenant_id, conversation_id, agent="bot0",
+                    reason="superseded",
+                    task_id=(
+                        current_active.get("task_id")
+                        if isinstance(current_active.get("task_id"), str)
+                        else None
+                    ),
+                )
+                from conversation_control_plane.ledger import (
+                    handoff as _unified_handoff2,
+                )
+
+                _unified_handoff2(
+                    db, tenant_id, conversation_id,
+                    target_agent="workflow_builder",
+                    task_text="in_progress",
+                    reason="drafting handoff",
+                )
+                plan = TurnPlan(
+                    agent="workflow_builder", mode="active_task",
+                    task=ActiveTask(
+                        agent="workflow_builder", phase="active",
+                        awaiting="in_progress",
+                        kind=WORKFLOW_BUILD_KIND,
+                        payload=_handoff_payload2 or None,
+                    ),
+                    reason="drafting task handed off to workflow_builder",
+                )
+                _maybe_log_conflict(
+                    db, tenant_id, conversation_id, plan, live_route_intent,
+                    live_route_layer, "drafting handoff",
+                )
+                return plan
+
+        # Risk catalog browse mid-drafting — yield exclusive draft owner (detour).
+        try:
+            from conversation_control_plane.risk_catalog_turn import (
+                looks_like_risk_catalog_open_request as _risk_open,
+            )
+
+            if _risk_open(query):
+                plan = TurnPlan(
+                    agent="bot0",
+                    mode="detour",
+                    task=active_task_obj,
+                    reason="drafting detour (risk_catalog_open)",
+                )
+                _maybe_log_conflict(
+                    db, tenant_id, conversation_id, plan, live_route_intent,
+                    live_route_layer, "drafting risk catalog detour",
+                )
+                return plan
+        except Exception:  # noqa: BLE001
+            logger.debug("drafting risk-open detour skipped", exc_info=True)
+
+        if (
+            intent != "detour"
+            and not _interpret_or_save
+            and db is not None
+            and tenant_id
+            and (query or "").strip()
+        ):
             try:
                 from api.services.bot0_product_knowledge import (
                     retrieval_grounds_concept_query,

@@ -44,8 +44,26 @@ from conversation_control_plane.sdk_identity import (
 # host modules at runtime; import of the function itself must succeed.
 from conversation_control_plane.decide import decide_turn  # noqa: E402
 
+# Host envelopes (long-turn / reattach law) — portable, transport-agnostic.
+from conversation_control_plane.turn_timeout import (  # noqa: E402
+    CHAT_TURN_TIMEOUT_ERROR_CODE,
+    chat_turn_timeout_user_message,
+    inline_chat_turn_timeout_client_wait_ms,
+    inline_chat_turn_timeout_seconds,
+)
+from conversation_control_plane.turn_session_discipline import (  # noqa: E402
+    claim_turn_for_conversation,
+    prepare_session_for_second_connection,
+    release_turn_for_conversation,
+    renew_turn_claim_for_conversation,
+)
+from conversation_control_plane.session_staleness import (  # noqa: E402
+    build_session_staleness_reorientation,
+)
+
 __all__ = [
     "AGENT_REGISTRY",
+    "CHAT_TURN_TIMEOUT_ERROR_CODE",
     "CONTROL_KEYS",
     "ChatDispatchContractError",
     "KindSpec",
@@ -61,12 +79,20 @@ __all__ = [
     "TaskTransition",
     "TurnPlan",
     "WORKFLOW_BUILD_KIND",
+    "build_session_staleness_reorientation",
+    "chat_turn_timeout_user_message",
+    "claim_turn_for_conversation",
     "decide_turn",
     "delegatable_agent_ids",
     "get_kind_spec",
+    "inline_chat_turn_timeout_client_wait_ms",
+    "inline_chat_turn_timeout_seconds",
     "ledger_kind_for_agent",
     "plan_summary_for_dispatch",
+    "prepare_session_for_second_connection",
     "registry_route_intent_labels",
+    "release_turn_for_conversation",
+    "renew_turn_claim_for_conversation",
     "require_kind_spec",
     "resolve_conversational_agent",
     "strip_control_keys",

@@ -333,6 +333,21 @@ def select_exclusive_turn_owner(
         if active_task is not None and isinstance(active_task, dict):
             ctx = {**ctx, "active_task": active_task}
         sole_owner = exclusive_owner_for_active_kind(ctx, task_intent=task_intent)
+        # FE risk-catalog open chips mid drafting must yield exclusive draft
+        # owner (staging conv_119bdab7 — refine stole "risks for agents").
+        if sole_owner == "draft" and (query or "").strip():
+            try:
+                from conversation_control_plane.risk_catalog_turn import (
+                    looks_like_risk_catalog_open_request as _risk_open_q,
+                )
+
+                if _risk_open_q(query):
+                    return ExclusiveTurnOwner(
+                        "default",
+                        "risk_catalog_open yields drafting sole-continue",
+                    )
+            except Exception:  # noqa: BLE001
+                pass
         # New strong action labels may supersede sole-continue (user switched goal).
         strong_new = False
         if signal is not None:
