@@ -19,15 +19,19 @@ resume later, sometimes across specialists that do not share one graph, dialogue
 
 **Product USP (control-authority dimensions we treat as first-class):**
 
-1. **Cross-runtime** — same thread authority if `handle` is LangGraph, plain Python, Temporal, or a
-   **human operator** tomorrow; only the execution leaf changes  
+1. **Cross-runtime (how the turn is run)** — same thread authority if the specialist leaf is
+   LangGraph, CrewAI, plain Python, a Temporal activity, ChatKit-backed agent, or a **human
+   operator** tomorrow. **Not** “which LLM vendor” (OpenAI vs Anthropic) — that is model substrate.
+   Only the **agent/orchestration leaf** under `handle` changes.  
 2. **Human in the loop** — human is the usual *conversation counterpart*; HITL gates and human
    dispatch are first-class control options, not afterthoughts  
 3. **Multi-task chat thread** — foreground / suspended / complete ≠ abandon on one shared thread  
 
-Hosted chat (e.g. ChatKit) and dialogue engines (e.g. Rasa) already own a **session**; orchestration
-engines own **runs and jobs**. If one platform session and one runtime are enough, stay there. This
-ledger is for product-owned authority that must **compose across** those layers.
+**“Runtime” here** = *how a dispatched turn executes* (graph engine, agent SDK, job worker, human),
+not the chat session store and not the LLM API. Hosted chat (e.g. ChatKit) and dialogue engines
+(e.g. Rasa) already own a **session**; orchestration engines own **runs and jobs**. If one platform
+session and one leaf are enough, stay there. This ledger is for product-owned authority that must
+**compose across** those layers.
 
 Example shape: onboarding with one specialist, research or setup with another, support or reporting
 with a third. Work is sometimes **ordered** (finish A before B) and sometimes **disordered**
@@ -63,7 +67,7 @@ in a long product chat. Dimensions below name those objectives; no single layer 
 | **Agent / role** | Which agent role is delegated *inside one runtime topology* |
 | **Chat thread** | Shared conversation the user sees as one session (usually human-facing) |
 | **Multi-task** | Several half-finished product tasks; suspend / resume / foreground |
-| **Cross-runtime** | Same authority if `handle` is LangGraph, Python, Temporal, **or human** tomorrow |
+| **Cross-runtime** | Same authority if the turn’s **run leaf** changes (LangGraph / agent SDK / Temporal / human) — not which LLM |
 | **HITL** | Human as conversation counterpart and/or gated approver / operator leaf |
 | **Durable job** | Infra-level workflow instance, retries, timers, worker claim |
 
