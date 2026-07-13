@@ -6,31 +6,30 @@ Package: `conversation-control-plane` · MIT · reference implementation by [Bot
 
 ---
 
-Every agent framework models a **run**. Your users are having a **conversation** — one that
-outlives many runs, holds more than one half-finished task, and gets interrupted.
+LangGraph, agent SDKs, and similar tools are built around a **single agent call or graph
+execution** — start work, finish work, done. Real products are a **long chat**: many messages
+over days, several half-finished tasks in one thread, people who leave mid-stream and come back.
 
-A user starts a workflow build, detours to ask a risk question, closes the laptop, and comes back
-Thursday. What is still open? What did they leave mid-stream? How does the product resume without
-re-deriving control from the transcript?
+Example: someone starts building a workflow, pauses to ask a risk question, closes the laptop,
+and returns Thursday. The product still has to know what is open, what they interrupted, and
+how to continue — without re-deriving that from the full transcript every time.
 
-Most frameworks answer that **inside** their primary abstraction — graph state and checkpoints
-(LangGraph), handoffs and routers (agent SDKs), workflow signals (Temporal), or ad hoc session
-flags in app code. Conversational **authority** (foreground task, gates, suspend/resume) is
-buried as an implementation detail of how a specialist runs.
+Most frameworks fold that bookkeeping into graph state, handoffs, workflow signals, or session
+flags. It works for one specialist; it gets messy across specialists, restarts, and long threads.
 
-This package **splices that responsibility out** into an independent ledger: durable,
-single-writer, with an event journal — and **deterministic on the authority path** (`decide_turn`
-is code over the ledger, not a model picking the next speaker). You keep LangGraph, CrewAI,
-Temporal, the OpenAI Agents SDK, or plain Python for **execution**. The ledger only records
-**which conversational task is foreground** across turns and specialists.
+This package pulls that bookkeeping into an independent **ledger**: durable, single-writer, with
+an event journal. On the authority path, **code** decides what is foreground (`decide_turn`) —
+not a model guessing the next speaker. You keep LangGraph, CrewAI, Temporal, the OpenAI Agents
+SDK, or plain Python for **how agents do the work**. The ledger only tracks **which
+conversational task is in front** across turns and specialists.
 
 > **Compose, don't rip-and-replace.** Frameworks run agents and graphs. This plane owns
-> cross-turn authority so that choice of runtime can change without rewriting thread lifecycle.
+> cross-turn authority so you can change the runtime without rewriting thread lifecycle.
 
 **What the ledger holds that frameworks usually bury:**
 
 - **Durable across sessions** — control state survives the HTTP request, the worker restart, and
-  the week — not just the run.
+  the week — not just one agent call.
 - **Interruptible** — detour, suspend, resume. Complete and abandon are different contracts
   (`COMPLETE ≠ ABANDON`).
 - **Deterministic authority** — models interpret meaning; code owns transitions and gates.
