@@ -1,9 +1,46 @@
-# Conversation Control Plane SDK
+# Conversation Control Plane
 
-*Conversation turn-ownership ledger* (package: `conversation-control-plane`) — reference implementation by [Bot0.ai](https://bot0.ai)
+*A durable, deterministic **turn-ownership ledger** for multi-agent chat.*
 
-> **Who owns the chat thread** — resume, handoff, gates, multi-worker safety — in the SQL store you already run.  
-> Not a LangGraph/Temporal replacement. Keep those for **how** agents think.
+Package: `conversation-control-plane` · MIT · reference implementation by [Bot0.ai](https://bot0.ai)
+
+---
+
+Every agent framework models a **run**. Your users are having a **conversation** — one that
+outlives many runs, holds more than one half-finished task, and gets interrupted.
+
+A user starts a workflow build, detours to ask a risk question, closes the laptop, and comes back
+Thursday. What is still open? What did they leave mid-stream? How does the product resume without
+re-deriving control from the transcript?
+
+Most frameworks answer that **inside** their primary abstraction — graph state and checkpoints
+(LangGraph), handoffs and routers (agent SDKs), workflow signals (Temporal), or ad hoc session
+flags in app code. Conversational **authority** (foreground task, gates, suspend/resume) is
+buried as an implementation detail of how a specialist runs.
+
+This package **splices that responsibility out** into an independent ledger: durable,
+single-writer, with an event journal — and **deterministic on the authority path** (`decide_turn`
+is code over the ledger, not a model picking the next speaker). You keep LangGraph, CrewAI,
+Temporal, the OpenAI Agents SDK, or plain Python for **execution**. The ledger only records
+**which conversational task is foreground** across turns and specialists.
+
+> **Compose, don't rip-and-replace.** Frameworks run agents and graphs. This plane owns
+> cross-turn authority so that choice of runtime can change without rewriting thread lifecycle.
+
+**What the ledger holds that frameworks usually bury:**
+
+- **Durable across sessions** — control state survives the HTTP request, the worker restart, and
+  the week — not just the run.
+- **Interruptible** — detour, suspend, resume. Complete and abandon are different contracts
+  (`COMPLETE ≠ ABANDON`).
+- **Deterministic authority** — models interpret meaning; code owns transitions and gates.
+- **Provable** — thin projection (L1) + event journal (L2). Query *why this turn routed here* in
+  the SQL store you already run.
+
+**Not** an agent framework · **not** a memory store (Letta / mem0 / Zep — the ledger is what the
+*system obeys*, not what the *model reads*) · **not** a LangGraph or Temporal replacement.
+Keep those for **how** specialists think and **how** long work survives a crash. Details:
+[Why this exists](#why-this-exists) · [§14 ecosystem layering](docs/conversation-control-plane-sdk.md#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane).
 
 ### Quickstart (5 minutes)
 
@@ -26,9 +63,10 @@ from conversation_control_plane import (
 
 Lookup: [design principles](#on-ramp--how-to-think-about-this-sdk) · [SDK contract](docs/conversation-control-plane-sdk.md) · [lifecycle diagram](docs/conversation-turn-lifecycle-diagram.md)
 
-**Naming:** we call this a *conversation control plane* for short. In plain terms it is a
-**conversation turn-ownership ledger** (who owns the thread, gates, resume) — not an IAM/governance
-“control plane,” and not an agent runtime. No product-wide rename planned; this note is the framing.
+**Naming:** *conversation control plane* is the short brand; plain terms: **turn-ownership ledger**
+(who owns the thread, gates, resume). It sits **above** agent runtimes — compose with LangGraph /
+CrewAI / Temporal / plain Python, don’t replace them. See [Why this exists](#why-this-exists) and
+[SDK §14 ecosystem layering](docs/conversation-control-plane-sdk.md#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane).
 
 ---
 
@@ -48,8 +86,8 @@ We **splice that responsibility out** into an independent control plane.
 
 **Not the claim:** “Other systems cannot manage conversational state.”  
 **The claim:** Other systems usually treat conversational **ownership and lifecycle** as implementation
-details of an agent, graph, or workflow. This SDK makes them an **independent, authoritative, portable
-system contract** — so authority survives changes in the execution layer.
+details of an agent, graph, or workflow. This package makes them an **independent, authoritative,
+portable system contract** — so authority survives changes in the execution layer.
 
 ```text
               Conversation Control Plane
@@ -70,7 +108,7 @@ control plane changing **who owns** the task merely because the **execution mech
 | Concern | Owner in this design |
 |---|---|
 | **Semantic interpretation** — what does the user mean? | LLM / agent |
-| **Conversational authority** — which task, gate, phase, specialist owns the turn? | **This SDK** |
+| **Conversational authority** — which task, gate, phase is foreground for the turn? | **This package** |
 | **Execution orchestration** — which nodes, tools, activities run? | LangGraph / agent runtime / your code |
 | **Durable execution** — retries, timers, worker recovery | Temporal / infra (optional) |
 
@@ -95,7 +133,7 @@ flowchart TB
 
 | Layer | What | This repo |
 |---|---|---|
-| **Conversational authority** | Who owns the thread, gates, phase, resume | **This SDK** — `decide_turn` + ledger |
+| **Conversational authority** | Foreground task, gates, phase, resume | **This package** — `decide_turn` + ledger |
 | **Execution** | How a specialist runs tools/graph/workflow | LangGraph / Crew / OpenAI / Temporal / plain Python |
 | **Memory / domain** | RAG, artifacts, specialist stores | Yours — **ledger owns control keys only** |
 

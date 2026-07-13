@@ -204,10 +204,11 @@ code**, and **where the contract lives**. This project follows that split:
 | **Short informal label** | "the OTel SDK", "LangGraph" | **Control Plane SDK** — fine in internal docs; prefer the full name in papers, READMEs, and package metadata |
 | **Future package install** | `pip install temporalio`, `@vercel/ai` | Reserved slugs (not on PyPI/npm yet): `conversation-control-plane` / `@bot0/conversation-control-plane` |
 
-**Plain-language framing (no product-wide rename):** we call this a *conversation control plane* for short.
-In plain terms it is a **conversation turn-ownership ledger** — who owns the thread, gates, and resume —
-not an IAM/governance “control plane,” and not an agent runtime. Keep the brand name; use the
-turn-ownership phrase when explaining value to newcomers.
+**Plain-language framing:** *conversation control plane* is the short brand; plain terms:
+**turn-ownership ledger** — who owns the thread, gates, and resume. Not an agent runtime: keep
+LangGraph / CrewAI / Temporal (or plain Python) for execution and compose this layer above them.
+See [§0](#0-value-proposition--conversational-control-in-a-layered-stack) and
+[§14 ecosystem layering](#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane).
 
 **Recommended README line (public repo + monorepo mirror):**
 
@@ -533,8 +534,9 @@ Bot0 epic + pilot:
  `concept_packaging_query_eligible` false (optional pin/DB resolve) — finite-grammar id shape, not
  phrase laundry lists. Reg: `test_risk_catalog_learning_multiturn.py`.
 
-**Naming:** "AI control plane" in industry often means *governance* (identity, policy). This SDK's
-**conversation control plane** means *chat session ownership + ledger*. Do not conflate with IAM.
+**Naming:** **conversation control plane** here means *chat session ownership + ledger* — not an
+agent graph runtime. Overlap with LangGraph / CrewAI / Temporal is intentional **compose**, not
+rip-and-replace: [§14](#14-ecosystem-layering--langgraph-crewai-temporal-and-the-control-plane).
 
 [turn lifecycle](conversation-turn-lifecycle-diagram.md).
 
