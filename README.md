@@ -11,16 +11,19 @@ LangGraph supervisors and swarms, OpenAI Agents SDK handoffs, CrewAI crews, Rasa
 management, OpenAI ChatKit sessions, Temporal workflows: all can route, hand off, checkpoint,
 and keep a conversation going across multiple agents.
 
-What products still struggle with is a **shared, queryable authority layer** when chat is long-lived:
-several half-finished tasks in one thread, ordered steps *and* disordered detours, leave mid-stream
-and resume later — across specialists that may not share one graph, one dialogue model, or one
-runtime.
+What **some development teams** hit next depends on **size and complexity** — not every app, and
+not a claim we have surveyed the whole market. This package is aimed at a **subset**: multi-agent
+products where chat is long-lived and authority has to stay clear across specialists. Typical
+shape: several half-finished tasks in one thread, ordered steps *and* disordered detours, leave
+mid-stream and resume later — often across specialists that do not share one graph, one dialogue
+model, or one runtime. Smaller or single-runtime apps may never need a separate authority layer;
+orchestration tools alone are enough.
 
-Think of a multi-agent product: custom onboarding with one specialist, research or setup with
-another, support or reporting with a third. Work is sometimes **ordered** (finish A before B)
-and sometimes **disordered** (detour, jump topics, leave half-done, come back later). The
-product still has to know what is open, what is foreground, and how to continue — without
-re-deriving that from the full transcript every time.
+Think of that subset: custom onboarding with one specialist, research or setup with another,
+support or reporting with a third. Work is sometimes **ordered** (finish A before B) and sometimes
+**disordered** (detour, jump topics, leave half-done, come back later). Those products still need
+to know what is open, what is foreground, and how to continue — without re-deriving that from the
+full transcript every time.
 
 Those systems **do** track conversational state — but usually **inside** their own orchestration
 model (not as a portable contract you can share across runtimes):
