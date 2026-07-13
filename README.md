@@ -3,6 +3,12 @@
 *A durable, deterministic **turn-ownership ledger** for multi-agent chat — portable across how
 each turn is **run** (agent frameworks, plain code, durable workers, or a human).*
 
+**Elevator (replaces older “DB-authoritative SDK” blurbs):** Conversation Control Plane — product
+chat-thread **authority**: multi-task foreground law, deterministic handoffs and resume, HITL-ready,
+**portable across run leaves** (LangGraph · agent SDKs · Temporal · plain code · human operator).
+Single-writer `decide_turn` + thin projection + event journal in **your** SQL store. Persistence is
+assumed; **DB-backed is not the USP** — portable authority semantics are.
+
 Package: `conversation-control-plane` · MIT · reference implementation by [Bot0.ai](https://bot0.ai)
 
 ---
@@ -458,9 +464,11 @@ Lookup when stuck (not cover-to-cover): SDK **Getting started** · **§2.1** mul
 ### Coding-agent kickoff (paste this)
 
 ```text
-You are integrating the Conversation Control Plane SDK — the production state layer
-for multi-agent chat. It is NOT a LangGraph/CrewAI/Temporal replacement. You keep
-our existing agent runtimes; you add DB-authoritative turn ownership.
+You are integrating the Conversation Control Plane — a turn-ownership ledger for
+multi-agent product chat (multi-task foreground, handoffs, resume, HITL). It is NOT
+a LangGraph/CrewAI/Temporal/ChatKit replacement. Keep existing run leaves; add portable
+chat-thread authority (single-writer decide_turn + projection + journal). DB is the store,
+not the differentiator.
 
 SOURCE OF TRUTH (clone / read this repo first):
 - GitHub: https://github.com/walidnegm/conversation-control-plane
