@@ -6,9 +6,15 @@ Package: `conversation-control-plane` · MIT · reference implementation by [Bot
 
 ---
 
-LangGraph, agent SDKs, and similar tools are built around a **single agent call or graph
-execution** — start work, finish work, done. Real products are a **long chat**: many messages
-over days, several half-finished tasks in one thread, people who leave mid-stream and come back.
+Multi-agent **orchestration is real** in the tools people already use — and we do not pretend
+otherwise. LangGraph supervisors and swarms, OpenAI Agents SDK handoffs, CrewAI crews, Rasa
+dialogue management, OpenAI ChatKit sessions, Temporal workflows: all can route, hand off,
+checkpoint, and keep a conversation going across multiple agents.
+
+What products still struggle with is a **shared, queryable authority layer** when chat is long-lived:
+several half-finished tasks in one thread, ordered steps *and* disordered detours, leave mid-stream
+and resume later — across specialists that may not share one graph, one dialogue model, or one
+runtime.
 
 Think of a multi-agent product: custom onboarding with one specialist, research or setup with
 another, support or reporting with a third. Work is sometimes **ordered** (finish A before B)
@@ -16,39 +22,46 @@ and sometimes **disordered** (detour, jump topics, leave half-done, come back la
 product still has to know what is open, what is foreground, and how to continue — without
 re-deriving that from the full transcript every time.
 
-Today that bookkeeping usually lives **inside** whatever runs the agent:
+Those systems **do** track conversational state — but usually **inside** their own orchestration
+model (not as a portable contract you can share across runtimes):
 
-| Where teams put it | Typical home |
-|---|---|
-| **LangGraph** | Graph state, nodes, checkpoints |
-| **OpenAI Agents SDK / CrewAI / peers** | Handoffs, routers, conversation context |
-| **Temporal** | Workflow state and signals |
-| **App code** | Session objects, ad hoc flags |
+| System class | Strong at | Where thread ownership usually lives |
+|---|---|---|
+| **LangGraph** (incl. supervisor / swarm) | Multi-agent graphs, checkpoints, interrupts | Graph state / checkpointer for that topology |
+| **OpenAI Agents SDK · CrewAI · peers** | Handoffs, agent loops, tool routing | Handoff + session / crew context |
+| **Rasa** | Dialogue policies, stories, NLU → action | Tracker / dialogue state |
+| **OpenAI ChatKit** | Hosted chat UI + agent session wiring | Platform session / thread model |
+| **Temporal** | Durable workflows, signals, retries | Workflow state |
+| **App code** | Product-specific glue | Controllers, session flags, ad hoc stores |
 
-That works for one specialist. It gets messy across specialists, restarts, and long threads.
+So the gap is not “nobody can orchestrate multi-agent chat.” The gap is **independent conversational
+authority** — foreground task, gates, suspend/resume, audit — that survives changing *how* a
+specialist runs (LangGraph today, plain Python or Temporal tomorrow) without rewriting lifecycle.
 
-This package pulls that bookkeeping into an independent **ledger**: durable, single-writer, with
-an event journal. On the authority path, **code** decides what is foreground (`decide_turn`) —
-not a model guessing the next speaker. You keep LangGraph, CrewAI, Temporal, the OpenAI Agents
-SDK, or plain Python for **how agents do the work**. The ledger only tracks **which
-conversational task is in front** across turns and specialists.
+This package is that **ledger**: durable, single-writer, with an event journal. On the authority
+path, **code** decides what is foreground (`decide_turn`) — not a model guessing the next speaker.
+You keep LangGraph, CrewAI, Rasa, ChatKit, Temporal, the OpenAI Agents SDK, or plain Python for
+**orchestration and execution**. The ledger only tracks **which conversational task is in front**
+across turns and specialists.
 
-> **Compose, don't rip-and-replace.** Those tools still run agents and graphs. This plane owns
-> cross-turn authority so you can change the runtime without rewriting thread lifecycle.
+> **Compose, don't rip-and-replace.** Those tools still own multi-agent orchestration and agent
+> runs. This plane owns **cross-turn authority** so lifecycle is not locked to one runtime’s state
+> shape.
 
-**What the ledger holds that those tools usually bury:**
+**What the ledger makes first-class (often embedded elsewhere):**
 
 - **Durable across sessions** — control state survives the HTTP request, the worker restart, and
-  the week — not just one agent call.
+  the week — not only one graph or dialogue run.
 - **Interruptible** — detour, suspend, resume. Complete and abandon are different contracts
   (`COMPLETE ≠ ABANDON`).
 - **Deterministic authority** — models interpret meaning; code owns transitions and gates.
 - **Provable** — thin projection (L1) + event journal (L2). Query *why this turn routed here* in
   the SQL store you already run.
 
-**Not** an agent framework · **not** a memory store (Letta / mem0 / Zep — the ledger is what the
-*system obeys*, not what the *model reads*) · **not** a LangGraph or Temporal replacement.
-Keep those for **how** specialists think and **how** long work survives a crash.
+**Not** an agent framework · **not** a dialogue engine · **not** a memory store (Letta / mem0 / Zep —
+the ledger is what the *system obeys*, not what the *model reads*) · **not** a LangGraph, Rasa,
+ChatKit, or Temporal replacement. Keep those for **how** multi-agent work is orchestrated and
+executed.
 
 ### Where we sit in the stack
 
@@ -65,9 +78,9 @@ Keep those for **how** specialists think and **how** long work survives a crash.
               │  dispatches into
               ▼
   ┌─────────────────────────────────────────────┐
-  │  Execution runtimes  (keep / mix these)      │
-  │  LangGraph · OpenAI Agents SDK · CrewAI     │
-  │  plain Python · Temporal / job workers      │
+  │  Orchestration / execution  (keep / mix)     │
+  │  LangGraph · OpenAI Agents · CrewAI · Rasa  │
+  │  ChatKit · plain Python · Temporal / jobs   │
   └─────────────────────────────────────────────┘
               │  uses
               ▼
@@ -82,14 +95,17 @@ flowchart TB
   HOST["Your host loop<br/>claim · decide · apply · release"]
   CCP["Conversation Control Plane<br/><b>this package</b><br/>ledger · gates · resume"]
   HOST --> CCP
-  CCP --> LG["LangGraph"]
+  CCP --> LG["LangGraph<br/>supervisor / swarm"]
   CCP --> OAI["OpenAI Agents SDK"]
   CCP --> CREW["CrewAI / peers"]
+  CCP --> RASA["Rasa dialogue"]
+  CCP --> CK["OpenAI ChatKit"]
   CCP --> PY["Plain Python"]
   CCP --> TMP["Temporal / jobs"]
   LG --> LLM["LLM APIs"]
   OAI --> LLM
   CREW --> LLM
+  RASA --> LLM
   PY --> LLM
   LLM --> TOOL["Tools · MCP · APIs"]
   LG -.-> MEM["Model memory<br/>Letta · mem0 · Zep"]
@@ -100,7 +116,7 @@ flowchart TB
 |---|---|---|
 | **Host** | Your API / worker | Claim, call `decide_turn`, apply transitions, release |
 | **Conversational authority** | **This package** | Foreground task, gates, phase, suspend/resume, journal |
-| **Execution** | LangGraph, OpenAI Agents SDK, CrewAI, plain Python | How a specialist *thinks and acts* this turn |
+| **Orchestration / execution** | LangGraph, Agents SDK, CrewAI, Rasa, ChatKit, plain Python | Multi-agent routing *inside* a runtime; how a specialist acts |
 | **Durable work** | Temporal, your job queue | Retries, timers, long-running activities (optional) |
 | **Model memory** | Letta, mem0, Zep | What the *model* can recall — not system authority |
 | **Models & tools** | LLM providers, MCP, domain APIs | Tokens and side effects |
