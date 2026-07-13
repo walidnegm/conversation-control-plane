@@ -64,9 +64,9 @@ in a long product chat. Dimensions below name those objectives; no single layer 
 
 ✓ = first-class for that grain · — = not the primary model · *sometimes/DIY/limited* = possible but not the native contract.
 
-Orchestration engines **must** cover **node/step**, **agent/role**, and/or **durable job**. That is real
-and necessary. This ledger is for **chat thread + multi-task + cross-runtime** authority — not a
-substitute for Temporal’s job ownership or LangGraph’s node ownership.
+When the objective is **run, role, or durable job** ownership, orchestration and workflow engines are
+the natural focus. When the objective is **chat-thread multi-task authority** that can outlive a
+single runtime, this ledger is the natural focus — compose with the engines above; do not replace them.
 
 | Product question (chat grain) | Typical run-grain answer | This ledger |
 |---|---|---|
