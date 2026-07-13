@@ -1,6 +1,7 @@
 # Conversation Control Plane
 
-*A durable, deterministic **turn-ownership ledger** for multi-agent chat.*
+*A durable, deterministic **turn-ownership ledger** for multi-agent chat — portable across
+execution runtimes.*
 
 Package: `conversation-control-plane` · MIT · reference implementation by [Bot0.ai](https://bot0.ai)
 
