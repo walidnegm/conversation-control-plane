@@ -60,36 +60,53 @@ in a long product chat. Dimensions below name those objectives; no single layer 
 |---|---|
 | **Node / step** | Next node, tool call, or activity *inside one run* |
 | **Agent / role** | Which agent role is delegated *inside one runtime topology* |
-| **Chat thread** | Shared human conversation the user sees as one session |
+| **Chat thread** | Shared conversation the user sees as one session (usually human-facing) |
 | **Multi-task** | Several half-finished product tasks; suspend / resume / foreground |
-| **Cross-runtime** | Same authority if `handle` is LangGraph today, Python or Temporal tomorrow |
+| **Cross-runtime** | Same authority if `handle` is LangGraph, Python, Temporal, **or human** tomorrow |
+| **HITL** | Human as conversation counterpart and/or gated approver / operator leaf |
 | **Durable job** | Infra-level workflow instance, retries, timers, worker claim |
 
-| Grain | Description | Examples | Node/step | Agent/role | Chat thread | Multi-task | Cross-runtime | Durable job |
-|---|---|---|---|---|---|---|---|---|
-| **Run step** | Next hop in *this* execution | LangGraph node, Temporal activity, crew step | ✓ | — | — | — | — | sometimes |
-| **Runtime multi-agent** | Who is delegated in *this* graph/crew | LangGraph supervisor/swarm, CrewAI manager→worker | ✓ | ✓ | sometimes | DIY | — | sometimes |
-| **Dialogue / bot session** | Intent, story, or slot path for *this* bot | Rasa tracker, ChatKit session | — | sometimes | ✓ | limited | — | — |
-| **Long workflow job** | Which durable job instance is live | Temporal workflow id, queue worker claim | ✓ | — | — | — | — | ✓ |
-| **Chat-thread authority** | Foreground product task in a shared thread; complete ≠ abandon | **This package** (`active_task`, pins, phase, `decide_turn`) | — | via dispatch | ✓ | ✓ | ✓ | via host claim |
+| Grain | Description | Examples | Node/step | Agent/role | Chat | Multi-task | Cross-runtime | HITL | Durable job |
+|---|---|---|---|---|---|---|---|---|---|
+| **Run step** | Next hop in *this* execution | LangGraph node, Temporal activity, crew step | ✓ | — | — | — | — | optional | sometimes |
+| **Runtime multi-agent** | Who is delegated in *this* graph/crew | LangGraph supervisor/swarm, CrewAI manager→worker | ✓ | ✓ | sometimes | DIY | — | optional | sometimes |
+| **Hosted chat / dialogue session** | Platform or bot session for *this* surface | **ChatKit**, Rasa tracker, Assistants-style threads | — | sometimes | ✓ | limited | — | ✓ user | — |
+| **Long workflow job** | Which durable job instance is live | Temporal workflow id, queue worker claim | ✓ | — | — | — | — | optional | ✓ |
+| **Product chat-thread authority** | Foreground task law on a thread you own; complete ≠ abandon | **This package** | — | via dispatch | ✓ | ✓ | ✓ | ✓ | via host claim |
 
-✓ = first-class for that grain · — = not the primary model · *sometimes/DIY/limited* = possible but not the native contract.
+✓ = first-class · — = not primary · *limited/DIY/optional* = possible but not the native portable contract.
 
-When the objective is **run, role, or durable job** ownership, orchestration and workflow engines are
-the natural focus. When the objective is **chat-thread multi-task authority** that can outlive a
-single runtime, this ledger is the natural focus — compose with the engines above; do not replace them.
+#### Worth comparing (including ChatKit)
 
-| Product question (chat grain) | Typical run-grain answer | This ledger |
+Yes — **ChatKit and peers are worth an explicit row.** They are the closest “chat thread” tools
+people already buy. The cut is not “they lack chat”; it is **session grain vs product authority grain**.
+
+| | ChatKit / hosted chat | Rasa / dialogue | LangGraph / CrewAI | Temporal | **This package** |
+|---|---|---|---|---|---|
+| **Sweet spot** | Hosted human chat + their agents | NLU → dialogue policies | Multi-agent runs inside one topology | Durable jobs | Product multi-task thread authority |
+| **Chat session** | ✓ Platform-owned | ✓ Bot tracker | App / graph | — | ✓ App-owned ledger |
+| **Multi-task foreground law** | Limited / app DIY | Limited | DIY on graph state | — | ✓ First-class |
+| **Cross-runtime authority** | Bound to that platform | Bound to that bot runtime | Bound to that graph/crew | Job model, not chat law | ✓ `handle` is pluggable |
+| **HITL** | User always; approvals vary | Forms / policies | Interrupts / tools | Signals | User + gates + human operator leaf |
+| **Compose with others** | Stay in stack or export DIY | Stay in stack or export DIY | Execution leaf | Job leaf | Designed to sit **above** leaves |
+
+When the objective is **run, role, or durable job**, use orchestration / workflow engines. When the
+objective is a **hosted single-stack chat session**, ChatKit or Rasa may be enough. When the objective
+is **product-owned multi-task authority** that must stay coherent **across runtimes and HITL**, this
+ledger is the natural focus — compose with the tools above; do not replace them.
+
+| Product question | Typical session / run answer | This ledger |
 |---|---|---|
-| What is **foreground** in the shared thread? | Implicit in graph / session / workflow topology | Explicit `active_task` + pins + phase |
-| **Who may write** ownership next? | Edges, handoff tools, manager prompts — flexible | **`decide_turn` single-writer**; specialists return transitions |
-| Why did this **chat turn** route to X? | Reconstruct from run / checkpoint / workflow history | Queryable projection + event journal (L1/L2) |
+| What is **foreground** in the shared thread? | Implicit in session or graph topology | Explicit `active_task` + pins + phase |
+| **Who may write** ownership next? | Platform rules, edges, manager prompts | **`decide_turn` single-writer**; specialists return transitions |
+| Why did this **chat turn** route to X? | Platform traces / checkpoint / workflow history | Queryable projection + event journal (L1/L2) |
 | Complete vs cancel? | Often one “clear” / end path | **`COMPLETE ≠ ABANDON`** as distinct contracts |
-| Swap the execution runtime? | Re-map that engine’s state shape | Authority row stays; only `handle` changes |
+| Swap execution leaf (incl. human)? | Re-map that engine or platform’s state | Authority row stays; only `handle` changes |
 
-**One-line USP:** run-grain tools answer *who owns the next step in a graph, crew, or workflow*; this
-package answers *who owns the foreground task in the shared chat thread* — as typed fields your host,
-UI, and tests can obey without deserializing a whole run.
+**One-line USP:** session and run tools answer *who owns this ChatKit/Rasa session or this graph/job
+step*; this package answers *who owns the foreground product task on a thread that may span
+runtimes and human gates* — as typed fields your host, UI, and tests can obey without deserializing
+a whole run or locking to one chat platform.
 
 This package is that **ledger**: durable, single-writer, with an event journal. On the authority
 path, **code** decides what is foreground (`decide_turn`) — not a model guessing the next speaker.
