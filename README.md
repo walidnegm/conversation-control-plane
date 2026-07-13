@@ -40,15 +40,24 @@ specialist runs (LangGraph today, plain Python or Temporal tomorrow) without rew
 
 This package is that **ledger**: durable, single-writer, with an event journal. On the authority
 path, **code** decides what is foreground (`decide_turn`) — not a model guessing the next speaker.
-You keep LangGraph, CrewAI, Rasa, ChatKit, Temporal, the OpenAI Agents SDK, or plain Python for
-**orchestration and execution**. The ledger only tracks **which conversational task is in front**
-across turns and specialists.
+The ledger only tracks **which conversational task is in front** across turns and specialists.
+Everything else in the stack stays yours:
 
-> **Compose, don't rip-and-replace.** Those tools still own multi-agent orchestration and agent
-> runs. This plane owns **cross-turn authority** so lifecycle is not locked to one runtime’s state
-> shape.
+| Concern | Examples (keep these) | Not this package |
+|---|---|---|
+| **Orchestration** | LangGraph, OpenAI Agents SDK, CrewAI, Rasa, ChatKit, plain Python | We don’t replace multi-agent routing *inside* a runtime |
+| **Durable work** | Temporal, job queues | We don’t own retries / timers / activities |
+| **Prompts** | Prompt registries, LangSmith / Helicone-style hubs, your publish pipeline | We don’t store or version prompt text |
+| **Tools** | Tool registries, **MCP** servers, OpenAPI actions, domain APIs | We don’t define callable schemas |
+| **Model memory** | Letta, mem0, Zep, RAG corpora | We don’t own what the model *recalls* |
+| **Models** | OpenAI, Anthropic, local endpoints, gateways | We don’t call models on the authority path |
 
-**What the ledger makes first-class (often embedded elsewhere):**
+> **Compose, don't rip-and-replace.** The ecosystem is diverse — orchestration runtimes, dialogue
+> engines, hosted chat (ChatKit), durable workflows, prompt registries, tool/MCP layers, model
+> memory. Keep them. This plane only owns **cross-turn conversational authority** (foreground task,
+> gates, resume, audit) so lifecycle is not locked to one product’s state shape.
+
+**What the ledger makes first-class (often embedded in one of the layers above):**
 
 - **Durable across sessions** — control state survives the HTTP request, the worker restart, and
   the week — not only one graph or dialogue run.
@@ -58,10 +67,9 @@ across turns and specialists.
 - **Provable** — thin projection (L1) + event journal (L2). Query *why this turn routed here* in
   the SQL store you already run.
 
-**Not** an agent framework · **not** a dialogue engine · **not** a memory store (Letta / mem0 / Zep —
-the ledger is what the *system obeys*, not what the *model reads*) · **not** a LangGraph, Rasa,
-ChatKit, or Temporal replacement. Keep those for **how** multi-agent work is orchestrated and
-executed.
+**Not** an agent runtime · **not** a dialogue engine · **not** a prompt registry · **not** a tool/MCP
+host · **not** a memory store · **not** a LangGraph / Rasa / ChatKit / Temporal replacement.
+Those own their layer; this package owns **authority**.
 
 ### Where we sit in the stack
 
