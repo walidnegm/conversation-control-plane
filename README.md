@@ -15,7 +15,18 @@ This package targets multi-agent products where **chat is long-lived** and **aut
 clear across specialists** — often as size and complexity grow. Typical shape: several
 half-finished tasks in one thread, ordered steps *and* disordered detours, leave mid-stream and
 resume later, sometimes across specialists that do not share one graph, dialogue model, or runtime.
-If a single runtime and short sessions are enough, orchestration tools alone may be the right stop.
+
+**Product USP (control-authority dimensions we treat as first-class):**
+
+1. **Cross-runtime** — same thread authority if `handle` is LangGraph, plain Python, Temporal, or a
+   **human operator** tomorrow; only the execution leaf changes  
+2. **Human in the loop** — human is the usual *conversation counterpart*; HITL gates and human
+   dispatch are first-class control options, not afterthoughts  
+3. **Multi-task chat thread** — foreground / suspended / complete ≠ abandon on one shared thread  
+
+Hosted chat (e.g. ChatKit) and dialogue engines (e.g. Rasa) already own a **session**; orchestration
+engines own **runs and jobs**. If one platform session and one runtime are enough, stay there. This
+ledger is for product-owned authority that must **compose across** those layers.
 
 Example shape: onboarding with one specialist, research or setup with another, support or reporting
 with a third. Work is sometimes **ordered** (finish A before B) and sometimes **disordered**
