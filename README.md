@@ -6,10 +6,10 @@ Package: `conversation-control-plane` · MIT · reference implementation by [Bot
 
 ---
 
-Multi-agent **orchestration is real** in the tools people already use — and we do not pretend
-otherwise. LangGraph supervisors and swarms, OpenAI Agents SDK handoffs, CrewAI crews, Rasa
-dialogue management, OpenAI ChatKit sessions, Temporal workflows: all can route, hand off,
-checkpoint, and keep a conversation going across multiple agents.
+Multi-agent **orchestration is real** — and maturing every day — in the tools people already use.
+LangGraph supervisors and swarms, OpenAI Agents SDK handoffs, CrewAI crews, Rasa dialogue
+management, OpenAI ChatKit sessions, Temporal workflows: all can route, hand off, checkpoint,
+and keep a conversation going across multiple agents.
 
 What products still struggle with is a **shared, queryable authority layer** when chat is long-lived:
 several half-finished tasks in one thread, ordered steps *and* disordered detours, leave mid-stream
