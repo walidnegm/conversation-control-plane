@@ -37,9 +37,10 @@ model (not as a portable contract you can share across runtimes):
 | **Temporal** | Durable workflows, signals, retries | Workflow state |
 | **App code** | Product-specific glue | Controllers, session flags, ad hoc stores |
 
-So the gap is not “nobody can orchestrate multi-agent chat.” The gap is **independent conversational
-authority** — foreground task, gates, suspend/resume, audit — that survives changing *how* a
-specialist runs (LangGraph today, plain Python or Temporal tomorrow) without rewriting lifecycle.
+So for that niche the gap is not “nobody can orchestrate multi-agent chat.” It is **independent
+conversational authority** — foreground task, gates, suspend/resume, audit — that survives changing
+*how* a specialist runs (LangGraph today, plain Python or Temporal tomorrow) without rewriting
+lifecycle.
 
 This package is that **ledger**: durable, single-writer, with an event journal. On the authority
 path, **code** decides what is foreground (`decide_turn`) — not a model guessing the next speaker.
