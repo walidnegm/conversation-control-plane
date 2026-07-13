@@ -16,8 +16,16 @@ and sometimes **disordered** (detour, jump topics, leave half-done, come back la
 product still has to know what is open, what is foreground, and how to continue — without
 re-deriving that from the full transcript every time.
 
-Most frameworks fold that bookkeeping into graph state, handoffs, workflow signals, or session
-flags. It works for one specialist; it gets messy across specialists, restarts, and long threads.
+Today that bookkeeping usually lives **inside** whatever runs the agent:
+
+| Where teams put it | Typical home |
+|---|---|
+| **LangGraph** | Graph state, nodes, checkpoints |
+| **OpenAI Agents SDK / CrewAI / peers** | Handoffs, routers, conversation context |
+| **Temporal** | Workflow state and signals |
+| **App code** | Session objects, ad hoc flags |
+
+That works for one specialist. It gets messy across specialists, restarts, and long threads.
 
 This package pulls that bookkeeping into an independent **ledger**: durable, single-writer, with
 an event journal. On the authority path, **code** decides what is foreground (`decide_turn`) —
@@ -25,10 +33,10 @@ not a model guessing the next speaker. You keep LangGraph, CrewAI, Temporal, the
 SDK, or plain Python for **how agents do the work**. The ledger only tracks **which
 conversational task is in front** across turns and specialists.
 
-> **Compose, don't rip-and-replace.** Frameworks run agents and graphs. This plane owns
+> **Compose, don't rip-and-replace.** Those tools still run agents and graphs. This plane owns
 > cross-turn authority so you can change the runtime without rewriting thread lifecycle.
 
-**What the ledger holds that frameworks usually bury:**
+**What the ledger holds that those tools usually bury:**
 
 - **Durable across sessions** — control state survives the HTTP request, the worker restart, and
   the week — not just one agent call.
