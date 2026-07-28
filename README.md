@@ -20,8 +20,9 @@ portable authority semantics are.
 **Lifecycle diagram:** [docs/conversation-turn-lifecycle-diagram.md](docs/conversation-turn-lifecycle-diagram.md)  
 **Host laws:** [docs/host-transition-discipline.md](docs/host-transition-discipline.md)  
 **Authority diagnostics:** [docs/conversational-authority-diagnostic-taxonomy.md](docs/conversational-authority-diagnostic-taxonomy.md)  
-Diagnose before patch: root → **A# (id + title)** → failure mode. Quality stack =
-CAQ/purity grades · named **ratchets** (not “suite green”) · CI · multi-turn **eval** (WIP).
+Operating sheet: **ladder** (causal) vs **triage** (investigation order). Roots **M/E/S/D**
+parallel (D = delivery *authority* leakage). Quality stack = CAQ/purity · named **ratchet**
+≠ suite · CI · eval (WIP). **Sealed** = checklist, not “looks fixed.”
 
 ### Host turn cycle
 
