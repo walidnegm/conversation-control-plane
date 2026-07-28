@@ -329,7 +329,7 @@ parallel slugs.
 | Unsealed model authority | Model prose treated as committed fact, id, or transition without code SoR | E | A9, A19 |
 | Fail-soft option laundry | After unclear, growing **prose CTA menus** instead of reasoner + re-show card | D | A17 |
 | Soft existence / unsealed transition | “We already have X” or create without thin-verify of registry id | E+S | A19 |
-| Dual SM / parallel flags | Second ownership machine beside ledger kind/phase | S | A1, A10 |
+| Dual SM / parallel flags | Second ownership machine beside ledger kind/phase (see **A1**, **A10**) | S | A1, A10 |
 | Twin delivery surfaces | Same gate rendered as **two** competing UIs | D | product-voice under-render |
 | Overloaded vocabulary | One user word maps to **two** product leaves without semantic disambiguation | M | `wrong_delivery_leaf` cousins |
 
@@ -357,7 +357,7 @@ parallel slugs.
 | Reuse A# / mode if cousin | Invent a new A# / slug on first burn |
 | NL meaning → LLM label | Code `looks_like_*` as sole intent arbiter |
 | Hard eligibility → code | Hope the model remembers product rules |
-| Keep **thin** control state; sole-write ownership | Parallel `*_active` flags or fat IR in the ledger |
+| Keep **thin** control state; sole-write ownership | Parallel ownership booleans or fat domain blobs in the ledger |
 | Ratchets on **ledger / blocks / enums** | Golden full-string assistant prose as unit proof |
 | Full ladder only for multi-turn **authority** re-burns | Taxonomy ceremony for tool schema typos / static copy |
 
@@ -370,27 +370,43 @@ parallel slugs.
 **Purpose:** reveal duplicates, over-broad modes, ops vs CAQ. 
 **Do not add a new A# or failure-mode slug** until this matrix shows a gap that re-burns.
 
-| Anti-pattern | Root | Description (construction error) | Possible failure modes (slug) | Typical plane |
-|--------------|------|----------------------------------|-------------------------------|---------------|
-| A1 Parallel `*_active` flags | S | Ownership expressed as many booleans instead of ledger kind/phase | `owner_steal`, `illegal_restart`, `lost_activity_recall` | ownership |
-| A2 Skip decide / control loop | S | Specialist or host path mutates continue without the control plane | `owner_steal`, `wrong_delivery_leaf` | ownership / delivery |
-| A3 Regex NL routing | M | Regular expressions as sole arbiter of free-text meaning | `wrong_delivery_leaf`, `named_item_misresolve` | delivery / cognition |
-| A4 Prompt exception piles | M | Growing “if user says X” exception lists in classifier prompts | `wrong_delivery_leaf`, `compound_act_loss` | cognition |
-| A5 Per-incident `looks_like_*` | M | One-off shape/keyword helpers as sole intent arbiter | `wrong_delivery_leaf`, `domain_pick_misbound` | delivery |
-| A6 Scattered authority apply | S | Multiple apply sites without a single authority apply path | `owner_steal`, `wrong_delivery_leaf` | ownership |
-| A7 Concept before authority | M+S | Glossary/concept packaging runs before ownership is decided | `packaging_steal`, `owner_steal` | packaging |
-| A8 Agents write control keys | S | Specialists write ledger ownership keys directly | `owner_steal` | ownership |
-| A9 Unvalidated model-authored facts / tables | E | Model numbers/tables accepted without code render/SoR | `false_save_claim`, `success_payload_rewrite` | substrate |
-| A10 Second SM per feature | S | Feature-local state machine competes with the ledger | `illegal_restart`, `lost_activity_recall`, `owner_steal` | ownership |
-| A11 Shape as intent | M | Structural shape of paste treated as product intent | `wrong_delivery_leaf`, `soft_name_misresolve` | delivery |
-| A12 Shape rubric overrides readiness | M | Geometry/density rubrics open or block product paths against readiness | `wrong_delivery_leaf`, `cold_start_collapse` | authoring / delivery |
-| A13 Context-pin / delivery-order hijack | S | Ambient pins or wrong delivery order steal the active leaf | `ambient_pin_hijack`, `packaging_steal`, `wrong_delivery_leaf` | delivery |
-| A14 Re-resolve after pin | S+E | Identity pin present but system re-resolves from free text as if greenfield | `pin_drop`, `named_item_misresolve`, `illegal_restart` | ownership / delivery |
-| A15 Ambient last-read sole authority | S | `last_read_*` alone drives delivery without owner/pin gates | `ambient_pin_hijack`, `owner_steal` | delivery |
-| A16 Per-agent multi-turn glue | S | Agent-local multi-turn glue instead of sole-continue kinds | `owner_steal`, `lost_activity_recall` | ownership |
-| A17 Fail-soft option laundry | D | After unclear, growing prose option menus instead of card + reasoner | product-voice under-render; cousin `fall_through_fabrication` | delivery |
-| A18 Dispatch-order laundry | S+D | Growing suppress / call-order stacks instead of owner allow-table | `wrong_delivery_leaf`, `owner_steal` | delivery |
-| A19 Soft existence / unsealed transition | E+S | Existence or create claimed without thin-verify of registry id / open leaf | `soft_existence_claim`, `false_save_claim` | substrate |
+### Are A1 / A11 “Bot0-only”?
+
+**No.** **A1–A19** are **portable construction errors** for multi-agent *conversational
+control* (any host that has sticky multi-turn work + specialists). They are **not**
+Bot0 product features or UI names.
+
+| What A# is | What A# is not |
+|------------|----------------|
+| Stable **id** + short **title** for a bad *build shape* | A Bot0 screen, tool, or brand term |
+| Shared with [SDK §1.6](conversation-control-plane-sdk.md#16-adoption-anti-patterns-engineering-doctrine--do-not-generate-these) for deep essays | A failure mode slug (`pin_drop`) — modes are *burns*; A# are *how you built wrong* |
+| Illustrated with **generic** code smells (flags, regex, dual FSMs) | A requirement that your repo use the same variable names |
+
+**Reading tip:** Lead with the **title** (“parallel ownership flags”); keep **A1** for
+cross-ref and PR language. Code columns below use portable smells — your codebase may
+spell them differently (`is_drafting`, `cost_active`, `workflow_open`, …).
+
+| Id | Title (portable) | Root | Construction error (plain language) | Smell you might see in *any* host | Typical modes | Plane |
+|----|------------------|------|-------------------------------------|-----------------------------------|---------------|-------|
+| **A1** | Parallel ownership flags | S | “Who owns the thread?” encoded as many booleans instead of one ownership record (kind + phase) | `drafting_active`, `cost_open`, `advisor_on` all true independently | `owner_steal`, `illegal_restart`, `lost_activity_recall` | ownership |
+| **A2** | Skip the control loop | S | Specialist or side path mutates continue without the host decide/apply path | Agent writes “current task” in its own store and the host never runs decide | `owner_steal`, `wrong_delivery_leaf` | ownership / delivery |
+| **A3** | Regex as NL meaning | M | Regular expressions / keyword lists as **sole** arbiter of free-text intent | `if re.search(r"recommend\|optimize", text)` opens a product leaf | `wrong_delivery_leaf`, `named_item_misresolve` | delivery / cognition |
+| **A4** | Prompt exception piles | M | Growing “if user says X do Y” lists in classifier prompts | Per-incident EXCEPTION blocks in system prompts | `wrong_delivery_leaf`, `compound_act_loss` | cognition |
+| **A5** | Per-incident shape helpers | M | One-off `looks_like_*` / shape helpers as sole intent arbiter | New helper per soak without enum + code gate | `wrong_delivery_leaf`, `domain_pick_misbound` | delivery |
+| **A6** | Scattered authority apply | S | Many sites apply ownership without a single authority path | Three modules each set “active flow” | `owner_steal`, `wrong_delivery_leaf` | ownership |
+| **A7** | Concept before authority | M+S | Help/glossary/marketplace packaging runs before ownership is decided | FAQ leaf steals mid-task without stamp | `packaging_steal`, `owner_steal` | packaging |
+| **A8** | Agents write control keys | S | Specialists write ledger ownership fields directly | Agent imports host state and sets `active_task` | `owner_steal` | ownership |
+| **A9** | Unvalidated model facts | E | Model numbers/tables accepted without code render / system-of-record | Chat shows a cost table the engine never produced | `false_save_claim`, `success_payload_rewrite` | substrate |
+| **A10** | Second state machine per feature | S | Feature-local FSM competes with the turn-ownership ledger | Feature module keeps its own “stage” next to the ledger | `illegal_restart`, `lost_activity_recall`, `owner_steal` | ownership |
+| **A11** | Shape as intent | M | Structural shape of paste treated as product intent | Dense numbered list auto-opens pack/builder without cognition label | `wrong_delivery_leaf`, `soft_name_misresolve` | delivery |
+| **A12** | Shape overrides readiness | M | Geometry/density rubrics open or block paths against true readiness | “Looks complete” opens save while required ids missing | `wrong_delivery_leaf`, `cold_start_collapse` | authoring / delivery |
+| **A13** | Context-pin / delivery-order hijack | S | Ambient memory or wrong delivery order steals the active leaf | Last listed workflow id hijacks a sticky draft | `ambient_pin_hijack`, `packaging_steal`, `wrong_delivery_leaf` | delivery |
+| **A14** | Re-resolve after pin | S+E | Identity pin present but free text re-resolves as greenfield | User has workflow pin; system searches by name again | `pin_drop`, `named_item_misresolve`, `illegal_restart` | ownership / delivery |
+| **A15** | Ambient last-read as sole authority | S | “Last thing we mentioned” drives delivery without owner/pin gates | Session cache of last id without phase check | `ambient_pin_hijack`, `owner_steal` | delivery |
+| **A16** | Per-agent multi-turn glue | S | Agent-local multi-turn glue instead of host sole-continue kinds | Each specialist invents its own sticky flags | `owner_steal`, `lost_activity_recall` | ownership |
+| **A17** | Fail-soft option laundry | D | After unclear, growing prose option menus instead of card + reasoner | “Reply accept/skip/use X/try again…” walls of text | under-render; cousin `fall_through_fabrication` | delivery |
+| **A18** | Dispatch-order laundry | S+D | Growing suppress / call-order stacks instead of owner allow-table | `if open_X: skip_Y` piles | `wrong_delivery_leaf`, `owner_steal` | delivery |
+| **A19** | Soft existence / unsealed transition | E+S | Existence or create claimed without thin-verify of registry id / open leaf | “We already have project X” with no id | `soft_existence_claim`, `false_save_claim` | substrate |
 
 **Notes:**
 
@@ -455,7 +471,7 @@ instead of **project / team-sizing** workspace.
 | Doctrine | Project = staffing simulation workspace; cost = agent/workflow TCO | Keep product boundaries honest |
 | Root | **M** — underspecified “size” bound to the wrong product leaf | Meaning authority leakage |
 | Review smell | Overloaded vocabulary / shape-as-intent | “size” means two products |
-| Anti-pattern | A11 cousin; risk of A4 if “fixed” with phrase piles | Prefer semantic labels |
+| Anti-pattern | **A11 — shape as intent** (cousin); risk of **A4 — prompt exception piles** if “fixed” with phrase lists | Prefer semantic labels + code gates |
 | Failure mode | `wrong_delivery_leaf` | Wrong delivery leaf |
 | Plane | delivery | Host leaf selection |
 | Seal | Strengthen **semantic** cost vs project labels in the turn router; **no** `looks_like_*` sole arbiter | Code policy + classifier enums |
