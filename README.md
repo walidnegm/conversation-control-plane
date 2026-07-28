@@ -19,7 +19,9 @@ portable authority semantics are.
 **Spec (lookup):** [docs/conversation-control-plane-sdk.md](docs/conversation-control-plane-sdk.md)  
 **Lifecycle diagram:** [docs/conversation-turn-lifecycle-diagram.md](docs/conversation-turn-lifecycle-diagram.md)  
 **Host laws:** [docs/host-transition-discipline.md](docs/host-transition-discipline.md)  
-**Authority diagnostics:** [docs/conversational-authority-diagnostic-taxonomy.md](docs/conversational-authority-diagnostic-taxonomy.md) (diagnose before patch; A# ↔ failure modes)
+**Authority diagnostics:** [docs/conversational-authority-diagnostic-taxonomy.md](docs/conversational-authority-diagnostic-taxonomy.md)  
+Diagnose before patch: root → **A# (id + title)** → failure mode. Quality stack =
+CAQ/purity grades · named **ratchets** (not “suite green”) · CI · multi-turn **eval** (WIP).
 
 ### Host turn cycle
 
@@ -76,7 +78,9 @@ Agents return `TaskTransition` (+ domain-only `context_updates`).
 Orchestration graphs · durable job infra · prompt registries · tool/MCP schemas ·
 model memory · model vendors. Compose with them; do not re-implement them here.
 
-Full anti-pattern library (A1–A19): [SDK §1.6](docs/conversation-control-plane-sdk.md#16-adoption-anti-patterns-engineering-doctrine--do-not-generate-these).
+Full anti-pattern library (**A1 — parallel ownership flags** … **A19 — soft existence**):  
+[SDK §1.6](docs/conversation-control-plane-sdk.md#16-adoption-anti-patterns-engineering-doctrine--do-not-generate-these).  
+Diagnostic ladder + quality programs: [diagnostic taxonomy](docs/conversational-authority-diagnostic-taxonomy.md).
 
 ---
 
@@ -190,7 +194,8 @@ Laws: docs/host-transition-discipline.md
 
 Rules: classifiers propose enums; decide_turn enforces. Specialists return TaskTransition
 only. Thin projection (pins + phase + pending_ref). COMPLETE ≠ ABANDON. No phrase laundry
-for NL meaning. No parallel ownership flags (A1). No ambient last-read as sole identity after pin.
+for NL meaning. No **A1 — parallel ownership flags**. No ambient last-read as sole identity after pin.
+Diagnose authority burns with docs/conversational-authority-diagnostic-taxonomy.md before patching.
 
 Deliver: (1) port ledger + decide_turn to our store (2) one sole-continue KindSpec
 (3) five tests: resume, complete, abandon≠complete, no auto-switch, no re-resolve after pin.
