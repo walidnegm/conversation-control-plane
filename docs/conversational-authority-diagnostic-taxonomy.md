@@ -95,9 +95,11 @@ Three **related but distinct** programs. Do not collapse them into one doc or on
 
 | Pillar | Description | Question it answers | Anti-goal |
 |--------|-------------|---------------------|-----------|
-| **1. Diagnostics** | Classification of authority burns into shared classes | *What kind of failure is this, and where did architecture go wrong?* | Not freestyle “model IQ”; not phrase laundry |
-| **2. Quality** | Graded seals and product-surface purity | *Are the laws sealed and graded?* | Not inventing parallel purity audits per incident |
-| **3. LLM evaluation & validation** | Behaviour under probabilistic hops and multi-turn load | *Does the system still obey law when the model is non-deterministic?* | Not LMSYS/MMLU as ship gate; not LLM-as-judge as primary SoR |
+| **1. Diagnostics** | Classification of authority burns into shared classes (this taxonomy) | *What kind of failure is this, and where did architecture go wrong?* | Not freestyle “model IQ”; not phrase laundry |
+| **2. Quality** | **Scoreboards + seals:** CAQ mode grades, purity boards (voice/surface/ownership), sealed vs known_gap | *Are the laws sealed and graded on a living board?* | Not inventing parallel purity audits per incident |
+| **3. Proof (validation + eval)** | **Regression/CI ratchets** (deterministic) + **multi-turn eval/soaks** (under cognition) — often incomplete as one program | *Will CI catch a re-burn? Does law hold when the model varies?* | Not LMSYS/MMLU as ship gate; not LLM-as-judge as primary SoR |
+
+**Note:** Pillar 3 is deliberately **work in progress** as a single map — hosts usually have a regression suite and some multi-turn proofs; wiring them as one “eval + CI” narrative is still maturing. See *Association with quality programs* below.
 
 ### How the pillars connect (one flow)
 
@@ -463,12 +465,46 @@ instead of **project / team-sizing** workspace.
 
 ## Association with quality programs
 
-| Program | Description | Uses this taxonomy how |
-|---------|-------------|------------------------|
-| **CAQ / purity scoreboards** | Graded seals of named modes and A# | Grades modes + A#; does not redefine the ladder |
-| **Living purity audits** | Product voice, LLM surface, open authority | Park **candidates** until law + ratchet |
-| **Regression / contract suite** | Executable ratchets | Named by mode / A# where possible |
-| **Coding agent playbook** | Session checklist for implementers | Diagnose with ladder **before** coding |
+Diagnostics (this sheet) **name the class**. Quality programs **grade and prove** it.
+Do not collapse them into one doc or one harness — but the ladder must stay shared.
+
+```text
+ This taxonomy (diagnose)
+ │
+ ├─► CAQ + purity scoreboards grade: is the mode / A# sealed?
+ ├─► Regression + contract suite prove: ratchet fails without the seal
+ ├─► CI gates enforce: suite / baseline must not worsen
+ └─► Eval (multi-turn / soaks) prove under live or frozen cognition
+```
+
+| Program | Description | Status (typical) | Uses this taxonomy how |
+|---------|-------------|------------------|------------------------|
+| **CAQ (Conversational Authority Quality)** | Named **failure modes** (slugs) with laws and intended ratchets — product/ledger burns, not “chat vibe.” Registry is the machine SoT for modes; CAQ docs explain process. | Living | Modes are the **failure-mode rung**; grade “is `pin_drop` sealed?” without reinventing M/E/S/D |
+| **CAQ purity scorecard** | **Grades** each CAQ mode and related A# (sealed / known_gap / open) — a scoreboard, not a second law book | Living / host-specific boards | Pointer audit: grades map to taxonomy modes + A#; **does not redefine** the ladder |
+| **Purity scoreboards** (living audits) | Broader product purity: ownership, product voice, LLM surface hydration, open authority — often board/lens grades (e.g. L19 voice, Board O delivery) | Living | When a burn reappears, **park a candidate** here only until law + ratchet exist; promote modes to CAQ registry when sealed |
+| **Regression / contract suite** | Executable **ratchets**: unit/integration tests and contract modules that fail if a sealed class returns (prefer ledger/blocks/enums over golden prose) | Living | Name tests by **mode id / A#** where possible; taxonomy says *which* law the test proves |
+| **CI** | Continuous integration gates: run the suite, optional **baseline/ratchet** (failures must not increase), lint/security gates | Living host CI; portable package ships tests adopters wire into *their* CI | Enforces regression ratchets; CI is not a new failure class — it is the **enforcement path** for seals |
+| **Eval (multi-turn behaviour / soaks)** | **Evaluation** under non-deterministic cognition: multi-turn scripts, freezes, path-faithful soaks, optional staging rituals — “chat can look fine while ledger is wrong” | **Work in progress** for a single unified map (many hosts already have pieces: suite + freezes + soaks) | Taxonomy picks the **law**; eval proves it under multi-turn load. Not MMLU/LMSYS as ship gate; not LLM-as-judge as primary SoR |
+| **Coding agent / implementer playbook** | Session checklist: diagnose before patch | Living in host | Forces ladder use **before** coding |
+
+### How to read the table
+
+| Question | Look at |
+|----------|---------|
+| What *kind* of authority failure is this? | **This taxonomy** (root → A# → mode) |
+| Is that mode sealed in product? | **CAQ / purity scoreboards** |
+| Will CI catch a re-burn? | **Regression suite + CI** (ratchet present and wired) |
+| Does it still hold when the model is stochastic? | **Eval** (multi-turn / soak / freeze) — often partial; grow deliberately |
+
+### Explicit gaps (honest WIP)
+
+| Gap | Description |
+|-----|-------------|
+| **Unified eval map** | Many pieces exist (contracts, multi-turn runners, soaks) but a single **adopter-facing program** that ranks “when to add a unit ratchet vs freeze vs soak” is still maturing — treat **Eval** as first-class in the quality stack, not an afterthought. |
+| **CI portability** | Public package ships **tests**; each host must attach them to CI. Monorepo hosts often have pre-push / baseline ratchets; not every adopter will. |
+| **Scoreboard sprawl** | Prefer **one ladder** (this taxonomy) + **one mode registry** (CAQ YAML); purity boards **grade** and inventory surfaces — they must not invent parallel anti-pattern numbers. |
+
+**A# reminder:** use **A11 — shape as intent** (id + short title). Full anti-pattern essays live in [SDK §1.6](conversation-control-plane-sdk.md#16-adoption-anti-patterns-engineering-doctrine--do-not-generate-these).
 
 ---
 
