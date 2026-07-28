@@ -40,12 +40,16 @@ modules:
 docs:
   - docs/epics/conversation-control-plane-sdk.md
   - docs/epics/conversation-turn-lifecycle-diagram.md
+  # Public body lives under extract/.../docs/ (sanitized); monorepo epic is host SoT.
+  # Publish script ships extract/docs/conversational-authority-diagnostic-taxonomy.md
 
 public_bundle:
   readme: README.md
   docs:
     - conversation-control-plane-sdk.md
     - conversation-turn-lifecycle-diagram.md
+    - conversational-authority-diagnostic-taxonomy.md
+    - host-transition-discipline.md
   replace_section_15: docs/section-15-public.md
   sanitize_lifecycle: true
   package_root: src/conversation_control_plane

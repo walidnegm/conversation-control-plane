@@ -222,6 +222,35 @@ KIND_REGISTRY: dict[str, KindSpec] = {
         terminal=frozenset({"commit_plan"}),
         gates=_WB_GATES,
     ),
+    "pattern_midflight": _spec(
+        "pattern_midflight",
+        owner="bot0",
+        exclusive="pattern_midflight",
+        phases=frozenset({
+            "choose", "gap", "confirm_run", "running", "results", "abandoned",
+        }),
+        pending_ref_type="pattern_midflight_plan",
+        terminal=frozenset({"results", "abandoned"}),
+    ),
+    "recommendation_setup": _spec(
+        "recommendation_setup",
+        owner="bot0",
+        exclusive="recommendation_setup",
+        phases=frozenset({
+            "path", "project", "costs", "scorecard", "target",
+            "placements", "graph", "ready", "abandoned",
+        }),
+        pending_ref_type="recommendation_route",
+        terminal=frozenset({"ready", "abandoned"}),
+    ),
+    "engagement_pack_plan": _spec(
+        "engagement_pack_plan",
+        owner="bot0",
+        exclusive="engagement_pack",
+        phases=frozenset({"plan", "advancing", "complete"}),
+        pending_ref_type="engagement_pack_plan",
+        terminal=frozenset({"complete"}),
+    ),
 }
 
 

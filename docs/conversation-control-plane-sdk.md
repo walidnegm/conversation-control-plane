@@ -1113,22 +1113,49 @@ flowchart TB
 
 ### 1.6 Adoption anti-patterns (engineering doctrine — do not generate these)
 
-**Canonical doctrine:** [§2.1](#21-integration-guardrails-portable-contract) (semantic vs execution authority,
-eight rules, five review questions). **Status:** several rows below are **rectification targets** — incident
-stop-gaps we are converging (per-incident `looks_like_*`, scattered authority). Target: rubric + ledger +
-single authority pipeline — gates shrink, not grow.
+**This section is the anti-pattern library** for agentic / control-plane work (not a separate file).
 
-**Root insight:** most LLM-app reliability failures are **ownership bugs**, not model bugs. They reduce to
-three failures (tagged **M** / **E** / **S** below):
+| Audience | What they get |
+|---|---|
+| **Public / extract package** | This section is **self-contained** — portable terms + A1–A19 table (no link to monorepo lexicon). |
 
-| Root | Violation | One-line test |
+**Portable terms** (also inlined in the extract SDK so public readers need no host lexicon):
+
+| Term | Meaning |
+|---|---|
+| **M** Meaning authority leakage | Lexical rules, input shape, or scattered exceptions treated as sufficient proof of user intent |
+| **E** Unsealed model authority | Model output treated as authoritative number, identity, transition, or durable result without system validation/commitment |
+| **S** Competing state authority | Two mechanisms can independently determine the same authoritative state or continuation |
+| **D** Delivery orchestration laundry | Acts, order, suppression, or next-step behavior encoded in accumulating prose/branches rather than typed delivery policy |
+| **Phrase laundry (CAQ-8)** | Special case of **M** in classifier prompts |
+| **Anti-pattern vs failure mode** | Construction error (A#) vs resulting authority burn (CAQ slug) — they **map**, they are **not** synonyms |
+
+**Host diagnostic ladder (canonical):** monorepo 
+[conversational-authority-diagnostic-taxonomy.md](conversational-authority-diagnostic-taxonomy.md) — 
+doctrine → root → A# → failure mode (slug) → ratchet. Review smells / plane / error codes are **metadata**, not extra rungs.
+
+**Canonical doctrine (how to build right):** [§2.1](#21-integration-guardrails-portable-contract) (semantic vs
+execution authority, eight rules, five review questions). **Status:** several rows below are **rectification
+targets** — incident stop-gaps we are converging (per-incident `looks_like_*`, scattered authority). Target:
+rubric + ledger + single authority pipeline — gates shrink, not grow.
+
+**Root insight:** most **persistent multi-turn conversational-authority** failures are **ownership** failures,
+not “the model is dumb.” (Not all chat bugs — infra/latency/retrieval are adjacent registries.) Authority
+failures reduce to four roots (**M** / **E** / **S** / **D**):
+
+| Root | Definition | One-line test |
 |---|---|---|
-| **M** | Code infers meaning | Regex / `looks_like_*` / prompt exceptions / shape-as-intent decide what the user *meant* |
-| **E** | LLM executes authority | Model produces final numbers, tables, state transitions, or routing commits |
-| **S** | Multiple state writers | Parallel flags, scattered authority, competing routers — two owners for one truth |
+| **M** | Meaning authority leakage | Surface cue / shape / exception pile treated as semantic certainty |
+| **E** | Unsealed model authority | Number, id, transition, or “saved/exists” without code SoR commit |
+| **S** | Competing state authority | Parallel flags, dual SM, pin vs registry, multi-writer |
+| **D** | Delivery orchestration laundry | CTA menus in prose **or** growing pre-decide suppress stacks |
 
 **Principled approach:** LLM owns **semantic interpretation** (classify, extract, narrate). Code owns **execution
-authority** (state, contracts, math, rendering, irreversible transitions). **Nothing gets two owners.**
+authority** (state, contracts, math, rendering, irreversible transitions). **Typed affordances** (chips /
+action cards in chat UI) own finite next acts. **Reasoner** (LLM + code-owned facts) owns confused-user
+explanation. **Hard eligibility** is code-owned; semantic suitability may be model-proposed. **Nothing gets
+two owners.** Pre-decide short-circuits: **one projected owner** + **allow-list of dispatches** — not pairwise
+suppress laundry.
 
 | # | Anti-pattern | Root | Why it hurts | Common symptom | Correct pattern | Bot0 ratchet |
 |---|---|---|---|---|---|---|
@@ -1140,7 +1167,7 @@ authority** (state, contracts, math, rendering, irreversible transitions). **Not
 | A6 | Scattered `apply_*_authority` | **S** | No single transition contract | Order-dependent bugs; overrides drift | `apply_unified_router_authorities` | same |
 | A7 | Concept gate before authority | **M**+**S** | Router gets garbage-in | Glossary steals drafting openers | Rubric first; `drafting_intake_blocks_concept_gate` backstop | `drafting-intake-maturity-routing.md` |
 | A8 | Agents write control keys | **S** | Hot-potato loops | Ping-pong handoffs; stale `agent_type` | `TaskTransition`; ledger API only | SDK §5 |
-| A9 | LLM authoritative numbers/tables | **E** | Hallucination on critical path | Score corruption; table says 17%, narration 15% | Extract → validate → code render → LLM explains | authority boundary |
+| A9 | Unvalidated model-authored facts / calculations / SoR tables | **E** | Unverified model values treated as system-of-record | Score corruption; table 17% vs narration 15%; false durable claims | Extract → validate → code render/commit → LLM may explain (explanatory tables OK when source controlled) | authority boundary |
 | A10 | Second state machine per feature | **S** | Competing phase models | "Where were we?" wrong after detour | Ledger `kind` + gate taxonomy | `authoring_gate_turn` |
 | A11 | Shape treated as intent | **M** | Format ≠ meaning | Bullets → forced interpret; table → wrong extract | Shape is evidence; LLM labels; code validates | host monorepo playbook readiness kinds |
 | A12 | Shape rubric overrides LLM readiness | **M** | Form over semantics | Table looks right; logic wrong | LLM readiness primary; rubric fail-soft only | `test_cognition_execution_readiness_gauntlet.py` |
@@ -1148,6 +1175,81 @@ authority** (state, contracts, math, rendering, irreversible transitions). **Not
 | A14 | Re-resolve after pin (greenfield on continue) | **S**+**E** | Stream forgets who it pinned | “Working on X” then “Which workflow?”; name substring re-opens list | Phase gate: entity resolve only in open/pick phases; continue uses pin + cognition | `multi_turn_stream_contract.py`, `test_multi_turn_stream_contract.py` |
 | A15 | Ambient `last_read_*` as sole authority | **S** | Mirror becomes identity | Generic how-to steals cost/project continue; wrong entity after detour | Ledger payload pins only; ambient may seed **only** when phase allows + not bare howto | same + `test_context_pin_hijack_ratchets.py` |
 | A16 | Per-agent multi-turn glue (no shared contract) | **S** | Every specialist invents stickiness | Cost fixed; cyber/realization/scorecards still re-open | One portable stream contract; adopt-on-touch all `SOLE_CONTINUE_KINDS` | [§2.1 multi-turn stream](#21-multi-turn-stream-contract-every-sole-continue-kind) |
+| A17 | **Fail-soft option laundry** | **D** | Code pretends to be product voice after intent is already settled | “I didn’t catch that — reply **accept** / **skip** / **use X** / **try again**…”; menu drifts every new act | Classifier labels · code gate · **card chips** · LLM reasoner from code-owned facts | `failsoft_option_laundry_contract.py` · AGENTS §4 · product-voice audit |
+| A18 | **Dispatch-order laundry** (suppress stacks) | **S**+**D** | O(N²) leaf politics: seal inventory → sim early still steals | KPI “cost per ticket” → Help Desk graph; after inventory seal → `workflow_simulation_entry_early` | **One** `project_pre_decide_owner` + `FOREIGN_PRE_DECIDE_DISPATCHES` allow-list; extend table — **never** `*_blocks_<leaf>_early` | `pre_decide_owner_contract.py` · `test_pre_decide_owner_contract.py` |
+| A19 | **Soft existence / unsealed transition** | **E**+**S** | Dialogue pin treated as registry SoR; model re-confirms or freestyles create instead of code tool | “You already have project Jasmin2” with no `project_id`; name+yes → “Create Jasmin2?” again | **Thin-verify:** LLM proposes intent → code verifies thin state (id / open leaf / pin) → tool or honest refuse; existence = registry id only — **not** dual create FSM / skip-phrase laundry | `advisor_create_continue_contract` · CAQ `soft_existence_claim` · purity v4 **L31** · `test_advisor_create_name_continue_seal.py` |
+
+#### ⛔ Soft existence — not thin-verify (A19 · root **E**/**S**)
+
+**Sibling of A9 (LLM owns authority surfaces) and cousin of CAQ `false_save_claim`.** Soft existence is
+when the product **claims a durable registry thing exists** (or that a mutative step already completed)
+from a **dialogue pin or name agreement**, without a registry id — or when the model **re-owns the
+transition** (extra confirm, freestyle create copy) after thin state already authorizes a code tool.
+
+| It is **not** | It **is** |
+|---|---|
+| “The model forgot the name” | **E**: model owns existence / transition narrative |
+| A reason to invent skip-phrase laundry | **S**: name pin and registry id become two truths |
+| A second create FSM (`*_create_active` flags) | An **unsealed** path: LLM proposes, code never verifies thin SoR |
+
+**Smell:** “You already have project **X**” / “Shall I create X?” after the user already said the name
+and **yes**, while ledger only holds `agreed_name` and no `project_id`.
+
+**Right shape (thin-verify):**
+
+| Step | Owner |
+|---|---|
+| Intent / continue meaning | LLM classifier (or finite confirm grammar when armed) |
+| Thin state: id? open leaf? name pin? | **Code** projection (`create_registry_state`, staffing reconcile, …) |
+| Mutative act | **Code** tool (`create_project`, …) or honest refuse / re-open leaf |
+| Prose | Narrates **code-owned** facts only |
+
+**Wrong “fix” shapes:** dual create FSM (A10), skip-phrase wordlists (A3/A5), extra confirm laundry
+after name pin. **Related failure modes:** `soft_existence_claim` · `false_save_claim` ·
+`illegal_restart` (soft abandon wipe of open create leaf).
+
+#### ⛔ Dispatch-order laundry — not exclusive owner (A18 · root **S**/**D**)
+
+**Symptom class:** Host pre-`decide_turn` gauntlet grows `if domain: skip inventory`, then
+`if KPI: skip inventory`, then `if sole-continue: skip inventory`, then the next soak invents
+`if open: skip sim early`. Each is path-faithful for one incident; together they are **suppress
+laundry** — the delivery-layer twin of CAQ-8 phrase laundry and A17 option laundry.
+
+**Wrong shape**
+
+```text
+if authoring_kpi_open: return None # before inventory
+if domain_open: return None
+if sole_continue_mid: return None
+# … next steal → exclusive_owner_blocks_sim_early
+```
+
+**Right shape (fail-closed sticky owners)**
+
+```text
+owner = project_pre_decide_owner(ledger, pending, phase)
+if owner is sticky:
+ allow only STICKY_UNIVERSAL_OK ∪ PRE_DECIDE_ALLOWED_EXTRA_BY_OWNER[owner]
+else: # greenfield default
+ allow any pre-decide matcher
+# New leaf: add dispatch to EXTRA for the owning stream — never *_blocks_X_early
+```
+
+**Portable terms**
+
+| Term | Meaning |
+|---|---|
+| **Dispatch-order laundry** | Growing pairwise suppress / call-order policy instead of owner → allow-list |
+| **Projected pre-decide owner** | Deterministic owner before short-circuits (authoring gate ∪ sole-continue continue) |
+| **Foreign pre-decide leaf** | Short-circuit not on the sticky owner's allow-set (inventory/sim/catalog/…) |
+| **Fail-closed sticky** | Under multi-turn owner, unknown pre-decide dispatches are denied |
+
+**Seal:** extend `PRE_DECIDE_ALLOWED_EXTRA_BY_OWNER` / `STICKY_UNIVERSAL_OK` + ratchet.
+**Do not** add a new named `*_blocks_*_early` helper for each leaf.
+
+**Bot0 module:** `api/services/conversation_control/pre_decide_owner_contract.py` 
+**Incidents:** `conv_e0008ce7` (KPI → inventory, then → sim early), `conv_5e398f46` (domain → inventory),
+`conv_5e8d3caa` (Staffed → project/discovery).
 
 ---
 
@@ -1256,6 +1358,36 @@ Enforced: `test_caq8_prompt_exception_retirement.py`, `test_s4_unified_turn_rout
 **Repeat offender surfaces:** `bot0_intent_router` L1/L2, help-phrase lists, deictic wordlists, domain-choice
 keyword matchers. On a routing bug, delete the wordlist — do not extend it.
 
+#### ⛔ Fail-soft option laundry — not product voice (A17 · root **D**)
+
+**Sibling disease to regex/CAQ-8, different layer.** CAQ-8 / A3–A5 are **meaning** laundry (*what did they
+mean?*). Fail-soft option laundry is **delivery** laundry: the classifier already returned `unclear` /
+`question` / `other`, and code still ships a **growing if/else CTA menu** as if it were coaching.
+
+| It is **not** | It **is** |
+|---|---|
+| NL cognition | Hardcoded enumeration of finite acts in prose |
+| A state transition | A fail-soft that re-teaches the grammar |
+| The card | A **duplicate** of ContentBlock `options[]` / chips that drifts when acts are added |
+
+**Smell:** `return "I didn't catch that. You can:\n- **accept**…\n- **skip**…\n- **use X**…"`
+
+**Right shape (same four-layer table as AGENTS §4):**
+
+| Layer | Owns |
+|---|---|
+| LLM classifier | Control labels (accept / replace / set_type / repropose / question / unclear / …) |
+| Code | Gate armed, leave checklist, match/create, AUTOMATA, ledger |
+| ContentBlock / chips | Finite options the user can act on |
+| LLM reasoner | Explain from **code-owned facts** when confused |
+
+**Allowed:** one short “still on this stage” line if the reasoner is down; a **single** armed-gate primary
+CTA (“reply **yes** to save”). **Disallowed:** multi-option “you can A / B / C / D” after fail-soft.
+
+**Sealed Bot0 reference:** staffing review (`role_proposal_review` question+unclear → reasoner + re-show card);
+IR gate re-echo; advisor UNKNOWN table re-show. Enforced: `failsoft_option_laundry_contract.py`,
+`test_failsoft_option_laundry_contract.py`. Inventory: [product-voice-delivery-surface-audit.md](product-voice-delivery-surface-audit.md).
+
 #### Authority boundary — LLM proposes; code owns the turn outcome
 
 | LLM may | Code must |
@@ -1264,10 +1396,13 @@ keyword matchers. On a routing bug, delete the wordlist — do not extend it.
 | Structured handoff *requests* via `TaskTransition` | **`decide_turn` writes** control keys; agents return domain-only `context_updates` |
 | Classifier output when confidence passes threshold | Fail-closed clarification or pick-list on `unclear` — **never guess from synonyms** |
 
-**Fall-through trap (load-bearing):** once a turn is an **edit** to a code-owned artifact (prior table, gate,
-ledger task), code owns the **entire** turn — compute, clarify, or reject. Returning `None` so the
-conversational LLM fabricates a code-looking table is a contract violation (Bot0 reference:
-`reallocation_parser` + personal_score sealed path).
+**Fall-through trap · escaped into unconstrained chat (load-bearing):** once a turn is an **edit**
+to a code-owned artifact (prior table, gate, ledger task) **or** an **armed multi-gate leave**,
+code owns the **entire** turn — compute, re-show the open surface, clarify, or reject. Returning
+`None` so the conversational LLM freestyles a code-looking table, a role ceremony, or phase fiction
+is a contract violation (**escaped into unconstrained chat**). CAQ `fall_through_fabrication`.
+Bot0 references: `reallocation_parser` + personal_score sealed path; domain-armed continue →
+`workflow_domain_picker` re-show (not freestyle “confirm the roles…”).
 
 **Render rule:** user-visible numbers and labels come from code renderers (`task_table_renderer`,
 `score_table_renderer`, `render_control_surface`) — strip LLM markdown tables at the boundary.
@@ -2205,7 +2340,7 @@ flowchart LR
 
 | Substrate | What it governs | Control-plane relationship |
 |---|---|---|
-| **Prompt library** | Classifier/router **prompt bodies** including **rubrics** (`prompt_key` → DB release) | Classifiers call `render_prompt_or_fallback`; rubric teaches label semantics; output enums feed `decide_turn` — prompts never write ledger keys (§11.4) |
+| **Prompt library** | Classifier/router **prompt bodies** including **rubrics** (`prompt_key` → DB release) | Classifiers call **`render_prompt`** (live release only — **no** inline LLM body); missing release → non-LLM refuse; rubric teaches label semantics; output enums feed `decide_turn` — prompts never write ledger keys (§11.4) |
 | **`llm_factory` `SERVICE_DEFAULTS`** | Per-classifier model, timeout, `service_key` | Every cognition hop registers here; audit recipe in platform substrate doc |
 | **`AGENT_REGISTRY`** | Which **specialists** exist for delegation (`agent_id` → implementation) | `TurnPlan.agent` targets; distinct from tools |
 | **`tool_registry` + code `TOOLS`** | Which **tools** exist, eligibility, `implementation_binding` | Used by **specialists** (Bot0 front-door loop, advisor, …) — **not** by `ledger.py` today |
@@ -2215,7 +2350,9 @@ flowchart LR
 
 Each bounded cognition module has a **`prompt_key`** in `prompt_definitions`, a **`service_key`** in
 `llm_factory`, and usually a **publish YAML** under `scripts/prompt_publish_specs/`. Inline constants
-in `conversation_control/` are **fail-open fallbacks only** when the DB release is missing.
+in `conversation_control/` are **publish source only** (YAML `body_attr`) — **not** a second runtime
+LLM body. Product path uses the **live release**; missing release fails closed (deterministic
+`unclear` / typed refuse — never a drifted Python prompt).
 
 | `service_key` / `prompt_key` | Module | Role in control plane |
 |---|---|---|

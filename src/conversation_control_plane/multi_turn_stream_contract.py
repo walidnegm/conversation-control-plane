@@ -49,6 +49,8 @@ SOLE_CONTINUE_KINDS = frozenset({
     SCORECARD_INTERROGATE_KIND,
     RISK_CATALOG_LEARNING_KIND,
     "workflow_build",
+    "pattern_midflight",
+    "recommendation_setup",
 })
 
 
@@ -109,6 +111,13 @@ ENTITY_RESOLVE_PHASES_BY_KIND: dict[str, frozenset[str]] = {
     # phases; mid-ladder is continue. Full sole-continue adoption is known_gap
     # until exclusive-owner map lands (sdk-grade-a); phase tables still closed.
     "workflow_build": frozenset({"open", "extracting", "gathering", ""}),
+    # Pattern midflight: pin workflow at choose/gap; continue for confirm/run.
+    "pattern_midflight": frozenset({"choose", "gap", ""}),
+    # Recommend setup interview: pin project/list at project phase only.
+    "recommendation_setup": frozenset({"project", "path", ""}),
+    # Engagement pack plan: no ambient entity re-resolve mid-plan.
+    # Open only (empty phase); plan/advancing/complete are continue-owned.
+    "engagement_pack_plan": frozenset({""}),
 }
 
 # Phases where continue cognition owns the turn (no entity re-resolve).
@@ -143,6 +152,26 @@ CONTINUE_PHASES_BY_KIND: dict[str, frozenset[str]] = {
         "editing",
         "active",
         "in_progress",
+    }),
+    "pattern_midflight": frozenset({
+        "confirm_run",
+        "running",
+        "results",
+        "abandoned",
+    }),
+    "engagement_pack_plan": frozenset({
+        "plan",
+        "advancing",
+        "complete",
+    }),
+    "recommendation_setup": frozenset({
+        "costs",
+        "scorecard",
+        "target",
+        "placements",
+        "graph",
+        "ready",
+        "abandoned",
     }),
 }
 
@@ -327,6 +356,10 @@ STREAM_GATE_ADOPTER_PATHS: frozenset[str] = frozenset({
     "api/services/conversation_control/task_pin_contract.py",
     # agent_cost_pricing multi-turn IR (shares cost_out exclusive owner)
     "api/services/agent_cost_pricing_pipeline.py",
+    # pattern midflight (Optimize/Expand/Rewire/Precedent) — epic C11
+    "api/services/conversation_control/pattern_midflight_contract.py",
+    # recommend 2.0 gather/setup sole-continue interview
+    "api/services/conversation_control/recommendation_setup_contract.py",
 })
 
 

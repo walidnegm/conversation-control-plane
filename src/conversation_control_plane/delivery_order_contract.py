@@ -139,7 +139,8 @@ DETOUR_DELIVERY_ORDER_TABLE: tuple[DetourDeliveryRow, ...] = (
         ),
         authority_module=(
             "bot0._try_resolve_cyber_risk_assessment_turn + "
-            "task_pin_contract.sole_continue_blocks_greenfield_start"
+            "task_pin_contract.sole_continue_blocks_greenfield_start + "
+            "task_pin_contract.sole_continue_blocks_foreign_surface_start"
         ),
     ),
     # Ledger session status (active activities / resume) — before concept_gate
@@ -254,6 +255,9 @@ EXCLUSIVE_TURN_OWNER_PRIORITY: tuple[str, ...] = (
     "realization",
     "outcome_value",
     "scorecard",
+    "pattern_midflight",  # Optimize/Expand/Rewire/Precedent midflight (C11)
+    "recommendation_setup",  # Recommend 2.0 gather/setup interview
+    "engagement_pack",  # Dense multi-surface plan of attack (F6)
     "surface_read",
     "advisor",
     "product_concept",
@@ -271,6 +275,9 @@ ACTION_EXCLUSIVE_OWNERS = frozenset({
     "realization",
     "outcome_value",
     "scorecard",
+    "pattern_midflight",
+    "recommendation_setup",
+    "engagement_pack",
     "surface_read",
     "advisor",
 })
@@ -351,6 +358,14 @@ def select_exclusive_turn_owner(
         # New strong action labels may supersede sole-continue (user switched goal).
         strong_new = False
         if signal is not None:
+            # Multi-surface SOW / engagement letter — supersede cost_out sole-continue
+            # only when not mid pin-refine (handled above).
+            if bool(getattr(signal, "engagement_pack_request", False)):
+                if sole_owner in (None, "default", "cost_out", "draft"):
+                    return ExclusiveTurnOwner(
+                        "engagement_pack",
+                        "engagement_pack_request multi-surface intake",
+                    )
             if bool(getattr(signal, "cost_estimate_request", False)):
                 strong_new = sole_owner != "cost_out"
             if bool(getattr(signal, "workflow_draft_request", False)):
@@ -364,6 +379,12 @@ def select_exclusive_turn_owner(
                     strong_new = True
                 elif sole_owner == "realization" and rk_probe != "realization_intake":
                     strong_new = True
+            # Saved-workflow proposal/improve is a foreign surface start — not
+            # drafting sole-continue (recommend improvements for named workflow).
+            if rk_probe == "proposal_options" and sole_owner in (
+                "draft", "workflow_build", "cost_out",
+            ):
+                strong_new = True
         if sole_owner and not strong_new and task_intent not in (
             "detour",
             "new_task",
@@ -381,6 +402,13 @@ def select_exclusive_turn_owner(
 
     if signal is None:
         return ExclusiveTurnOwner("default", "no signal")
+
+    # Multi-surface SOW / engagement letter — before focused cost or draft.
+    if bool(getattr(signal, "engagement_pack_request", False)):
+        return ExclusiveTurnOwner(
+            "engagement_pack",
+            "engagement_pack_request",
+        )
 
     if bool(getattr(signal, "cost_estimate_request", False)):
         return ExclusiveTurnOwner("cost_out", "cost_estimate_request")

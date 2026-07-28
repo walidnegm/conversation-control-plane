@@ -206,6 +206,49 @@ def decide_turn(
 
     dk = (discovery_kind or "none").strip().lower()
     if dk != "none" and is_front_door_detour_kind(dk):
+        # DT-name-as-greenfield: open advisor project-create owns free text
+        # (e.g. project name "Kinano2") — discovery must not supersede.
+        _block_discovery_create = False
+        try:
+            from conversation_control_plane.advisor_create_continue_contract import (
+                suppress_discovery_for_advisor_create,
+            )
+
+            _block_discovery_create = suppress_discovery_for_advisor_create(
+                context if isinstance(context, dict) else {},
+                history=messages,
+                query=query,
+            )
+        except Exception:  # noqa: BLE001
+            _block_discovery_create = False
+        if _block_discovery_create:
+            # Resume create owner; do not open discovery task.
+            if current_active:
+                active_task_obj = ActiveTask(**{
+                    k: v for k, v in current_active.items()
+                    if k in (
+                        "agent", "phase", "awaiting", "pending_ref", "kind", "payload",
+                    )
+                })
+                return TurnPlan(
+                    agent=_canonical(
+                        current_active.get("agent") or "transformation_advisor",
+                    ),
+                    mode="resume",
+                    task=active_task_obj,
+                    reason=(
+                        f"advisor project-create open — suppress discovery "
+                        f"detour ({dk})"
+                    ),
+                )
+            return TurnPlan(
+                agent="transformation_advisor",
+                mode="new",
+                reason=(
+                    f"advisor project-create open (create_graph_step) — "
+                    f"suppress discovery ({dk})"
+                ),
+            )
         active_task_obj = None
         if current_active:
             active_task_obj = ActiveTask(**{
@@ -688,6 +731,8 @@ def decide_turn(
         intent: str | None = None
         target = ""
         confidence = 0.0
+        intent_source = "heuristic"
+        _force_drafting_refine = False
         if isinstance(_carried_draft, dict) and _carried_draft.get("steps"):
             try:
                 from conversation_control_plane.prose_intake_contract import (
@@ -707,14 +752,92 @@ def decide_turn(
                     intent = "handoff"
                     target = "workflow_builder"
                     confidence = _aff_conf
+                elif _draft_turn in (
+                    "refine",
+                    "apply_structural",
+                    "recommend_prioritize",
+                    "how_to_implement",
+                ) and _aff_conf >= 0.5:
+                    # Stay on drafting (improvement cognition + free-text refine)
+                    intent = "continue"
+                    confidence = _aff_conf
+                    intent_source = f"drafting_{_draft_turn}"
+                    _force_drafting_refine = True
             except Exception:  # noqa: BLE001
                 logger.debug(
                     "drafting interpret fast-path skipped", exc_info=True,
                 )
 
+        # Improvement cognition / deictic apply must not hand off even if
+        # relative-intent later labels handoff/new_task by mistake.
+        try:
+            from conversation_control_plane.draft_improvement_cognition import (
+                resolve_draft_improvement_action as _improve_dec,
+            )
+            from conversation_control_plane.draft_strengtheners_contract import (
+                is_apply_structural_strengtheners_request as _apply_str_dec,
+            )
+
+            _pl_dec = _draft_payload if isinstance(_draft_payload, dict) else None
+            _act_dec = _improve_dec(
+                db,
+                tenant_id,
+                query=query,
+                messages=messages,
+                active_task=current_active,
+                payload=_pl_dec,
+                unified=unified_signal,
+                # Prefer prior resolve_carried path; still allow deictic + free
+                # refine protect if that path labeled handoff incorrectly.
+                skip_llm=True,
+            )
+            if (
+                _act_dec.applies_structural_brief
+                or _act_dec.turn_kind in (
+                    "recommend_prioritize",
+                    "how_to_implement",
+                    "apply_structural",
+                    "refine",
+                    "invite_refine",
+                )
+                or _apply_str_dec(
+                    query, payload=_pl_dec, unified=unified_signal,
+                )
+            ):
+                _force_drafting_refine = True
+                intent = "continue"
+                target = ""
+                intent_source = (
+                    f"improvement_{_act_dec.label}"
+                    if _act_dec.confidence >= 0.5
+                    else "apply_structural_strengtheners"
+                )
+                confidence = max(float(confidence or 0.0), 0.9)
+            # draft_improve_to_ir: open NL labeled handoff without finite interpret
+            if intent == "handoff" and not _force_drafting_refine:
+                try:
+                    from agent.workflow_builder.input_shape import (
+                        looks_like_interpret_command_request as _fin_i,
+                    )
+                    from conversation_control_plane.classifier import (
+                        drafting_interpret_gate_reply as _fin_g,
+                    )
+
+                    if not (_fin_g(query) or _fin_i(query)):
+                        _force_drafting_refine = True
+                        intent = "continue"
+                        target = ""
+                        intent_source = "draft_improve_to_ir_seal"
+                        confidence = max(float(confidence or 0.0), 0.9)
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception:  # noqa: BLE001
+            pass
+
         perceived = None
-        intent_source = "heuristic"
-        if intent != "handoff":
+        # Do not let relative-intent steal apply-strengtheners / forced refine
+        # into handoff (conv_735f617a).
+        if intent != "handoff" and not _force_drafting_refine:
             try:
                 perceived = _perceive_relative_intent(
                     db, tenant_id, query=query,
@@ -764,43 +887,73 @@ def decide_turn(
             and not _has_carried_draft_steps
         )
         if _fresh_drafting_domain:
-            # Trust the LLM classifier's "intent" (which now has strong instructions for cost+agent+describe = bot0, not drafting).
-            # We no longer use keyword catches here to decide — that would violate the NL/LLM-owned intent rule.
-            complete_task(
-                db, tenant_id, conversation_id, agent="bot0",
-                reason="superseded",
-                task_id=(
-                    current_active.get("task_id")
-                    if isinstance(current_active.get("task_id"), str)
-                    else None
-                ),
-            )
-            from conversation_control_plane.workflow_intake import (
-                drafting_pending_ref as _drafting_pending_ref,
+            # Pin re-entry open seal: do not supersede into greenfield drafting
+            # when a workflow identity pin is present unless cognition marks
+            # new_process (see pin_reentry_open_contract).
+            from conversation_control_plane.pin_reentry_open_contract import (
+                may_begin_greenfield_drafting as _may_draft,
             )
 
-            task = begin_task(
-                db, tenant_id, conversation_id, agent="bot0", kind="drafting",
-                phase="awaiting_details",
-                pending_ref=_drafting_pending_ref(conversation_id),
-                payload={"draft": None, "domain": q or None},
+            _be = str(getattr(unified_signal, "builder_entry", None) or "none")
+            _rk = str(getattr(unified_signal, "read_kind", None) or "none")
+            _ti = str(
+                intent
+                or getattr(unified_signal, "task_intent", None)
+                or ""
             )
-            if isinstance(task, dict):
-                task_obj = ActiveTask(**{k: v for k, v in task.items()
-                                         if k in ("agent", "phase", "awaiting", "pending_ref", "kind", "payload")})
+            if not _may_draft(
+                context=context,
+                workflow_draft_request=bool(workflow_draft_request)
+                or bool(intent == "new_task"),
+                builder_entry=_be,
+                read_kind=_rk,
+                task_intent=_ti if _ti != "new_task" else "new_task",
+                route_intent=str(live_route_intent or ""),
+                query=q,
+            ):
+                # Stay on current drafting refinement path (do not fork greenfield)
+                pass
             else:
-                task_obj = ActiveTask(
-                    agent="bot0", phase="awaiting_details", kind="drafting",
+                complete_task(
+                    db, tenant_id, conversation_id, agent="bot0",
+                    reason="superseded",
+                    task_id=(
+                        current_active.get("task_id")
+                        if isinstance(current_active.get("task_id"), str)
+                        else None
+                    ),
+                )
+                from conversation_control_plane.workflow_intake import (
+                    drafting_pending_ref as _drafting_pending_ref,
+                )
+
+                task = begin_task(
+                    db, tenant_id, conversation_id, agent="bot0", kind="drafting",
+                    phase="awaiting_details",
+                    pending_ref=_drafting_pending_ref(conversation_id),
                     payload={"draft": None, "domain": q or None},
                 )
-            plan = TurnPlan(agent="bot0", mode="drafting", task=task_obj,
-                            reason="fresh drafting task (new_task or workflow_draft_request while prior drafting active)")
-            _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent,
-                                live_route_layer, "fresh drafting after new domain")
-            return plan
+                if isinstance(task, dict):
+                    task_obj = ActiveTask(**{k: v for k, v in task.items()
+                                             if k in ("agent", "phase", "awaiting", "pending_ref", "kind", "payload")})
+                else:
+                    task_obj = ActiveTask(
+                        agent="bot0", phase="awaiting_details", kind="drafting",
+                        payload={"draft": None, "domain": q or None},
+                    )
+                plan = TurnPlan(agent="bot0", mode="drafting", task=task_obj,
+                                reason="fresh drafting task (new_task or workflow_draft_request while prior drafting active)")
+                _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent,
+                                    live_route_layer, "fresh drafting after new domain")
+                return plan
         # If the LLM classified this as a cost query (not "new_task"), it will fall through to normal bot0 handling below.
 
-        if intent == "handoff" and target == "workflow_builder" and confidence >= 0.5:
+        if (
+            intent == "handoff"
+            and target == "workflow_builder"
+            and confidence >= 0.5
+            and not _force_drafting_refine
+        ):
             _handoff_payload: dict[str, Any] = {}
             if isinstance(_carried_draft, dict) and _carried_draft.get("steps"):
                 _handoff_payload = {
@@ -1018,49 +1171,91 @@ def decide_turn(
                 return plan
         except Exception:  # noqa: BLE001 — structural guard must never break routing
             logger.debug("explicit-steps drafting bypass skipped", exc_info=True)
-        # Open a bot0-owned drafting task so the NEXT turn (the domain/details answer)
-        # is owned by drafting, not stolen by an active builder. Suspend any active
-        # task first (single-writer). Gated on the workflow_draft signal → inert for
-        # every existing flow.
-        # We trust the live_route (LLM) here. The classifier prompt explicitly says cost+agent+describe = bot0,
-        # not workflow_draft. No keyword filter deciding intent.
-        if current_active:
-            suspend_active(db, tenant_id, conversation_id, reason="drafting_detour")
-        _open_q = (query or "").strip()
-        _open_domain = _open_q[:500] if len(_open_q) > 10 else None
-        from conversation_control_plane.workflow_intake import (
-            drafting_pending_ref as _drafting_pending_ref,
+
+        # Purity open seal: pin-resume forbids greenfield drafting unless
+        # cognition marks new_process (pin_reentry_open_contract).
+        from conversation_control_plane.pin_reentry_open_contract import (
+            drafting_open_blocked_reason as _draft_block_reason,
+            may_begin_greenfield_drafting as _may_open_draft,
         )
 
-        task = begin_task(
-            db, tenant_id, conversation_id, agent="bot0", kind="drafting",
-            phase="awaiting_details",
-            pending_ref=_drafting_pending_ref(conversation_id),
-            payload={
-                "draft": None,
-                "domain": _open_domain,
-                "intake_seed": _open_q,
-            },
+        _be = (
+            str(getattr(unified_signal, "builder_entry", None) or "none")
+            if unified_signal is not None
+            else "none"
         )
-        if isinstance(task, dict):
-            task_obj = ActiveTask(**{k: v for k, v in task.items()
-                                     if k in ("agent", "phase", "awaiting", "pending_ref", "kind", "payload")})
+        _rk = (
+            str(getattr(unified_signal, "read_kind", None) or "none")
+            if unified_signal is not None
+            else "none"
+        )
+        _ti = (
+            str(getattr(unified_signal, "task_intent", None) or "")
+            if unified_signal is not None
+            else ""
+        )
+        if not _may_open_draft(
+            context=context,
+            workflow_draft_request=bool(workflow_draft_request),
+            builder_entry=_be,
+            read_kind=_rk,
+            task_intent=_ti or None,
+            route_intent=str(live_route_intent or ""),
+            query=query,
+        ):
+            _why = _draft_block_reason(
+                context=context,
+                workflow_draft_request=bool(workflow_draft_request),
+                builder_entry=_be,
+                read_kind=_rk,
+                task_intent=_ti or None,
+                query=query,
+            )
+            logger.info(
+                "decide_turn refused greenfield drafting open: %s",
+                _why or "pin_reentry",
+            )
+            # Fall through — pin-bound leaves / default bot0 with pin brief
         else:
-            task_obj = ActiveTask(
-                agent="bot0",
+            # Open a bot0-owned drafting task so the NEXT turn (the domain/details
+            # answer) is owned by drafting. Cognition open signal only — no laundry.
+            if current_active:
+                suspend_active(db, tenant_id, conversation_id, reason="drafting_detour")
+            _open_q = (query or "").strip()
+            _open_domain = _open_q[:500] if len(_open_q) > 10 else None
+            from conversation_control_plane.workflow_intake import (
+                drafting_pending_ref as _drafting_pending_ref,
+            )
+
+            task = begin_task(
+                db, tenant_id, conversation_id, agent="bot0", kind="drafting",
                 phase="awaiting_details",
-                kind="drafting",
+                pending_ref=_drafting_pending_ref(conversation_id),
                 payload={
                     "draft": None,
                     "domain": _open_domain,
                     "intake_seed": _open_q,
                 },
             )
-        plan = TurnPlan(agent="bot0", mode="drafting", task=task_obj,
-                        reason="open drafting task (workflow_draft signal)")
-        _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent,
-                            live_route_layer, "drafting task opened")
-        return plan
+            if isinstance(task, dict):
+                task_obj = ActiveTask(**{k: v for k, v in task.items()
+                                         if k in ("agent", "phase", "awaiting", "pending_ref", "kind", "payload")})
+            else:
+                task_obj = ActiveTask(
+                    agent="bot0",
+                    phase="awaiting_details",
+                    kind="drafting",
+                    payload={
+                        "draft": None,
+                        "domain": _open_domain,
+                        "intake_seed": _open_q,
+                    },
+                )
+            plan = TurnPlan(agent="bot0", mode="drafting", task=task_obj,
+                            reason="open drafting task (workflow_draft signal)")
+            _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent,
+                                live_route_layer, "drafting task opened")
+            return plan
 
     # --- Step 3.9: IC4 — router ambiguity clarifier before sticky resume ---
     _clarifier_q = None
@@ -1182,6 +1377,52 @@ def decide_turn(
         # 1) Explicit new task, OR (mid-flight only) a divergent route claiming one → suspend (resumable)
         # + begin the new one. The conv_2999b108 save — now gated so it can't fire at a confirmation gate.
         if intent == "new_task" or route_claims_new_task or fresh_new_spec:
+            # Open project-create owns free text (re-paste team sizing after name-ask
+            # error must not D4-suspend into bot0 ceremony — conv_648143cd).
+            # Same table as D4 abandon suppress + discovery suppress.
+            try:
+                from conversation_control_plane.advisor_create_continue_contract import (
+                    advisor_project_create_open as _create_open_new,
+                )
+
+                _ctx_nt = context if isinstance(context, dict) else {}
+                if _create_open_new(_ctx_nt, history=messages):
+                    plan = TurnPlan(
+                        agent=_canonical(
+                            current_active.get("agent")
+                            or "transformation_advisor",
+                        ),
+                        mode="continue",
+                        task=ActiveTask(
+                            agent=_canonical(
+                                current_active.get("agent")
+                                or "transformation_advisor",
+                            ),
+                            phase=str(current_active.get("phase") or "active"),
+                            awaiting=awaiting or "in_progress",
+                            kind=str(current_active.get("kind") or "") or None,
+                            payload=(
+                                current_active.get("payload")
+                                if isinstance(current_active.get("payload"), dict)
+                                else None
+                            ),
+                            pending_ref=current_active.get("pending_ref"),
+                        ) if isinstance(current_active, dict) else None,
+                        reason=(
+                            "advisor project-create open — suppress new_task "
+                            f"steal ({intent_source})"
+                        ),
+                    )
+                    _maybe_log_conflict(
+                        db, tenant_id, conversation_id, plan, live_route_intent,
+                        live_route_layer, "D4 new_task suppressed create open",
+                    )
+                    return plan
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "advisor create open new_task suppress skipped",
+                    exc_info=True,
+                )
             new_agent = live_route_intent or agent
             suspend_active(db, tenant_id, conversation_id, reason="new_task_while_active")
             _new_kind = ledger_kind_for_agent(new_agent)
@@ -1208,6 +1449,49 @@ def decide_turn(
         # cost_out destroyed + drafting gibberish). Same confidence floor as T4
         # mid-flight route claims (0.7 is not enough for permanent complete).
         if intent == "abandon":
+            # Open advisor project-create owns free text (name / roles / FTE).
+            # Soft abandon labels must not wipe create mid-flight — same class as
+            # DT-name-as-greenfield (conv_665da16b). Exact reset still wins earlier
+            # via is_exact_reset_command / bot0 _is_reset_cmd.
+            try:
+                from conversation_control_plane.advisor_create_continue_contract import (
+                    advisor_project_create_open as _create_open_abandon,
+                )
+
+                # State only: open create leaf owns free text (name/roles/desc).
+                # No skip-phrase laundry — cognition + create tool handle "skip".
+                _ctx_ab = context if isinstance(context, dict) else {}
+                if _create_open_abandon(_ctx_ab, history=messages):
+                    plan = TurnPlan(
+                        agent=agent,
+                        mode="continue",
+                        task=ActiveTask(
+                            agent=str(current_active.get("agent") or agent),
+                            phase=str(current_active.get("phase") or "active"),
+                            awaiting=awaiting or "in_progress",
+                            kind=str(current_active.get("kind") or "") or None,
+                            payload=(
+                                current_active.get("payload")
+                                if isinstance(current_active.get("payload"), dict)
+                                else None
+                            ),
+                            pending_ref=current_active.get("pending_ref"),
+                        ) if isinstance(current_active, dict) else None,
+                        reason=(
+                            f"D4 abandon suppressed — advisor project-create open "
+                            f"({intent_source})"
+                        ),
+                    )
+                    _maybe_log_conflict(
+                        db, tenant_id, conversation_id, plan, live_route_intent,
+                        live_route_layer, "D4 abandon suppressed create open",
+                    )
+                    return plan
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "advisor create open abandon suppress skipped",
+                    exc_info=True,
+                )
             if _route_conf < 0.85:
                 # Fail soft: resume active; never open a new stream from the insult.
                 plan = TurnPlan(
@@ -1364,6 +1648,34 @@ def decide_turn(
             or (intent in (None, "unclear", "handoff") and heuristic_answers and not route_broke_to_bot0)
             or (_finite_gate_ack and at_specific_gate and not bot0_midflight_detour)
         ) and not fresh_new_spec  # fresh new spec wins over heuristic continue for same agent
+        # Create leaf open (or finite post-create match/save): never detour to
+        # bot0 freestyle ceremony (conv_6ca62a5c / conv_648143cd re-paste).
+        if not continues and agent in (
+            "transformation_advisor", "advisor", "bot0",
+        ):
+            try:
+                from conversation_control_plane.advisor_create_continue_contract import (
+                    advisor_project_create_open as _create_open_cont,
+                    should_force_create_flow_for_post_create_continue as _force_pc,
+                )
+
+                _hist = None
+                if messages:
+                    _hist = [
+                        (m.get("role"), m.get("content"))
+                        if isinstance(m, dict)
+                        else m
+                        for m in messages
+                    ]
+                _ctx_c = context if isinstance(context, dict) else {}
+                if _create_open_cont(_ctx_c, history=_hist) or _force_pc(
+                    _ctx_c, query, history=_hist,
+                ):
+                    continues = True
+                    if agent in ("bot0", ""):
+                        agent = "transformation_advisor"
+            except Exception:  # noqa: BLE001
+                pass
         # Session reorient: specific gates OR sole-continue mid-stream after long gap.
         # (Silent "continue" after hours is a multi-turn trust failure — all paints.)
         _kind_for_stale = str(current_active.get("kind") or "").strip()

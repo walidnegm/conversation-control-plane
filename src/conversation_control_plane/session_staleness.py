@@ -45,7 +45,79 @@ _KIND_LABEL = {
     "scorecard_interrogate": "scorecard / run review",
     "risk_catalog_learning": "risk catalog exploration",
     "workflow_build": "workflow build",
+    # F12a — engagement pack conductor (not a BOT0_AGENTS agent)
+    "engagement_pack_plan": "initiative plan",
 }
+
+# Mid-flight markers that used to skip reorient (bug: silent continue after hours).
+_MIDFLIGHT_AWAITING = frozenset({"", "in_progress", "none", "null"})
+
+# Ledger ``awaiting`` tokens → product voice. Never paint raw snake_case
+# (conv_6a6dbadb: "Resuming … at **plan_act**").
+_AWAITING_LABEL: dict[str, str] = {
+    "plan_act": "your initiative plan",
+    "mapping_confirm": "confirming the plan overview",
+    "in_progress": "in-progress work",
+    "in-progress work": "in-progress work",
+    "operational_metrics": "operational metrics",
+    "ir_review": "Draft IR review",
+    "awaiting_ir_confirmation": "Draft IR confirmation",
+    "awaiting_role_proposal_review": "staffed role review",
+    "awaiting_commit_confirmation": "save confirmation",
+    "awaiting_domain_choice": "domain choice",
+    "awaiting_details": "waiting for more detail",
+    "staff_as_is_accept": "staffing the as-is workflow",
+    "staff_to_be_accept": "staffing the to-be workflow",
+    "cost_profile_save_confirm": "cost profile save",
+    "the previous step": "where you left off",
+}
+
+
+def product_voice_awaiting_label(awaiting: str | None) -> str | None:
+    """Map ledger awaiting tokens to product voice (or omit unsafe internals).
+
+    Returns a short user-facing phrase, or ``None`` when the token must not
+    appear in prose (unknown snake_case). Callers omit the clause when None.
+    """
+    import re
+
+    raw = str(awaiting or "").strip()
+    if not raw:
+        return "in-progress work"
+    key = raw.casefold().replace(" ", "_").replace("-", "_")
+    if key in _MIDFLIGHT_AWAITING or key in {"none", "null", ""}:
+        return "in-progress work"
+    if key in _AWAITING_LABEL:
+        return _AWAITING_LABEL[key]
+    # Engagement-pack step_ids double as awaiting_detail
+    try:
+        from conversation_control_plane.engagement_pack_contract import (
+            _STEP_LABELS,
+        )
+
+        if key in _STEP_LABELS:
+            return str(_STEP_LABELS[key])
+    except Exception:  # noqa: BLE001
+        pass
+    # Already human prose (spaces / title words) — keep
+    if " " in raw and not re.search(r"_[a-z]", raw.casefold()):
+        return raw
+    # Unknown snake_case / camelCase machine token → do not paint
+    if re.fullmatch(r"[a-z][a-z0-9_]{1,80}", key) and "_" in key:
+        return None
+    if re.fullmatch(r"[a-z]+(?:[A-Z][a-z0-9]+)+", raw):
+        return None
+    return raw
+
+
+def resume_session_product_lead(*, awaiting: str | None = None) -> str:
+    """Code-owned Resume lead — no internal awaiting tokens in prose."""
+    label = product_voice_awaiting_label(awaiting)
+    if label and label not in ("in-progress work", "where you left off"):
+        return (
+            f"Picking up where you left off — **{label}**."
+        )
+    return "Picking up where you left off."
 
 
 def _humanize_age(minutes: float) -> str:
@@ -68,9 +140,6 @@ SESSION_REORIENTATION_ACTION_IDS = frozenset(
         SESSION_REORIENTATION_START_FRESH_ACTION,
     }
 )
-
-# Mid-flight markers that used to skip reorient (bug: silent continue after hours).
-_MIDFLIGHT_AWAITING = frozenset({"", "in_progress", "none", "null"})
 
 
 def _parse_iso(ts: str | None) -> dt.datetime | None:
@@ -166,8 +235,11 @@ def should_reorient_before_acting(
 
     Does **not** fire when the user already acked Resume/Start Fresh for this
     gap, or when a reorient card is already pending.
+
+    ``query`` is reserved for host short-circuits (finite chips still reorient —
+    honesty before mutative IR/repair acts after a long idle gap).
     """
-    del query  # reserved; finite action_ids handled on bot0 action path
+    _ = query
     ctx = context or {}
     if _ack_covers_last_completed_turn(ctx):
         return False
@@ -191,6 +263,23 @@ def should_reorient_before_acting(
     return True
 
 
+def needs_session_reorientation_surface(
+    db: Any,
+    *,
+    context: dict[str, Any] | None,
+    query: str = "",
+) -> bool:
+    """True when host should open the Resume/Start Fresh card (no LLM).
+
+    Covers both first stale-gap fire and re-show while a card is already
+    pending (user clicked Continue repair again without Resume).
+    """
+    ctx = context or {}
+    if ctx.get("session_reorientation_pending"):
+        return True
+    return should_reorient_before_acting(db, context=ctx, query=query)
+
+
 def build_session_staleness_reorientation(
     *,
     context: dict[str, Any] | None,
@@ -204,19 +293,32 @@ def build_session_staleness_reorientation(
     label = _AGENT_LABEL.get(str(agent), str(agent))
     kind = str(active.get("kind") or "").strip()
     stream = _KIND_LABEL.get(kind) or label
-    awaiting = str(active.get("awaiting") or "").strip()
-    if not awaiting or awaiting.lower() in _MIDFLIGHT_AWAITING:
-        awaiting = "in-progress work"
+    raw_awaiting = str(active.get("awaiting") or "").strip()
+    awaiting_voice = product_voice_awaiting_label(raw_awaiting) or "in-progress work"
     gap = _gap_minutes_since_last_turn(ctx) or 0.0
+    # _humanize_age already ends with "ago" / "just now" — do not append another.
     age = _humanize_age(gap)
-    summary = (
-        f"We were mid-{stream} ({awaiting}) about {age} ago. "
-        "Choose whether to continue that session or reset before I act on the next message."
-    )
-    text = (
-        f"We were mid-**{stream}** ({awaiting}) about **{age}** ago. "
-        "Choose whether to pick up where we left off or start fresh before I act."
-    )
+    # Product voice: stream + optional stage — never raw plan_act / snake_case.
+    if awaiting_voice and awaiting_voice != "in-progress work":
+        summary = (
+            f"We were mid-{stream} ({awaiting_voice}) about {age}. "
+            "Choose whether to continue that session or reset before I act "
+            "on the next message."
+        )
+        text = (
+            f"We were mid-**{stream}** ({awaiting_voice}) about **{age}**. "
+            "Choose whether to pick up where we left off or start fresh before I act."
+        )
+    else:
+        summary = (
+            f"We were mid-{stream} about {age}. "
+            "Choose whether to continue that session or reset before I act "
+            "on the next message."
+        )
+        text = (
+            f"We were mid-**{stream}** about **{age}**. "
+            "Choose whether to pick up where we left off or start fresh before I act."
+        )
     return {
         "action": "answer",
         "route": None,
@@ -231,7 +333,8 @@ def build_session_staleness_reorientation(
                         "summary": summary,
                         "agent": agent,
                         "agent_label": label,
-                        "awaiting": awaiting,
+                        # FE may show stage — product voice only
+                        "awaiting": awaiting_voice,
                         "age_label": age,
                         "kind": kind or None,
                         "actions": [
@@ -260,7 +363,10 @@ def build_session_staleness_reorientation(
 
 __all__ = [
     "build_session_staleness_reorientation",
+    "needs_session_reorientation_surface",
+    "product_voice_awaiting_label",
     "reorientation_threshold_minutes",
+    "resume_session_product_lead",
     "SESSION_REORIENTATION_ACTION_IDS",
     "SESSION_REORIENTATION_RESUME_ACTION",
     "SESSION_REORIENTATION_START_FRESH_ACTION",

@@ -66,6 +66,32 @@ def builder_pending_pk(tenant_id: str, conversation_id: str) -> str:
     return f"{tenant_id}:bld_{conversation_id}"
 
 
+def reconcile_authoring_gate_flags(pending: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Heal dual-flag drift so Staffed IR / IR / commit gates stay armed.
+
+    conv_5e8d3caa: ``_state`` stayed ``awaiting_role_proposal_review`` while
+    ``_awaiting_role_proposal_review`` was cleared on a failed leave — routing
+    then treated the turn as free bot0 chat and ``get_project_staffing`` used
+    the *draft workflow name* as a project (hallucinated miss).
+    """
+    if not isinstance(pending, dict) or not pending:
+        return pending
+    st = str(pending.get("_state") or "").strip().lower()
+    if st == "awaiting_role_proposal_review" or pending.get("_awaiting_role_proposal_review"):
+        pending["_awaiting_role_proposal_review"] = True
+    if st == "awaiting_ir_confirmation" or pending.get("_awaiting_ir_confirmation"):
+        pending["_awaiting_ir_confirmation"] = True
+    if st == "awaiting_commit_confirmation" or pending.get("_awaiting_commit_confirmation"):
+        pending["_awaiting_commit_confirmation"] = True
+    # Domain gate: dual-flag heal (conv_d94e7043 purity — coarse phase alone
+    # dropped domain / commit / staffed awaiting from ledger projection).
+    if st == "awaiting_domain" or pending.get("_awaiting_domain_choice"):
+        pending["_awaiting_domain_choice"] = True
+        if st != "awaiting_domain":
+            pending["_state"] = "awaiting_domain"
+    return pending
+
+
 def load_builder_pending_state(
     db: Any,
     tenant_id: str | None,
@@ -85,7 +111,9 @@ def load_builder_pending_state(
         if not row or not row[0]:
             return None
         state = row[0] if isinstance(row[0], dict) else json.loads(row[0])
-        return state if isinstance(state, dict) and state else None
+        if not isinstance(state, dict) or not state:
+            return None
+        return reconcile_authoring_gate_flags(state)
     except Exception:  # noqa: BLE001 — best-effort projection, never raises
         return None
 
@@ -94,25 +122,36 @@ def project_fine_authoring_phase(pending: dict[str, Any] | None) -> str | None:
     """Map durable builder pending to a routing-safe fine phase."""
     if not pending:
         return None
+    pending = reconcile_authoring_gate_flags(pending) or pending
     if pending.get("_awaiting_post_commit_clarification"):
         return PHASE_EDITING
+    # Live IR gate beats post-save committed stamp. Dual to-be re-open after
+    # commit left _committed=true + _awaiting_ir_confirmation=true; projecting
+    # COMMITTED first made invent/New plan miss the gate and freestyle
+    # "Topology Fix Proposed" under pack plan_act (conv_6a6dbadb msg80).
+    if pending.get("_awaiting_ir_confirmation"):
+        return PHASE_IR_REVIEW
     if pending.get("_committed") or pending.get("workflow_created"):
         return PHASE_COMMITTED
     if pending.get("_awaiting_operational_data"):
         return PHASE_OPERATIONAL_DATA
-    if pending.get("_awaiting_ir_confirmation"):
-        return PHASE_IR_REVIEW
-    if pending.get("_awaiting_role_proposal_review"):
+    st = str(pending.get("_state") or "").strip().lower()
+    if pending.get("_awaiting_role_proposal_review") or st == "awaiting_role_proposal_review":
         return PHASE_ROLE_PROPOSAL
-    if pending.get("_awaiting_commit_confirmation"):
+    # Domain before commit in projection order — commit must not hide an open domain gate.
+    from agent.workflow_builder.domain_picker_renderer import domain_authoring_gate_open
+
+    if (
+        domain_authoring_gate_open(pending)
+        or pending.get("_awaiting_domain_choice")
+        or st == "awaiting_domain"
+    ):
+        return PHASE_DOMAIN_PICKER
+    if pending.get("_awaiting_commit_confirmation") or st == "awaiting_commit_confirmation":
         from agent.workflow_builder.commit_readiness import is_commit_plan_ready
 
         if is_commit_plan_ready(pending):
             return PHASE_COMMIT_PLAN
-    from agent.workflow_builder.domain_picker_renderer import domain_authoring_gate_open
-
-    if domain_authoring_gate_open(pending):
-        return PHASE_DOMAIN_PICKER
 
     from agent.workflow_builder.state import project_coarse_phase
 
@@ -369,8 +408,8 @@ def resume_authoring_owns_turn(
             query, db=db, tenant_id=tenant_id, history=messages,
         ):
             return False
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:  # noqa: BLE001 — glossary probe never blocks authoring resume
+        logger.debug("glossary detour probe skipped", exc_info=True)
     if not workflow_authoring_active(context):
         return False
     pending = load_builder_pending_state(db, tenant_id, conversation_id)
@@ -420,15 +459,45 @@ def surface_read_detour_suppressed(
     authoring_phase: str | None,
     *,
     context: object = None,
+    task_intent: str | None = None,
 ) -> bool:
-    """True when the workflow-surface read detour must not run."""
-    if not workflow_authoring_active(context):
-        return False
-    if authoring_phase is None:
-        # Builder/editor is active but pending could not be loaded — still
-        # suppress saved-workflow detours so KPI/IR turns stay in-builder.
-        return True
-    return authoring_phase != PHASE_COMMITTED
+    """True when the workflow-surface read detour must not run.
+
+    Suppresses when:
+    * builder/editor authoring is active and not yet committed (CAQ-10), or
+    * ledger sole-continue owns the turn (drafting refine, cost-out, …) so
+      greenfield O&V / library open cannot steal (conv_80523a09).
+    """
+    if workflow_authoring_active(context):
+        if authoring_phase is None:
+            # Builder/editor is active but pending could not be loaded — still
+            # suppress saved-workflow detours so KPI/IR turns stay in-builder.
+            return True
+        if authoring_phase != PHASE_COMMITTED:
+            return True
+    # Sole-continue drafting (and sibling kinds) — not builder-agent-keyed.
+    try:
+        from conversation_control_plane.task_pin_contract import (
+            sole_continue_suppresses_surface_read,
+        )
+
+        active = None
+        if isinstance(context, dict):
+            cand = context.get("active_task")
+            active = cand if isinstance(cand, dict) else None
+            if task_intent is None:
+                task_intent = str(context.get("task_intent") or "continue")
+        if sole_continue_suppresses_surface_read(
+            active, task_intent=task_intent,
+        ):
+            return True
+    except Exception:  # noqa: BLE001 — never break routing on suppress helper
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "sole_continue surface suppress helper failed", exc_info=True,
+        )
+    return False
 
 
 def active_agent_task_blocks_detour(
@@ -440,14 +509,18 @@ def active_agent_task_blocks_detour(
     query: str = "",
     context: object = None,
     authoring_phase: str | None = None,
+    task_intent: str | None = None,
 ) -> bool:
     """Single facade: active authoring task owns the turn — block competing detours.
 
-    ``surface_read`` — saved-workflow read classifier must not fire mid-IR.
+    ``surface_read`` — saved-workflow read classifier must not fire mid-IR /
+    mid-drafting sole-continue.
     ``discovery`` / ``orientation`` — front-door cognition must not steal gate replies.
     """
     if detour_kind == "surface_read":
-        return surface_read_detour_suppressed(authoring_phase, context=context)
+        return surface_read_detour_suppressed(
+            authoring_phase, context=context, task_intent=task_intent,
+        )
     if detour_kind in ("discovery", "orientation"):
         return discovery_cognition_suppressed(
             db, tenant_id, conversation_id, query, context=context,
@@ -463,6 +536,9 @@ WORKFLOW_CONFIRMATION_REPLIES = frozenset({
     "go ahead", "go on", "looks good", "looks right", "correct",
     "that works", "confirm", "confirmed", "fine", "good", "great",
     "no", "n", "nope", "cancel", "stop", "save",
+    # Exclusive IR-gate chip tokens (structure vs repair — not dual-yes).
+    "lets continue", "let's continue",
+    "apply_structure_fixes", "confirm fixes",
 })
 
 # Menu tokens for Staffed IR (role proposal review).
@@ -480,12 +556,17 @@ ROLE_PROPOSAL_DECLINE_REPLIES = frozenset({
 ROLE_PROPOSAL_REPROPOSE_REPLIES = frozenset({
     "try again", "repropose",
 })
-ROLE_PROPOSAL_ACCEPT_REPLIES = frozenset({"accept"}) | frozenset(
-    t for t in WORKFLOW_CONFIRMATION_REPLIES
-    if t not in ROLE_PROPOSAL_DECLINE_REPLIES
-    and t not in ROLE_PROPOSAL_REPROPOSE_REPLIES
-    and t != "save"
-)
+# Staffed leave tokens only — not structure-chip "lets continue" (conv_882a6234).
+# Align with authoring_gate_contract.STAFFED_MENU_ACCEPT.
+ROLE_PROPOSAL_ACCEPT_REPLIES = frozenset({
+    "accept",
+    "go ahead",
+    "yes",
+    "y",
+    "ok",
+    "okay",
+    "sure",
+})
 # Structural gate ownership: menu + natural accept (authoring_gate_turn).
 ROLE_PROPOSAL_REPLIES = (
     ROLE_PROPOSAL_MENU_REPLIES
@@ -802,7 +883,12 @@ def discovery_cognition_suppressed(
     context: object = None,
     messages: list | None = None,
 ) -> bool:
-    """Skip discovery/orientation LLM when an active task owns a finite gate reply."""
+    """Skip discovery/orientation LLM when authoring owns the turn.
+
+    Not only finite-token gate replies — open Staffed IR / IR / domain / commit
+    must suppress discovery so free-text like "show me the staffing again"
+    cannot become intent_clarify (process-first pack) or orientation (conv_5e8d3caa).
+    """
     if discovery_orientation_suppressed(
         db, tenant_id, conversation_id, query, context=context,
     ):
@@ -816,10 +902,30 @@ def discovery_cognition_suppressed(
         messages=messages,
     ):
         return True
+    # Pending-authority: open pre-commit gates own free-text continues.
+    pending = load_builder_pending_state(db, tenant_id, conversation_id)
+    pending = reconcile_authoring_gate_flags(pending) if pending else None
+    phase = project_fine_authoring_phase(pending)
+    if phase in _AUTHORING_GATE_PHASES:
+        return True
     ctx = context if isinstance(context, dict) else {}
     active = ctx.get("active_task")
     if not isinstance(active, dict):
         return False
+    # Ledger sole-continue on workflow_build: suppress front-door discovery.
+    kind = str(active.get("kind") or "").strip()
+    agent = str(active.get("agent") or "").strip()
+    if kind == "workflow_build" or agent in ("workflow_builder", "workflow_editor"):
+        awaiting = str(active.get("awaiting") or "").strip()
+        if awaiting and awaiting not in ("", "in_progress"):
+            return True
+        # phase=role_proposal even when awaiting string differs
+        ph = str(active.get("phase") or "").strip().lower()
+        if ph in {
+            "role_proposal", "ir_review", "commit_plan", "domain_picker",
+            "operational_data", "reviewing",
+        }:
+            return True
     awaiting = str(active.get("awaiting") or "").strip()
     if not awaiting or awaiting == "in_progress":
         return False
@@ -895,6 +1001,147 @@ def domain_gate_owns_authoring_turn(
     from agent.workflow_builder.domain_picker_renderer import domain_authoring_gate_open
 
     return domain_authoring_gate_open(pending)
+
+
+def domain_picker_blocks_inventory_soft_name(
+    db: Any,
+    *,
+    tenant_id: str,
+    conversation_id: str | None,
+    context: object = None,
+    query: str = "",
+) -> bool:
+    """conv_5e398f46: domain_picker exclusive over inventory soft-name.
+
+    When the industry-domain card is armed, free-text replies (typed label or
+    number) must bind via ``resolve_offered_domain_pick`` on the builder path —
+    never tenant inventory soft-name ("Customer management" → 10 workflows).
+    """
+    return domain_gate_owns_authoring_turn(
+        db,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        query=query or "domain",  # non-empty so gate check runs
+        context=context,
+    )
+
+
+def authoring_gate_blocks_inventory_resolve(
+    db: Any,
+    *,
+    tenant_id: str,
+    conversation_id: str | None,
+    context: object = None,
+    query: str = "",
+) -> bool:
+    """Open pre-commit authoring gates exclusive over inventory short-circuit.
+
+    Domain / Staffed IR / IR / KPI / commit must not lose free-text to
+    ``inventory_name_resolve`` / inspect-saved (conv_e0008ce7: KPI labels
+    without a number → Help Desk invalid graph; conv_5e398f46 domain).
+    """
+    if domain_picker_blocks_inventory_soft_name(
+        db,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        context=context,
+        query=query or "gate",
+    ):
+        return True
+    pending = load_builder_pending_state(db, tenant_id, conversation_id)
+    pending = reconcile_authoring_gate_flags(pending) if pending else None
+    if operational_data_kpi_gate_open(pending, context=context):
+        return True
+    phase = project_fine_authoring_phase(pending)
+    if phase in _AUTHORING_GATE_PHASES:
+        return True
+    ctx = context if isinstance(context, dict) else {}
+    active = ctx.get("active_task")
+    if not isinstance(active, dict):
+        return False
+    kind = str(active.get("kind") or "").strip()
+    agent = str(active.get("agent") or "").strip()
+    if kind != "workflow_build" and agent not in (
+        "workflow_builder", "workflow_editor",
+    ):
+        return False
+    awaiting = str(active.get("awaiting") or "").strip()
+    if awaiting and awaiting not in ("", "in_progress"):
+        return True
+    ph = str(active.get("phase") or "").strip().lower()
+    return ph in {
+        "role_proposal", "ir_review", "commit_plan", "domain_picker",
+        "operational_data", "reviewing",
+    }
+
+
+def exclusive_owner_blocks_inventory_early(
+    db: Any,
+    *,
+    tenant_id: str,
+    conversation_id: str | None,
+    context: object = None,
+    query: str = "",
+) -> bool:
+    """Host-level: open exclusive owner blocks pre-decide inventory name/soft.
+
+    **Implementation:** :func:`pre_decide_owner_contract.project_and_allow` —
+    not a growing ``if open_X: skip inventory`` laundry. Same rule denies
+    ``workflow_simulation_entry_early`` and other foreign pre-decide leaves.
+    """
+    try:
+        from conversation_control_plane.pre_decide_owner_contract import (
+            foreign_pre_decide_blocked,
+            project_pre_decide_owner,
+        )
+
+        owner = project_pre_decide_owner(
+            db,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            context=context if isinstance(context, dict) else None,
+            query=query or "",
+        )
+        return foreign_pre_decide_blocked(owner, "inventory_name_resolve")
+    except Exception:  # noqa: BLE001
+        # Fail closed on open authoring only (legacy path).
+        return bool(
+            authoring_gate_blocks_inventory_resolve(
+                db,
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                context=context,
+                query=query,
+            ),
+        )
+
+
+def exclusive_owner_blocks_foreign_pre_decide(
+    db: Any,
+    *,
+    tenant_id: str,
+    conversation_id: str | None,
+    context: object = None,
+    query: str = "",
+    dispatch: str,
+) -> bool:
+    """True when projected owner denies this pre-decide dispatch (A18 seal)."""
+    try:
+        from conversation_control_plane.pre_decide_owner_contract import (
+            foreign_pre_decide_blocked,
+            project_pre_decide_owner,
+        )
+
+        owner = project_pre_decide_owner(
+            db,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            context=context if isinstance(context, dict) else None,
+            query=query or "",
+        )
+        return foreign_pre_decide_blocked(owner, dispatch)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def ir_gate_owns_role_proposal_turn(
@@ -1055,7 +1302,12 @@ __all__ = [
     "sync_authoring_snapshot_to_ledger",
     "router_supersedes_discovery",
     "synthesize_gate_continue_route",
+    "domain_gate_owns_authoring_turn",
     "domain_gate_owns_pick_turn",
+    "domain_picker_blocks_inventory_soft_name",
+    "authoring_gate_blocks_inventory_resolve",
+    "exclusive_owner_blocks_inventory_early",
+    "exclusive_owner_blocks_foreign_pre_decide",
     "ir_gate_owns_role_proposal_turn",
     "load_workflow_authoring_phase",
     "normalize_short_gate_reply",

@@ -31,6 +31,16 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     # Exact inventory name on armed lists — exclusive owner vs referential_list LLM
     # (conv_9c5f24a6 Keynote / Eligibility Screening).
     "inventory_name_resolve",
+    # Org-design chip — exclusive vs inventory name open (Keynote before/after).
+    "show_org_design_viewer",
+    # Home/recommendation starter — proposal options for saved workflows.
+    "recommendation_entry",
+    "surface_read_early",
+    # Pinned-workflow multi-clause sim BEFORE sticky advisor (not post-decide-only).
+    "workflow_simulation_entry_early",
+    # Post-run metric explain (how is agent investment calculated…) — beats
+    # residual-mass sim force so Optimize confirm is not reopened (conv_e8341149).
+    "pinned_run_results_explain",
     "referential_list",
     "ordinal_read",
     "reset",
@@ -39,6 +49,7 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "ir_gate_role_proposal",
     "authoring_gate_proceed_early",
     "authoring_gate_ir_confirm_early",
+    "authoring_gate_ir_freeform_repair_early",
     "drafting_interpret_early",
     "prose_intake_early_enqueue",  # legacy alias — prefer post_router
     "prose_intake_post_router_enqueue",
@@ -62,6 +73,33 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "cost_out_fork",
     "cost_out_sparse",
     "cost_out_estimate",
+    # Finite chip: bind agentic cost profile → catalog role (not NL).
+    "attach_agent_cost_profile",
+    # Finite chip: cost-out detour from Optimize attach card (return pin).
+    "cost_out_for_attach",
+    # Finite chip / typo-tolerant publish of a draft profile then attach.
+    "publish_agent_cost",
+    # Refuse stale Rewire baseline confirm while Optimize attach gap is open.
+    "optimize_resources_flow_guard",
+    # Pattern-scoped sim confirm (pre-intent; run only, never create).
+    "input_state_run_confirm",
+    "input_state_confirm_guard",
+    # Engine 2.0 recommendation setup sole-continue + gather chips
+    "recommendation_setup_continue",
+    "recommendation_gather_chip",
+    "recommendation_gather_create_project",
+    "recommendation_not_ready",
+    # Cost-out Stay/Leave when recommend grammar mid pricing
+    "cost_out_recommend_fork",
+    "cost_pin_refine",
+    # Catalog / grounding / SOP chat short-circuits
+    "catalog_plan_guard",
+    "domain_grounding_chat",
+    "workflow_sop_chat",
+    "list_catalog_agent_roles",
+    "drafting_handoff_host_ir_open",
+    "interrogate_project",
+    "d4_abandon_wipe",
 })
 
 # S4 collapse — post-decide deliveries (decide_turn runs first).
@@ -76,6 +114,8 @@ POST_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "project_interrogation",
     "workflow_simulation_entry",
     "workflow_surface_read",
+    # Pattern midflight free-text continue (router labels → stay/ask/abandon).
+    "pattern_midflight_continue",
     "post_save_status",
     "inventory_entity_resolve",
     "cost_out_anchor",
@@ -88,6 +128,41 @@ POST_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "agent_cost_pricing_elicit",
     "agent_cost_pricing_preview",
     "agent_cost_pricing_publish",
+    # Engagement pack plan conductor (finite acts + journey steps).
+    "engagement_pack_plan",
+    "engagement_pack_open_decompose",
+    "engagement_pack_continue",
+    "engagement_pack_interrupted_continue",
+    "engagement_pack_unclear",
+    "engagement_pack_blocked",
+    "engagement_pack_unknown_step",
+    "engagement_pack_show_extract",
+    "engagement_pack_show_extract_empty",
+    "engagement_pack_show_plan",
+    "engagement_pack_show_mapping",
+    "engagement_pack_mapping_confirmed",
+    "engagement_pack_mapping_unclear",
+    "engagement_pack_need_confirm",
+    "engagement_pack_need_deep_extract",
+    "engagement_pack_need_as_is_structure",
+    "engagement_pack_no_pack",
+    "engagement_pack_deep_extract",
+    "engagement_pack_deep_extract_fail",
+    "engagement_pack_structure_wait",
+    "engagement_pack_staff_as_is",
+    "engagement_pack_staff_as_is_already_done",
+    "engagement_pack_staff_to_be",
+    "engagement_pack_staff_accept",
+    "engagement_pack_staff_accept_fail",
+    "engagement_pack_seal",
+    "engagement_pack_mark_done",
+    "engagement_pack_project_as_is",
+    "engagement_pack_project_to_be",
+    "engagement_pack_project_to_be_need_wf",
+    "engagement_pack_run_as_is",
+    "engagement_pack_run_to_be",
+    "engagement_pack_run_to_be_need_wf",
+    "engagement_pack_compare",
 })
 
 # S4/S6 — must never skip decide_turn (routing trace must say post-decide delivery).

@@ -23,8 +23,11 @@ _POST_SAVE_MARKERS = (
     "outcome & value model",
     "capacity monetization",
     "already captured:",
+    "already captured",
     "workflow saved successfully",
+    "workflow saved",
     "is saved and project-ready",
+    "project readiness",
 )
 
 
