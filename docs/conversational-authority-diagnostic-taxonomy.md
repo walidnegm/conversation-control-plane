@@ -21,9 +21,15 @@ before patching.
 > **Failure mode** = the **resulting authority burn** (what users / ledger hit). 
 > **They map; they are not synonyms.**
 
-**Vocabulary rule:** when a specialized term first appears in a table, that table
-includes a **Description** (or equivalent) column so readers are not left with
-opaque jargon.
+**Vocabulary rules (public readability):**
+
+1. When a specialized term first appears in a table, that table includes a
+ **Description** (or equivalent) column. 
+2. **A# ids** (A1…A19) are **stable handles** for portable construction errors —
+ always pair **id + short title** (e.g. **A1 — parallel ownership flags**). 
+ They are **not** product brand names; code smells in examples are generic. 
+3. **Failure-mode slugs** (`pin_drop`) name the *burn*; **A#** names the *build
+ mistake*. Prefer human titles in prose; keep ids for cross-ref and PRs.
 
 ---
 
@@ -213,9 +219,9 @@ RATCHET
 |------|-------------|---------|
 | **Doctrine / invariant** | A **must-always-hold** product or architecture rule. Not a tip — a boundary. If it fails, trust in multi-turn chat fails. | “Existence = registry id”; “ledger is sole writer of active task” |
 | **Root (M/E/S/D)** | The **class of authority mistake** that let the invariant slip — why the system became unreliable | **E**: model text treated as “saved”; **S**: two writers of ownership |
-| **Anti-pattern (A#)** | A **known bad construction** in code or prompts that tends to cause that root | A19 soft existence; A3 regex NL routing |
+| **Anti-pattern (A#)** | A **known bad construction** in code or prompts that tends to cause that root. Write **id + title** | **A19 — soft existence**; **A3 — regex as NL meaning** |
 | **Failure mode (slug)** | The **named, observable burn** when that construction ships — user/ledger symptom with a stable machine `id` | `soft_existence_claim`, `wrong_delivery_leaf` |
-| **Ratchet** | An **automated check** that fails if the bad shape returns: regression test, contract module, allow-list, CI gate, behaviour freeze. Without a ratchet, a “fix” is temporary memory | Contract module + path-faithful test that fails without the seal |
+| **Ratchet** | An automated check that **fails if a sealed law returns** (a focused regression proof of a named class — not “the whole test suite”) | Contract module + path-faithful test that fails without the seal |
 
 **Invariant vs ratchet:** an invariant is the **rule**; a ratchet is the **machine that
 complains when the rule is broken again**. Doctrine without ratchets drifts; ratchets
@@ -275,20 +281,23 @@ machine’s story of ownership, identity, or durable effect is wrong.
 | **Pin-resume** | Weaker stickiness: remember path/evidence via thin pins, but do not auto-reopen the full card every turn unless product requires sole-continue. |
 | **Typed refuse** | Code returns a structured error / blocked surface with product voice, instead of letting the model invent success after a failed tool. |
 
-### House terms ↔ broader systems analogues
+### Control-plane terms ↔ broader systems analogues
 
-| House term | Broader systems analogue | Description (multi-turn chat) |
-|------------|--------------------------|-------------------------------|
+These terms are **portable** (any multi-agent host with sticky turns). They are not
+tied to one product’s UI.
+
+| Control-plane term | Broader systems analogue | Description (multi-turn chat) |
+|--------------------|--------------------------|-------------------------------|
 | **Sole writer** | Single-writer invariant | Exactly one mechanism may mutate a given class of authoritative state (e.g. only the control plane writes ownership). Parallel writers → drift and wrong continue. |
-| **Ratchet** | Regression invariant / executable specification | An automated check that **fails when the sealed law is broken again**. Doctrine is the rule; the ratchet is the executable proof. Prefer structure over golden prose. |
+| **Ratchet** | Focused regression proof of a sealed law | An automated check that **fails when that law is broken again**. Related to “regression tests,” but scoped to a **named** class (mode / A#), not every test in CI. Prefer structure over golden prose. |
 | **Sealed transition** | Committed transaction | A durable effect is real only after the responsible system **validates and commits**. Model narration alone is not a commit. |
 | **Soft existence** | Unresolved identity / phantom entity | Dialogue or pin *suggests* a durable thing without a registry **id**. Phantom until code verifies or creates. |
 | **Owner steal** | Invalid control transfer | Continue / delivery is taken by a **non-owning** leaf while sticky multi-turn work still holds the thread. |
 | **Thin state** | Minimal authoritative state projection | Routing/identity truth is a **small projection** — not a full transcript or fat IR dump. |
 | **Hollow open** | State transition without usable observation | The system claims to open or advance work, but the user gets **no usable surface**. |
 
-**Reading rule:** when reviewing with platform engineers, you may use the analogue once
-for clarity, then prefer the **house term** so search and registry ids stay stable.
+**Reading rule:** use the systems analogue once for clarity with platform engineers,
+then prefer the control-plane term so ids stay searchable.
 
 ---
 
@@ -323,15 +332,15 @@ for **routing the fix**, not taxonomy theater.
 Fast code-review recognition aids. **Not** a registry. Map to roots / A#; do not invent
 parallel slugs.
 
-| Review smell | Description | Typical root | Often maps to |
-|--------------|-------------|--------------|---------------|
-| Meaning laundry | Free-text / phrase lists used as **sole** arbiter of what the user meant | M | A3–A5, CAQ-8 |
-| Unsealed model authority | Model prose treated as committed fact, id, or transition without code SoR | E | A9, A19 |
-| Fail-soft option laundry | After unclear, growing **prose CTA menus** instead of reasoner + re-show card | D | A17 |
-| Soft existence / unsealed transition | “We already have X” or create without thin-verify of registry id | E+S | A19 |
-| Dual SM / parallel flags | Second ownership machine beside ledger kind/phase (see **A1**, **A10**) | S | A1, A10 |
-| Twin delivery surfaces | Same gate rendered as **two** competing UIs | D | product-voice under-render |
-| Overloaded vocabulary | One user word maps to **two** product leaves without semantic disambiguation | M | `wrong_delivery_leaf` cousins |
+| Review smell | Description | Typical root | Often maps to (id + title) |
+|--------------|-------------|--------------|---------------------------|
+| Meaning laundry | Free-text / phrase lists used as **sole** arbiter of what the user meant | M | **A3** regex as NL meaning · **A4** prompt exception piles · **A5** per-incident shape helpers |
+| Unsealed model authority | Model prose treated as committed fact, id, or transition without code SoR | E | **A9** unvalidated model facts · **A19** soft existence |
+| Fail-soft option laundry | After unclear, growing **prose CTA menus** instead of reasoner + re-show card | D | **A17** fail-soft option laundry |
+| Soft existence / unsealed transition | “We already have X” or create without thin-verify of registry id | E+S | **A19** soft existence |
+| Dual SM / parallel flags | Second ownership machine beside ledger kind/phase | S | **A1** parallel ownership flags · **A10** second state machine |
+| Twin delivery surfaces | Same gate rendered as **two** competing UIs | D | Delivery / product-voice under-render (often with **A17**) |
+| Overloaded vocabulary | One user word maps to **two** product leaves without semantic disambiguation | M | Mode `wrong_delivery_leaf` (often **A11** shape as intent) |
 
 ---
 
@@ -354,10 +363,10 @@ parallel slugs.
 |----|--------|
 | Classify with this ladder before a PR | Jump to keyword patches |
 | Seal: structural fix + **ratchet** that would fail without it | “Fix” only in prompt laundry or unanchored script |
-| Reuse A# / mode if cousin | Invent a new A# / slug on first burn |
-| NL meaning → LLM label | Code `looks_like_*` as sole intent arbiter |
+| Reuse A# / mode if cousin (id + title) | Invent a new A# / slug on first burn |
+| NL meaning → constrained classifier labels | Code keyword/shape helpers as **sole** intent arbiter (**A3** / **A5**) |
 | Hard eligibility → code | Hope the model remembers product rules |
-| Keep **thin** control state; sole-write ownership | Parallel ownership booleans or fat domain blobs in the ledger |
+| Keep **thin** control state; sole-write ownership | Parallel ownership booleans (**A1**) or fat domain blobs in the ledger |
 | Ratchets on **ledger / blocks / enums** | Golden full-string assistant prose as unit proof |
 | Full ladder only for multi-turn **authority** re-burns | Taxonomy ceremony for tool schema typos / static copy |
 
@@ -370,42 +379,40 @@ parallel slugs.
 **Purpose:** reveal duplicates, over-broad modes, ops vs CAQ. 
 **Do not add a new A# or failure-mode slug** until this matrix shows a gap that re-burns.
 
-### Are A1 / A11 “Bot0-only”?
+### How to read A1–A19 (not product-brand codes)
 
-**No.** **A1–A19** are **portable construction errors** for multi-agent *conversational
-control* (any host that has sticky multi-turn work + specialists). They are **not**
-Bot0 product features or UI names.
+**A1–A19 are portable construction errors** for multi-agent *conversational control*
+(any host with sticky multi-turn work + specialists). They are **not** one vendor’s
+screens or APIs.
 
 | What A# is | What A# is not |
 |------------|----------------|
-| Stable **id** + short **title** for a bad *build shape* | A Bot0 screen, tool, or brand term |
+| Stable **id** + short **title** for a bad *build shape* | A product feature, UI label, or brand term |
 | Shared with [SDK §1.6](conversation-control-plane-sdk.md#16-adoption-anti-patterns-engineering-doctrine--do-not-generate-these) for deep essays | A failure mode slug (`pin_drop`) — modes are *burns*; A# are *how you built wrong* |
-| Illustrated with **generic** code smells (flags, regex, dual FSMs) | A requirement that your repo use the same variable names |
+| Illustrated with **generic** smells (ownership booleans, regex intent, dual FSMs) | A requirement that your repo use particular variable names |
 
-**Reading tip:** Lead with the **title** (“parallel ownership flags”); keep **A1** for
-cross-ref and PR language. Code columns below use portable smells — your codebase may
-spell them differently (`is_drafting`, `cost_active`, `workflow_open`, …).
+**Always write:** **A1 — parallel ownership flags** (not bare “A1” or host-only `*_active`).
 
 | Id | Title (portable) | Root | Construction error (plain language) | Smell you might see in *any* host | Typical modes | Plane |
 |----|------------------|------|-------------------------------------|-----------------------------------|---------------|-------|
-| **A1** | Parallel ownership flags | S | “Who owns the thread?” encoded as many booleans instead of one ownership record (kind + phase) | `drafting_active`, `cost_open`, `advisor_on` all true independently | `owner_steal`, `illegal_restart`, `lost_activity_recall` | ownership |
-| **A2** | Skip the control loop | S | Specialist or side path mutates continue without the host decide/apply path | Agent writes “current task” in its own store and the host never runs decide | `owner_steal`, `wrong_delivery_leaf` | ownership / delivery |
-| **A3** | Regex as NL meaning | M | Regular expressions / keyword lists as **sole** arbiter of free-text intent | `if re.search(r"recommend\|optimize", text)` opens a product leaf | `wrong_delivery_leaf`, `named_item_misresolve` | delivery / cognition |
+| **A1** | Parallel ownership flags | S | “Who owns the thread?” encoded as many booleans instead of one ownership record (kind + phase) | Independent `is_drafting`, `cost_open`, `advisor_on` flags instead of one owner record | `owner_steal`, `illegal_restart`, `lost_activity_recall` | ownership |
+| **A2** | Skip the control loop | S | Specialist or side path mutates continue without the host decide/apply path | Agent writes “current task” in its own store; host never runs decide | `owner_steal`, `wrong_delivery_leaf` | ownership / delivery |
+| **A3** | Regex as NL meaning | M | Regular expressions / keyword lists as **sole** arbiter of free-text intent | `if "recommend" in text` opens a product leaf with no classifier enum | `wrong_delivery_leaf`, `named_item_misresolve` | delivery / cognition |
 | **A4** | Prompt exception piles | M | Growing “if user says X do Y” lists in classifier prompts | Per-incident EXCEPTION blocks in system prompts | `wrong_delivery_leaf`, `compound_act_loss` | cognition |
-| **A5** | Per-incident shape helpers | M | One-off `looks_like_*` / shape helpers as sole intent arbiter | New helper per soak without enum + code gate | `wrong_delivery_leaf`, `domain_pick_misbound` | delivery |
+| **A5** | Per-incident shape helpers | M | One-off shape/keyword helpers as sole intent arbiter | New helper per incident without enum + code gate | `wrong_delivery_leaf`, `domain_pick_misbound` | delivery |
 | **A6** | Scattered authority apply | S | Many sites apply ownership without a single authority path | Three modules each set “active flow” | `owner_steal`, `wrong_delivery_leaf` | ownership |
 | **A7** | Concept before authority | M+S | Help/glossary/marketplace packaging runs before ownership is decided | FAQ leaf steals mid-task without stamp | `packaging_steal`, `owner_steal` | packaging |
-| **A8** | Agents write control keys | S | Specialists write ledger ownership fields directly | Agent imports host state and sets `active_task` | `owner_steal` | ownership |
+| **A8** | Agents write control keys | S | Specialists write ledger ownership fields directly | Agent mutates host ownership state | `owner_steal` | ownership |
 | **A9** | Unvalidated model facts | E | Model numbers/tables accepted without code render / system-of-record | Chat shows a cost table the engine never produced | `false_save_claim`, `success_payload_rewrite` | substrate |
 | **A10** | Second state machine per feature | S | Feature-local FSM competes with the turn-ownership ledger | Feature module keeps its own “stage” next to the ledger | `illegal_restart`, `lost_activity_recall`, `owner_steal` | ownership |
-| **A11** | Shape as intent | M | Structural shape of paste treated as product intent | Dense numbered list auto-opens pack/builder without cognition label | `wrong_delivery_leaf`, `soft_name_misresolve` | delivery |
+| **A11** | Shape as intent | M | Structural shape of paste treated as product intent | Dense numbered list auto-opens a product path without a cognition label | `wrong_delivery_leaf`, `soft_name_misresolve` | delivery |
 | **A12** | Shape overrides readiness | M | Geometry/density rubrics open or block paths against true readiness | “Looks complete” opens save while required ids missing | `wrong_delivery_leaf`, `cold_start_collapse` | authoring / delivery |
-| **A13** | Context-pin / delivery-order hijack | S | Ambient memory or wrong delivery order steals the active leaf | Last listed workflow id hijacks a sticky draft | `ambient_pin_hijack`, `packaging_steal`, `wrong_delivery_leaf` | delivery |
-| **A14** | Re-resolve after pin | S+E | Identity pin present but free text re-resolves as greenfield | User has workflow pin; system searches by name again | `pin_drop`, `named_item_misresolve`, `illegal_restart` | ownership / delivery |
+| **A13** | Context-pin / delivery-order hijack | S | Ambient memory or wrong delivery order steals the active leaf | Last mentioned entity id hijacks sticky work | `ambient_pin_hijack`, `packaging_steal`, `wrong_delivery_leaf` | delivery |
+| **A14** | Re-resolve after pin | S+E | Identity pin present but free text re-resolves as greenfield | User has entity pin; system searches by name again | `pin_drop`, `named_item_misresolve`, `illegal_restart` | ownership / delivery |
 | **A15** | Ambient last-read as sole authority | S | “Last thing we mentioned” drives delivery without owner/pin gates | Session cache of last id without phase check | `ambient_pin_hijack`, `owner_steal` | delivery |
 | **A16** | Per-agent multi-turn glue | S | Agent-local multi-turn glue instead of host sole-continue kinds | Each specialist invents its own sticky flags | `owner_steal`, `lost_activity_recall` | ownership |
-| **A17** | Fail-soft option laundry | D | After unclear, growing prose option menus instead of card + reasoner | “Reply accept/skip/use X/try again…” walls of text | under-render; cousin `fall_through_fabrication` | delivery |
-| **A18** | Dispatch-order laundry | S+D | Growing suppress / call-order stacks instead of owner allow-table | `if open_X: skip_Y` piles | `wrong_delivery_leaf`, `owner_steal` | delivery |
+| **A17** | Fail-soft option laundry | D | After unclear, growing prose option menus instead of card + reasoner | “Reply accept / skip / use X / try again…” walls of text | under-render; cousin `fall_through_fabrication` | delivery |
+| **A18** | Dispatch-order laundry | S+D | Growing suppress / call-order stacks instead of owner allow-table | Cascading “if leaf X open, skip Y” piles | `wrong_delivery_leaf`, `owner_steal` | delivery |
 | **A19** | Soft existence / unsealed transition | E+S | Existence or create claimed without thin-verify of registry id / open leaf | “We already have project X” with no id | `soft_existence_claim`, `false_save_claim` | substrate |
 
 **Notes:**
@@ -474,7 +481,7 @@ instead of **project / team-sizing** workspace.
 | Anti-pattern | **A11 — shape as intent** (cousin); risk of **A4 — prompt exception piles** if “fixed” with phrase lists | Prefer semantic labels + code gates |
 | Failure mode | `wrong_delivery_leaf` | Wrong delivery leaf |
 | Plane | delivery | Host leaf selection |
-| Seal | Strengthen **semantic** cost vs project labels in the turn router; **no** `looks_like_*` sole arbiter | Code policy + classifier enums |
+| Seal | Strengthen **semantic** cost vs project labels in the turn router; **no** keyword/shape helpers as sole arbiter (**A3** / **A5**) | Code policy + classifier enums |
 | Ratchet | Prompt markers + path-faithful route test when sealed | Fails if cost steals project size again |
 
 ---

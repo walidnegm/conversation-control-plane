@@ -190,7 +190,7 @@ Laws: docs/host-transition-discipline.md
 
 Rules: classifiers propose enums; decide_turn enforces. Specialists return TaskTransition
 only. Thin projection (pins + phase + pending_ref). COMPLETE ≠ ABANDON. No phrase laundry
-for NL meaning. No parallel *_active flags. No ambient last_read_* as sole identity after pin.
+for NL meaning. No parallel ownership flags (A1). No ambient last-read as sole identity after pin.
 
 Deliver: (1) port ledger + decide_turn to our store (2) one sole-continue KindSpec
 (3) five tests: resume, complete, abandon≠complete, no auto-switch, no re-resolve after pin.
