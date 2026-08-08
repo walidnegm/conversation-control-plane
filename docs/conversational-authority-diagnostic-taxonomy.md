@@ -29,11 +29,23 @@ that every mode slug is industry-generic.
 
 | Role | Document |
 |------|----------|
-| **This doc** | Operating sheet + registry governance |
+| **This doc** | Operating sheet + registry governance (diagnose → seal) |
 | Anti-patterns A1–A19 | [SDK §1.6](conversation-control-plane-sdk.md#16-adoption-anti-patterns-engineering-doctrine--do-not-generate-these) |
-| Failure modes | YAML SoT in the host / CAQ package |
+| Cognitive seat (where burns sit in a turn) | [SDK §0.0.2](conversation-control-plane-sdk.md#authority-adjudication-pipeline-sdk-seat) · [authority adjudication note](conversational-routing-authority-adjudication.md) |
+| Failure modes (portable slugs + proofs) | Sibling **[Conjecture Behaviour Runner](https://github.com/walidnegm/conjecture-behaviour-runner)** — `incidents/registry.yaml` · Quality Console |
+| Host mode extensions | Optional host YAML / CAQ package (keep stable ids; do not rename portable slugs) |
 | Turn lifecycle | [conversation-turn-lifecycle-diagram.md](conversation-turn-lifecycle-diagram.md) |
 | Portable SDK | [conversation-control-plane-sdk.md](conversation-control-plane-sdk.md) |
+
+**Public package split (do not collapse):**
+
+```text
+Taxonomy (this sheet) → how to diagnose (ladder + seal checklist)
+SDK §1.6 → A# construction errors
+SDK §0.0.2 + essay → cognitive seat (hydrate…adjudicate…deliver)
+CBR registry + Console → mode slugs + planted proofs
+Lifecycle diagram → host path anchors
+```
 
 **Central distinction:**
 
@@ -48,9 +60,10 @@ that every mode slug is industry-generic.
 | **Diagnostics** (this sheet) | Classify burns: root → A# → mode | A test harness |
 | **CAQ + purity scoreboards** | Grade: sealed / residual / gap | Redefining laws |
 | **Ratchet** | One focused automated proof of a **named** class | “The whole suite is green” |
-| **Regression suite** | Collection of ratchets | A single ratchet |
+| **Regression suite** / CBR freezes | Collection of ratchets · multi-turn seeds | A single ratchet |
 | **CI** | Enforcement path that runs the suite | A failure class |
 | **Eval** (WIP as one map) | Multi-turn behaviour under cognition | Unit golden prose |
+| **Quality Console** (CBR) | Cockpit for laws · seals · proof debt | A second taxonomy |
 
 ---
 
@@ -236,6 +249,19 @@ by fix target.
 | **commit** | substrate, tools, durable effects |
 | **presentation** | delivery, packaging, blocks/affordances |
 
+**Crosswalk — planes ↔ cognitive seat** ([SDK §0.0.2](conversation-control-plane-sdk.md#authority-adjudication-pipeline-sdk-seat)):
+
+| Seat layer | Typical plane(s) when it burns |
+|------------|--------------------------------|
+| **0 Hydration** | ownership · cognition (cold View / missing pins) |
+| **1 Semantic** | cognition · delivery (wrong enum / shape-as-intent) |
+| **2 Adjudication** | ownership · control (`decide_turn`, exclusive owner, A18) |
+| **3 Policy** | ownership · delivery · packaging (gates, continuum, suppress) |
+| **4 Execute** | substrate · domain (`TaskTransition` only; tools / SoR) |
+| **5 Delivery** | delivery · presentation (hollow open, option laundry, unarmed affirm) |
+
+Use the **plane** for triage location; use the **seat layer** when the essay / SDK seat is the better “earliest wrong layer.”
+
 ---
 
 ## 5. Definition of sealed
@@ -355,7 +381,23 @@ extensions without renaming these.
 | `false_save_claim` | False save claim | substrate | Claims saved without success |
 | `soft_existence_claim` | Soft existence claim | substrate | Claims entity exists without registry id |
 
-### 9.2 Common host-extension burns (stable ids; semantic aliases only)
+Machine SoT for portable proofs: CBR `incidents/registry.yaml` (sibling package). Hosts may mirror a larger private registry.
+
+### 9.2 Continuum, open-leaf, hydration, thin-verify (portable promotions)
+
+Promoted as **portable laws** (seeds may still be host-pending). Prefer table + pin + arming over phrase laundry.
+
+| Slug | Plain name | Plane | Primary root | Description |
+|------|------------|-------|--------------|-------------|
+| `open_leaf_unarmed_return` | Open leaf unarmed return | ownership / delivery | S+E | Ask for a bounded next act without arming kind/phase/`awaiting` (or product stamp) → next free text re-enters greenfield |
+| `continuum_invite_unarmed_affirm` | Continuum invite unarmed affirm | delivery / ownership | S+D | High-confidence next-surface invite without same-turn continuum pin → “yes please” does not advance that surface |
+| `resume_without_rehydrate` | Resume without rehydrate | ownership / cognition | S | After idle / disconnect / worker re-entry, hop runs cold freestyle instead of hydrating View from ledger pins/phase |
+| `id_slot_thin_verify` | ID slot thin-verify failure | substrate / cognition | E | Closed-set identity slot accepts raw free text / garbage instead of membership-or-empty |
+| `utterance_to_slot_leakage` | Utterance-to-slot leakage | substrate / delivery | M+E | Name/value slot stores the naming *speech act* instead of the value |
+
+**Not failure modes:** `TaskTransition` lifecycle values (`BEGIN`…`NONE`) — those are the specialist→host envelope. Burns happen when open-leaf / continuum / delivery violate the laws *around* transitions (see seat layers 4–5).
+
+### 9.3 Common host-extension burns (stable ids; semantic aliases only)
 
 | Slug | Semantic alias (docs) | Description |
 |------|----------------------|-------------|
@@ -365,7 +407,7 @@ extensions without renaming these.
 
 Hosts **keep these ids** if already wired; do not rename for portability theater.
 
-### 9.3 Counterexamples (not failure burns)
+### 9.4 Counterexamples (not failure burns)
 
 | Slug | Role | Description |
 |------|------|-------------|
@@ -388,7 +430,9 @@ When sealing continuity burns, define at least:
 | Retry | Idempotent? |
 
 Especially: `owner_steal`, `hollow_advance`, `false_save_claim`,
-`success_payload_rewrite`, `illegal_restart`, `pin_drop`.
+`success_payload_rewrite`, `illegal_restart`, `pin_drop`,
+`open_leaf_unarmed_return`, `continuum_invite_unarmed_affirm`,
+`resume_without_rehydrate`.
 
 ---
 
@@ -400,11 +444,12 @@ Especially: `owner_steal`, `hollow_advance`, `false_save_claim`,
 
 | Program | Description | Status |
 |---------|-------------|--------|
-| **CAQ** | Named modes + laws + intended ratchets | Living (host) |
+| **CAQ** | Named modes + laws + intended ratchets | Living (host + CBR registry) |
 | **Purity / scorecards** | Grades sealed vs residual | Living (host) |
-| **Regression suite** | Collection of **named** ratchets | Living |
+| **Regression suite** / **CBR freezes** | Collection of **named** ratchets · multi-turn seeds | Living |
 | **CI** | Enforcement path | Host-wired; package ships tests |
 | **Eval** | Multi-turn under cognition | **WIP** as a single unified map |
+| **Quality Console** | CBR cockpit for laws · seals · proof debt | Living (sibling package) |
 
 ### Validation vs evaluation
 
@@ -466,6 +511,10 @@ Especially: `owner_steal`, `hollow_advance`, `false_save_claim`,
 | **SoR** | Authority for “this is true” |
 | **Sole-continue** / **Pin-resume** | Stickiness grades |
 | **Typed refuse** | Structured block vs invented success |
+| **Hydration** | Code-built View (pins, phase, allowed acts) before cognition — not “more transcript” |
+| **Open-leaf arming** | Same package that *asks* for a bounded act must stamp ownership / `awaiting` |
+| **Continuum pin** | Post-complete next-surface invite + same-turn pin so affirm advances that surface |
+| **TaskTransition** | Lifecycle only (`BEGIN`…`NONE`); not a mode slug — stream position is `kind`/`phase`/`awaiting` |
 | **CAQ-8** (host process id) | No phrase piles as sole NL meaning arbiter in classifiers — maps to **M** · **A3–A5**; not a mode slug |
 
 ### Control-plane terms ↔ systems analogues
