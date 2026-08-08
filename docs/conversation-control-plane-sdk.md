@@ -285,9 +285,7 @@ Frameworks commonly **collapse** two or three of these. This design separates th
 Product doctrine names a **fine turn pipeline** (hydrate → interpret → adjudicate →
 policy → execute → deliver). That is **not a second control plane** — it is the same
 authority law at hop resolution. The **essay**
-([conversational-routing-authority-adjudication.md](conversational-routing-authority-adjudication.md),
-host monorepo · portable extract:
-`extract/conversation-control-plane/docs/conversational-routing-authority-adjudication.md`)
+([conversational-routing-authority-adjudication.md](conversational-routing-authority-adjudication.md))
 is the architecture note; **this SDK** is the **implementation contract** for the
 authority steps.
 

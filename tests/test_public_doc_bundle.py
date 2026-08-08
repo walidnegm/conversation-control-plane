@@ -12,6 +12,9 @@ SDK = DOCS / "conversation-control-plane-sdk.md"
 PUBLIC_DOCS = (
     "conversation-control-plane-sdk.md",
     "conversation-turn-lifecycle-diagram.md",
+    "host-transition-discipline.md",
+    "conversational-authority-diagnostic-taxonomy.md",
+    "conversational-routing-authority-adjudication.md",
 )
 
 MONOREPO_ONLY_DOCS = (
