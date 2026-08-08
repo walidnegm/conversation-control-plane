@@ -133,7 +133,40 @@ User hit
 | Reuse A# / mode if cousin | Invent A20 on first burn |
 | Ratchets on ledger / blocks / enums | Golden full-string assistant prose |
 
-### 2.3 Metadata (not ladder rungs)
+### 2.4 Coding-agent patching note (mandatory on every diagnostic)
+
+**Every** diagnostic, incident handoff, and “please fix” prompt to a coding agent
+must include this note. Skipping it is how **phrase laundry** and **regex as sole
+NL arbiter** re-enter under pressure.
+
+```text
+PATCHING NOTE (non-negotiable)
+──────────────────────────────
+• DO NOT invent parallel rules, side epics, or “just this once” branches.
+• DO NOT hotfix the symptom (extra synonym, one more if, phrase laundry,
+ silent overwrite).
+• DO NOT break-fix a prior seal to make one soak green.
+• DO NOT shortcut past stickiness, thin-verify, open-leaf arming, or finite
+ chip grammar.
+• DO NOT regress: a path-faithful ratchet must fail without the fix and stay
+ green for cousin seals.
+• FOLLOW LAWS: name → contract → ratchet → path-faithful proof.
+• READ AND OBEY the host agent operating contract ( / adopters:
+ SDK + this taxonomy + purity scoreboard).
+• LLM proposes; code owns transitions and truth.
+• If the contract is incomplete: extend the allow-table / enum / pin / phase
+ first — then implement. Never grow a free-text wordlist to “mean” continue /
+ create / open / advance.
+```
+
+| Required | Forbidden |
+|----------|-----------|
+| Extend allow-table / enum / pin / phase + named ratchet | Regex / wordlist as sole NL meaning |
+| Structural seal at earliest wrong layer | Keyword patch that only greens one script |
+| Path-faithful proof on user entrypoint | Sibling “looks fine” script (fake-fixed) |
+| Keep prior seals green | Break-fix cousin seal for local green |
+
+### 2.5 Metadata (not ladder rungs)
 
 | Metadata | Description |
 |----------|-------------|

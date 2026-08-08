@@ -51,6 +51,8 @@ SOLE_CONTINUE_KINDS = frozenset({
     "workflow_build",
     "pattern_midflight",
     "recommendation_setup",
+    "engagement_pack_plan",
+    "input_state_setup",
 })
 
 
@@ -105,8 +107,12 @@ ENTITY_RESOLVE_PHASES_BY_KIND: dict[str, frozenset[str]] = {
     PROJECT_WORKSPACE_KIND: frozenset({"open", ""}),
     SCORECARD_INTERROGATE_KIND: frozenset({"active", ""}),  # pick run while active
     RISK_CATALOG_LEARNING_KIND: frozenset({"browsing", ""}),
-    OUTCOME_VALUE_KIND: frozenset({"collecting", ""}),
+    # O&V collecting/confirming are sole-continue (conv_8a35529c: detour then
+    # field answers re-opened scorecard for ambient Keynote and abandoned CS).
+    # Entity resolve only when kind is open with empty phase (pre-pin).
+    OUTCOME_VALUE_KIND: frozenset({""}),
     DRAFTING_KIND: frozenset({"awaiting_domain", "awaiting_details", ""}),
+
     # Multi-gate authoring (workflow_build) — resolve only at open/extract-ish
     # phases; mid-ladder is continue. Full sole-continue adoption is known_gap
     # until exclusive-owner map lands (sdk-grade-a); phase tables still closed.
@@ -118,6 +124,8 @@ ENTITY_RESOLVE_PHASES_BY_KIND: dict[str, frozenset[str]] = {
     # Engagement pack plan: no ambient entity re-resolve mid-plan.
     # Open only (empty phase); plan/advancing/complete are continue-owned.
     "engagement_pack_plan": frozenset({""}),
+    # Input State Manager: pick project/state at open; continue for act/confirm.
+    "input_state_setup": frozenset({"pick_state", ""}),
 }
 
 # Phases where continue cognition owns the turn (no entity re-resolve).
@@ -138,8 +146,11 @@ CONTINUE_PHASES_BY_KIND: dict[str, frozenset[str]] = {
     }),
     SCORECARD_INTERROGATE_KIND: frozenset({"detail", "complete"}),
     RISK_CATALOG_LEARNING_KIND: frozenset({"detail", "complete"}),
-    OUTCOME_VALUE_KIND: frozenset({"confirming", "complete", "active"}),
+    OUTCOME_VALUE_KIND: frozenset({
+        "collecting", "confirming", "complete", "active",
+    }),
     DRAFTING_KIND: frozenset({"drafting", "refining", "ready_to_build", "active"}),
+
     # Contract B ladder phases (authoring_gate_contract + dispatch_phase).
     "workflow_build": frozenset({
         "ir_review",
@@ -163,6 +174,15 @@ CONTINUE_PHASES_BY_KIND: dict[str, frozenset[str]] = {
         "plan",
         "advancing",
         "complete",
+    }),
+    "input_state_setup": frozenset({
+        "show",
+        "propose_act",
+        "confirm_write",
+        "written",
+        "ready_to_run",
+        "handoff",
+        "abandoned",
     }),
     "recommendation_setup": frozenset({
         "costs",

@@ -1,12 +1,19 @@
 ---
 name: Conversation Turn Lifecycle — the ledger-pinned flow (diagram)
-description: One diagrammed map of a single Bot0 chat turn — claim → perception → pre-decide gauntlet → decide_turn → post-decide prose intake → specialist dispatch → ledger write → release. Fourth of the four canonical architecture documents (2026-07-07).
+description: >-
+ One diagrammed map of a single Bot0 chat turn — claim → perception → pre-decide
+ gauntlet → decide_turn → post-decide prose intake → specialist dispatch → ledger
+ write → release. Fourth of the four canonical architecture documents (2026-07-07;
+ refreshed 2026-08 for A18 families, continuum/open-leaf, cognitive seat, CBR pair).
 type: reference
 date: 2026-07-07
+updated: 2026-08-07
 related:
  - conversation-control-plane-sdk.md
  - 
  - 
+ - conversational-routing-authority-adjudication.md
+ - conjecture-control-plane-quality-console.md
 ---
 
 # Conversation Turn Lifecycle — the ledger-pinned flow
@@ -14,6 +21,12 @@ related:
 **What this is.** A single, code-grounded map of one chat turn for **Bot0 the product host**: HTTP/SSE entry
 (`api/routers/host chat module`) → `api/services/host chat module::chat` → `conversation_control/`. It shows where
 perception, short-circuits, `decide_turn`, delivery, and ledger writes happen.
+
+**How to read this vs the SDK (2026-08):** this file is the **Bot0 host flowchart** (gauntlet + plane
+together). For the portable **cognitive seat** (hydrate → semantic → adjudicate → policy → execute →
+deliver) and app vs SDK roles, see [SDK §0.0.2](conversation-control-plane-sdk.md#authority-adjudication-pipeline-sdk-seat)
+and [conversational-routing-authority-adjudication.md](conversational-routing-authority-adjudication.md).
+Post-mid-July addenda (A18 families, continuum, Conjecture) live in [§11](#11-post-mid-july-refresh-a18-continuum-cognitive-seat-cbr).
 
 ### Gauntlet vs ledger (do not conflate)
 
@@ -83,18 +96,20 @@ idempotency, and appends a journal row in the same transaction as the projection
 (`ledger_journal.py` + `begin_task` / `complete_task` / `finish_active_task`). COMPLETE and ABANDON
 are **distinct event types** — not one “clear stickiness” blob.
 
-**Code anchors** (verified 2026-07-11 against monorepo):
+**Code anchors** (prefer **symbols** over line numbers — line nums **drift**):
 
-| Stage | Where (prefer symbolsymbols** over lines) |
+| Stage | Where |
 |---|---|
 | Turn claim / release | `api/routers/host chat module` → `ledger.claim_turn` / `release_turn` (not inside `chat`) |
-| `chat` entry | `bot0.chat` ~L10550 — ledger overlay via `get_control_state` |
+| `chat` entry | `bot0.chat` — ledger overlay via `get_control_state` |
 | Early finite / FE | `_try_catalog_handoff_dispatch` · domain/IR/authoring gate helpers · early scorecard/entity picks |
-| Perception | `classify_unified_turn` + `apply_unified_router_authorities` (~L11141+) |
+| Perception | `classify_unified_turn` + `apply_unified_router_authorities` |
+| Pre-decide owner (A18) | `project_pre_decide_owner` · `pre_decide_dispatch_allowed` · `pre_decide_family_any_allowed` |
 | Post-router enqueue | `_try_prose_intake_post_router_enqueue_dispatch` (preferred; early is legacy alias) |
-| More pre-decide | cyber / improve / reset / ordinal / cost sole-continue recoveries |
-| **decide_turn** | `decide.decide_turn` via `bot0.chat` ~L12373 — may **write** ledger mid-call |
-| Exclusive owner + front door | `select_exclusive_turn_owner` · `front_door_detour_supersedes_active_flow` (~L12512+) |
+| More pre-decide | cyber / improve / reset / ordinal / cost · catalog **family** gate |
+| Continuum affirm | `resolve_continuum_affirm_send_text` · `product_continuum_next_step_contract` |
+| **decide_turn** | `decide.decide_turn` via `bot0.chat` — may **write** ledger mid-call |
+| Exclusive owner + front door | `select_exclusive_turn_owner` · `front_door_detour_supersedes_active_flow` |
 | Ledger APIs | `ledger.begin_task` / `update_phase` / `complete_task` / `finish_active_task` + journal |
 | Hot-potato | `handoff_guard.would_ping_pong` (inside `decide_turn`) |
 

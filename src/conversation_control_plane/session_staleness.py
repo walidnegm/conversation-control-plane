@@ -20,6 +20,7 @@ the same card type (``session_reorientation``).
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from typing import Any
 
 from conversation_control_plane.contract import canonical_agent
@@ -47,6 +48,8 @@ _KIND_LABEL = {
     "workflow_build": "workflow build",
     # F12a — engagement pack conductor (not a BOT0_AGENTS agent)
     "engagement_pack_plan": "initiative plan",
+    # ISS — simulation input state (AI Involvement / staffing / value drivers)
+    "input_state_setup": "simulation inputs",
 }
 
 # Mid-flight markers that used to skip reorient (bug: silent continue after hours).
@@ -98,7 +101,10 @@ def product_voice_awaiting_label(awaiting: str | None) -> str | None:
         if key in _STEP_LABELS:
             return str(_STEP_LABELS[key])
     except Exception:  # noqa: BLE001
-        pass
+        logging.getLogger(__name__).debug(
+            "pack step label lookup skipped",
+            exc_info=True,
+        )
     # Already human prose (spaces / title words) — keep
     if " " in raw and not re.search(r"_[a-z]", raw.casefold()):
         return raw
@@ -118,6 +124,36 @@ def resume_session_product_lead(*, awaiting: str | None = None) -> str:
             f"Picking up where you left off — **{label}**."
         )
     return "Picking up where you left off."
+
+
+def transport_resume_product_lead(
+    *,
+    kind: str | None = None,
+    awaiting: str | None = None,
+) -> str:
+    """Lead after FE transport recovery when no idle reorient card was pending.
+
+    Distinct from idle Resume: connection hiccup, not a multi-hour pause.
+    Still names the live product stream when known — never generic
+    \"re-tap Apply this plan\" laundry (Draft IR thrash after brief disconnect).
+    """
+    step = product_voice_awaiting_label(awaiting)
+    kind_key = str(kind or "").strip()
+    stream = _KIND_LABEL.get(kind_key) if kind_key else None
+    if step and step not in ("in-progress work", "where you left off"):
+        return (
+            f"**Connection restored** — still on **{step}**. "
+            f"Here's the card again."
+        )
+    if stream:
+        return (
+            f"**Connection restored** — still on **{stream}**. "
+            f"Here's where you left off."
+        )
+    return (
+        "**Connection restored** — you're still on this chat. "
+        "Continue with your next step when ready."
+    )
 
 
 def _humanize_age(minutes: float) -> str:
@@ -215,7 +251,10 @@ def _active_is_multi_turn_stream(active: dict[str, Any]) -> bool:
         if is_sole_continue_kind(kind):
             return True
     except Exception:  # noqa: BLE001
-        pass
+        logging.getLogger(__name__).debug(
+            "sole_continue kind probe skipped",
+            exc_info=True,
+        )
     agent = str(active.get("agent") or "").strip()
     return agent in ("workflow_builder", "workflow_editor")
 

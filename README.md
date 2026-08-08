@@ -1,16 +1,25 @@
 # Conversation Control Plane
 
-**Turn-ownership ledger** for multi-agent product chat: who is foreground, what is
-pinned, when ownership may yield — portable across how each turn is **run**
-(LangGraph · agent SDKs · Temporal · plain code · human operator).
+**Conversation Control Plane SDK** — A production-grade, DB-authoritative control
+plane for multi-agent conversational AI. **LLM proposes; code owns the turn.**
+Durable session ownership, deterministic handoffs, task lifecycle, and resume —
+compose with LangGraph/tools; **do not replace them.**
+
+Who is foreground, what is pinned, when ownership may yield — portable across how
+each turn is **run** (LangGraph · agent SDKs · Temporal · plain code · human operator).
 
 Package: `conversation-control-plane` · **MIT** · [Bot0.ai](https://bot0.ai)
 
-**Not** a LangGraph / Temporal / ChatKit replacement. Keep those for *how* a turn
-executes. This package owns *who holds the thread* across turns and specialists.
+This package owns *who holds the thread* across turns and specialists — not graph
+DAGs, not RAG, not model vendors. **Persistence is assumed** (your SQL store);
+**DB-backed is not the USP** — portable authority semantics are.
 
-**Persistence is assumed** (your SQL store). **DB-backed is not the USP** —
-portable authority semantics are.
+**Optional sibling (proof, not a dependency):**  
+[**Conjecture Behaviour Runner**](https://github.com/walidnegm/conjecture-behaviour-runner)
+(CBR) — multi-turn freezes + named failure modes + **Quality Console** (`conjecture ui`)
+when chat still looks fine and ledger law is wrong.  
+**Adopt the plane** (this SDK) · **prove the plane** (Conjecture). Details:
+[Public product family](#public-product-family-why-adopt-both).
 
 ---
 
@@ -20,9 +29,43 @@ portable authority semantics are.
 **Lifecycle diagram:** [docs/conversation-turn-lifecycle-diagram.md](docs/conversation-turn-lifecycle-diagram.md)  
 **Host laws:** [docs/host-transition-discipline.md](docs/host-transition-discipline.md)  
 **Authority diagnostics:** [docs/conversational-authority-diagnostic-taxonomy.md](docs/conversational-authority-diagnostic-taxonomy.md)  
+**Optional multi-turn proof:** [Conjecture Behaviour Runner](https://github.com/walidnegm/conjecture-behaviour-runner) (sibling)  
 Operating sheet: **ladder** (causal) vs **triage** (investigation order). Roots **M/E/S/D**
 parallel (D = delivery *authority* leakage). Quality stack = CAQ/purity · named **ratchet**
 ≠ suite · CI · eval (WIP). **Sealed** = checklist, not “looks fixed.”
+
+**Turn pipeline seat** (full write-up: [SDK §0.0.2](docs/conversation-control-plane-sdk.md#authority-adjudication-pipeline-sdk-seat) ·
+[adjudication note](docs/conversational-routing-authority-adjudication.md) ·
+[§2.1.x](docs/conversation-control-plane-sdk.md#21x-extension-points-enums-kinds-surfaces-continuum)):
+
+| Essay layer | **This package** (SDK) | **Your app** |
+|-------------|------------------------|--------------|
+| **0 Hydration** | Ledger / KindSpec / pins = SoR the View is built from | Builds the brief (`allowed_operations`, surface map) |
+| **1 Semantic** | Law: meaning → closed enums, never free-text authority | Classifiers, op enum *values*, schemas |
+| **2 Adjudication** | **`decide_turn`**, sole writer, exclusive owner, A18 allow-list *shape* | Which leaves / EXTRA rows |
+| **3 Policy** | Gates, stickiness, foreign deny as tables + lifecycle | Continuum edges, family inventories, suppressions |
+| **4 Execute** | `TaskTransition` envelope; strip control keys | LangGraph / tools / SoR / workers |
+| **5 Delivery** | Finite grammar when armed; open-leaf arming; A17 fail-soft ban | Product voice, chips, continuum pin payload |
+
+> **SDK** = who owns the turn + what transitions are admissible + durable ownership SoR.  
+> **App** = what ops / kinds / surfaces / edges mean + how the product speaks.
+
+```text
+App hydrates View ──reads──► SDK ledger
+App proposes enums ─────────► SDK adjudicates (decide_turn / owner / A18)
+App tables (policy) ────────► SDK enforces shape
+App/LangGraph executes ─────► SDK applies TaskTransition only
+App delivers continuum ─────► SDK open-leaf / armed-grammar law
+```
+
+| Extension | SDK requires | App fills |
+|-----------|--------------|-----------|
+| Ops / enums | Schema-validated closed set | `SET_FIELD`… or product-act ids |
+| Kinds | Registered streams + phase enums | Your product streams |
+| Surfaces | Literacy for adjudication | Leaves, cards, chips |
+| Continuum | Invite + same-turn pin + armed-only affirm | Edge rows + `send_text` |
+
+The package does **not** hardcode any product continuum table or classifier field list.
 
 ### Host turn cycle
 
@@ -55,17 +98,51 @@ Queryable history: begin / continue / **complete** vs **abandon** (distinct), wi
 
 ### Specialist → host boundary
 
+`TaskTransition` is **lifecycle only** — not the whole multi-turn story. Stickiness
+open/stay/close/none lives here; **where you are in the stream** lives on the same
+envelope as closed `kind` + `phase` + `awaiting` (+ thin pins / `pending_ref`).
+Hydration, continuum next-step, and delivery chips are **host** concerns — do not
+add them as sixth/seventh transition types.
+
 | Type | Meaning |
 |------|---------|
-| `TaskTransition.BEGIN` | Start a multi-turn kind (`phase`, `pending_ref`) |
-| `CONTINUE` | Same task; optional phase / awaiting update |
+| `TaskTransition.BEGIN` | Start a multi-turn kind (`phase`, `pending_ref`; arm `awaiting` if the leaf asks for a next act) |
+| `CONTINUE` | Same task; optional phase / awaiting / thin payload update |
 | `COMPLETE` | Success — release stickiness |
-| `ABANDON` | User/reset bail — release stickiness (≠ complete) |
+| `ABANDON` | User/reset bail — release stickiness (**≠** complete) |
 | `NONE` | No task semantics (pure Q&A) |
 
 Agents return `TaskTransition` (+ domain-only `context_updates`).  
 `strip_control_keys(...)` removes control keys from agent payloads.  
 **Only** host / `decide_turn` write `active_task` and siblings.
+
+#### Worked product enums (illustrative — register *your* closed tables)
+
+| Do | Don’t |
+|----|--------|
+| Document **example** kinds / phases / awaitings that worked | Add them as more `TaskTransition` members |
+| Frame as **host product examples** / portable **shape** | Ship one product’s taxonomy as SDK law |
+| Point to **closed registry** + **reject invalid** phase | Free-text phase diaries as ownership |
+
+Portable law is the **shape** (closed registry + reject invalid phase), not these
+product strings. Hosts that shipped sole-continue multi-turn used tables like:
+
+| Axis | Examples that held up |
+|------|------------------------|
+| **kind** | `drafting` · `workflow_build` · `cost_out` · `cyber_risk_assessment` · `recommendation_setup` · `pattern_midflight` · `engagement_pack_plan` · `input_state_setup` |
+| **phase** (per kind) | **cost_out:** `open` → `entity_pick` → `anchored` → `sizing` → `estimated` → `save_confirm` → `terminal` · **drafting:** `awaiting_domain` → `awaiting_details` → `drafting` → `refining` → `ready_to_build` · **cyber:** `anchor` → `discover` → `project` → `verify` → `score` → `complete` |
+| **awaiting** (shared arm grammar) | `in_progress` · `user_confirm` · `finite_pick` · product twins e.g. `cost_profile_save_confirm` · `project_name` |
+
+```text
+BEGIN     kind=cost_out  phase=entity_pick  awaiting=finite_pick  pending_ref=…
+CONTINUE  phase=sizing   awaiting=in_progress
+CONTINUE  phase=save_confirm  awaiting=cost_profile_save_confirm
+COMPLETE  → host clears stickiness
+```
+
+Post-complete **continuum** (invite next surface) is a host pin / product act — often
+`NONE` or a **new** `BEGIN` of another kind — never `TaskTransition.CONTINUUM`.
+Depth: [SDK §0.1.3](docs/conversation-control-plane-sdk.md#013-ledger-projection-vs-specialist-state-machine-what-is-internal-vs-shared).
 
 ### Multi-turn invariants (portable)
 
@@ -82,6 +159,28 @@ model memory · model vendors. Compose with them; do not re-implement them here.
 Full anti-pattern library (**A1 — parallel ownership flags** … **A19 — soft existence**):  
 [SDK §1.6](docs/conversation-control-plane-sdk.md#16-adoption-anti-patterns-engineering-doctrine--do-not-generate-these).  
 Diagnostic ladder + quality programs: [diagnostic taxonomy](docs/conversational-authority-diagnostic-taxonomy.md).
+
+### Public product family (why adopt both)
+
+Real multi-turn products fail when **chat looks fine** and **authority is wrong**. One package
+cannot own every proof surface without becoming a product host. Split deliberately:
+
+| Public package | Value you get |
+|----------------|---------------|
+| **This package** (control plane) | Turn ownership SoR · `decide_turn` · sole writer · multi-turn stream · A1–A19 · **cognitive seat** (hydrate…adjudicate…deliver) |
+| **[Conjecture Behaviour Runner](https://github.com/walidnegm/conjecture-behaviour-runner)** | **Named failure modes** · planted FAIL · multi-turn freezes · **Quality Console** (`conjecture ui`) — cockpit for laws · seals · proof debt |
+
+| Need | Use |
+|------|-----|
+| Wire ownership into my host | This repo |
+| Named mode + CI proof for owner_steal / hollow_open / continuum unarmed affirm | Conjecture (`incidents/registry.yaml` · `CATALOG.md`) |
+| Navigate programs / surface×law / laundry multi-lens after a soak | Conjecture **Quality Console** — [CBR README](https://github.com/walidnegm/conjecture-behaviour-runner#quality-console--conversational-agentic-quality) |
+| Architecture without product laundry | [Authority adjudication note](docs/conversational-routing-authority-adjudication.md) |
+
+**Together:** adopt the plane (this SDK) + prove the plane (Conjecture + console).  
+**Do not bloat this package** with product continuum edge tables, catalog families, or
+full host CAQ YAML. Ship **shape + law + anti-patterns** here; ship **mode slugs + proofs +
+console** in Conjecture. Host monorepos keep the full private D1 registry.
 
 ---
 

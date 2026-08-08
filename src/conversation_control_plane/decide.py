@@ -723,6 +723,42 @@ def decide_turn(
     # drafting task. While it is active, the drafting task OWNS refinement turns:
     # "make MRI and CAT scan parallel" is a draft edit, not a fresh Workflow Builder
     # extraction. Only an LLM-perceived handoff to workflow_builder releases it.
+    #
+    # conv_7aec5ce7: false open under pin left sticky drafting; about-pin
+    # continued sole-continue → builder "tell me a domain" (worse). Shared helper.
+    if _active_kind == "drafting" and current_active:
+        try:
+            from conversation_control_plane.pin_reentry_open_contract import (
+                should_collapse_hollow_sticky_drafting as _collapse_hollow_draft,
+            )
+
+            if _collapse_hollow_draft(
+                active_task=current_active,
+                context=context if isinstance(context, dict) else {},
+                query=query,
+            ):
+                complete_task(
+                    db,
+                    tenant_id,
+                    conversation_id,
+                    agent=str(current_active.get("agent") or "bot0"),
+                    reason="superseded",
+                    task_id=(
+                        current_active.get("task_id")
+                        if isinstance(current_active.get("task_id"), str)
+                        else None
+                    ),
+                )
+                logger.info(
+                    "collapsed hollow sticky drafting under pin "
+                    "(class post_complete_pin_greenfield_drafting) conv=%s",
+                    conversation_id,
+                )
+                current_active = None
+                _active_kind = ""
+        except Exception:  # noqa: BLE001
+            logger.debug("sticky drafting pin collapse skipped", exc_info=True)
+
     if _active_kind == "drafting":
         active_task_obj = ActiveTask(**{k: v for k, v in current_active.items()
                                         if k in ("agent", "phase", "awaiting", "pending_ref", "kind", "payload")})
@@ -733,6 +769,23 @@ def decide_turn(
         confidence = 0.0
         intent_source = "heuristic"
         _force_drafting_refine = False
+        # conv_db94316d / conv_8eaa39b3: content-strength "Draft with assumptions"
+        # (or armed prefer_chat_first_sketch) is chat invent sole-continue — never
+        # relative-intent handoff → hollow workflow_builder with chip as paste,
+        # never fresh-domain supersede that parks the chip as domain.
+        try:
+            from conversation_control_plane.draft_content_strength_contract import (
+                content_strength_advance_owns_turn as _strength_owns,
+            )
+
+            if _strength_owns(query, payload=_draft_payload if isinstance(_draft_payload, dict) else None):
+                _force_drafting_refine = True
+                intent = "continue"
+                target = ""
+                confidence = 1.0
+                intent_source = "content_strength_advance_sole_continue"
+        except Exception:  # noqa: BLE001
+            logger.debug("content strength advance sole-continue skip", exc_info=True)
         if isinstance(_carried_draft, dict) and _carried_draft.get("steps"):
             try:
                 from conversation_control_plane.prose_intake_contract import (
@@ -885,7 +938,19 @@ def decide_turn(
             (intent == "new_task" or (workflow_draft_request and len(q) > 10))
             and not _fork_reply_in_progress(_draft_payload, q)
             and not _has_carried_draft_steps
+            # Clarity advance / invent chip is not a new process domain.
+            and not _force_drafting_refine
         )
+        # Never park finite control chips as domain authority.
+        try:
+            from conversation_control_plane.draft_content_strength_contract import (
+                is_draft_control_chip_token as _is_ctrl_chip,
+            )
+
+            if _is_ctrl_chip(q):
+                _fresh_drafting_domain = False
+        except Exception:  # noqa: BLE001
+            pass
         if _fresh_drafting_domain:
             # Pin re-entry open seal: do not supersede into greenfield drafting
             # when a workflow identity pin is present unless cognition marks
@@ -927,11 +992,14 @@ def decide_turn(
                     drafting_pending_ref as _drafting_pending_ref,
                 )
 
+                # Domain is model-owned (intake assessor) — never free-text query
+                # as Domain: authority (chip "draft with assumptions" burned here).
+                _fresh_payload: dict[str, Any] = {"draft": None, "domain": None}
                 task = begin_task(
                     db, tenant_id, conversation_id, agent="bot0", kind="drafting",
                     phase="awaiting_details",
                     pending_ref=_drafting_pending_ref(conversation_id),
-                    payload={"draft": None, "domain": q or None},
+                    payload=_fresh_payload,
                 )
                 if isinstance(task, dict):
                     task_obj = ActiveTask(**{k: v for k, v in task.items()
@@ -939,7 +1007,7 @@ def decide_turn(
                 else:
                     task_obj = ActiveTask(
                         agent="bot0", phase="awaiting_details", kind="drafting",
-                        payload={"draft": None, "domain": q or None},
+                        payload=dict(_fresh_payload),
                     )
                 plan = TurnPlan(agent="bot0", mode="drafting", task=task_obj,
                                 reason="fresh drafting task (new_task or workflow_draft_request while prior drafting active)")
@@ -1144,31 +1212,60 @@ def decide_turn(
                 explicit_ordered_workflow_steps_supplied as _explicit_steps,
             )
             if _explicit_steps(query):
-                plan = TurnPlan(
-                    agent="workflow_builder",
-                    mode="active_task",
-                    task=ActiveTask(
+                # Pack spine seal (conv_e343fb86): do not steal dual initiative
+                # into cold builder when cognition asked for pack or pack bag
+                # still has open hops. Pack open stays cognition-only; code
+                # only refuses builder steal (pack_structure_spine_contract).
+                _pack_ok_builder = True
+                try:
+                    from conversation_control_plane.pack_structure_spine_contract import (
+                        may_begin_greenfield_builder_for_explicit_steps as _may_ep_builder,
+                    )
+
+                    _ep_req = bool(
+                        unified_signal is not None
+                        and getattr(
+                            unified_signal, "engagement_pack_request", False,
+                        )
+                    )
+                    _pack_ok_builder, _pack_block = _may_ep_builder(
+                        context=context if isinstance(context, dict) else None,
+                        engagement_pack_request=_ep_req,
+                    )
+                except Exception:  # noqa: BLE001
+                    _pack_ok_builder, _pack_block = True, "probe_failed"
+                if _pack_ok_builder:
+                    plan = TurnPlan(
                         agent="workflow_builder",
-                        phase="active",
-                        awaiting="in_progress",
+                        mode="active_task",
+                        task=ActiveTask(
+                            agent="workflow_builder",
+                            phase="active",
+                            awaiting="in_progress",
+                            kind=WORKFLOW_BUILD_KIND,
+                        ),
+                        reason=(
+                            "Explicit ordered step list — workflow_builder owns IR "
+                            "(not bot0 drafting)"
+                        ),
+                    )
+                    begin_task(
+                        db, tenant_id, conversation_id, agent="workflow_builder",
+                        phase="active", awaiting="in_progress",
                         kind=WORKFLOW_BUILD_KIND,
-                    ),
-                    reason=(
-                        "Explicit ordered step list — workflow_builder owns IR "
-                        "(not bot0 drafting)"
-                    ),
+                        pending_ref=f"workflow_builder:{conversation_id}",
+                    )
+                    _maybe_log_conflict(
+                        db, tenant_id, conversation_id, plan, live_route_intent,
+                        live_route_layer, "explicit steps bypass drafting",
+                    )
+                    return plan
+                logger.info(
+                    "explicit-steps builder open blocked for pack spine "
+                    "reason=%s conv=%s",
+                    _pack_block,
+                    conversation_id,
                 )
-                begin_task(
-                    db, tenant_id, conversation_id, agent="workflow_builder",
-                    phase="active", awaiting="in_progress",
-                    kind=WORKFLOW_BUILD_KIND,
-                    pending_ref=f"workflow_builder:{conversation_id}",
-                )
-                _maybe_log_conflict(
-                    db, tenant_id, conversation_id, plan, live_route_intent,
-                    live_route_layer, "explicit steps bypass drafting",
-                )
-                return plan
         except Exception:  # noqa: BLE001 — structural guard must never break routing
             logger.debug("explicit-steps drafting bypass skipped", exc_info=True)
 

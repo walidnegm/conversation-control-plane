@@ -28,6 +28,9 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "pending_workflow_pick",
     "pending_entity_pick",
     "inventory_dual_stream_clarify",
+    # Workspace/list ordinal + "existing simulations for N" → list_project_runs
+    # (conv_6ffaf54d — must pre-decide under sticky O&V, not hollow goal_guidance).
+    "inventory_ordinal_simulation_runs",
     # Exact inventory name on armed lists — exclusive owner vs referential_list LLM
     # (conv_9c5f24a6 Keynote / Eligibility Screening).
     "inventory_name_resolve",
@@ -47,6 +50,7 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "catalog_role",
     "catalog_plan_exec",
     "ir_gate_role_proposal",
+    "ir_gate_finite_token_early",
     "authoring_gate_proceed_early",
     "authoring_gate_ir_confirm_early",
     "authoring_gate_ir_freeform_repair_early",
@@ -96,10 +100,47 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "catalog_plan_guard",
     "domain_grounding_chat",
     "workflow_sop_chat",
+    # Precedent / workspace chip: "Set value metrics for {workflow}" → O&V open
+    # (conv_7aec5ce7: freestyle essay without ledger).
+    "set_value_metrics_finite",
     "list_catalog_agent_roles",
+    # Catalog role detail / AI impact / task param edit / add task / #N ordinal
+    "catalog_role_ai_impact",
+    "catalog_role_task_param_edit",
+    "catalog_add_task",
+    "catalog_role_ordinal_detail",
+    "catalog_role_named_detail",
     "drafting_handoff_host_ir_open",
     "interrogate_project",
     "d4_abandon_wipe",
+    # Goal-seek continuum gaps + chat surface packages (pre-decide short-circuit)
+    "goal_seek_need_project",
+    "goal_seek_need_workflow_link",
+    "goal_seek_band_compare",
+    "goal_seek_band_history",
+    "goal_seek_chat_solve",
+    "goal_seek_intensity_preview",
+    "goal_seek_project_workflow_pick",
+    "goal_seek_results",
+    "input_state_goal_seek_bridge",
+    "list_cost_catalog",
+    "pending_entity_pick_input_state_setup",
+    "hollow_open_transfer_refuse",
+    # Project create open / re-arm (finite chips)
+    "project_create_name_open",
+    "project_create_confirm_rearm",
+    # Input state setup sole-continue leaf dispatches
+    "input_state_setup_abandon",
+    "input_state_setup_band_needs_scope",
+    "input_state_setup_done",
+    "input_state_setup_need_name",
+    "input_state_setup_need_project",
+    "input_state_setup_propose_act",
+    "input_state_setup_saved",
+    "input_state_setup_value_mech_write",
+    "input_state_setup_written",
+    # Authoring resume / midflight status card (code-owned redisplay)
+    "authoring_checkpoint",
 })
 
 # S4 collapse — post-decide deliveries (decide_turn runs first).
@@ -163,6 +204,25 @@ POST_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "engagement_pack_run_to_be",
     "engagement_pack_run_to_be_need_wf",
     "engagement_pack_compare",
+    # Pack journey residual dispatches (inventory allow-list)
+    "engagement_pack_agent_profiles_helper",
+    "engagement_pack_agent_profiles_incomplete",
+    "engagement_pack_agentic_readiness_done",
+    "engagement_pack_agentic_readiness_picker",
+    "engagement_pack_compare_need_runs",
+    "engagement_pack_complete",
+    "engagement_pack_missing_handler",
+    "engagement_pack_need_as_is_domain_save",
+    "engagement_pack_need_as_is_pin_before_to_be",
+    "engagement_pack_own_proposal_engine",
+    "engagement_pack_own_proposal_open",
+    "engagement_pack_project_need_to_be_first",
+    "engagement_pack_run_need_project_as_is",
+    "engagement_pack_run_need_project_to_be",
+    "engagement_pack_security_risk",
+    "engagement_pack_security_risk_cyber_start",
+    "engagement_pack_session_resume",
+    "engagement_pack_structure_already_saved",
 })
 
 # S4/S6 — must never skip decide_turn (routing trace must say post-decide delivery).
@@ -196,6 +256,17 @@ DISPATCH_INVENTORY_IGNORE: FrozenSet[str] = frozenset({
     "untraced",
     "project_registry",
 })
+
+# Product roots that stamp ``dispatch=`` / routing.dispatch for chat leaves.
+# Inventory ratchet must scan all of these — not only bot0 + conversation_control
+# top-level (goal_seek / authoring_checkpoint were a blind spot).
+DISPATCH_INVENTORY_PATHS: tuple[str, ...] = (
+    "api/services/bot0.py",
+    "api/services/conversation_control",
+    "api/services/goal_seek",
+    "api/routers/bot0.py",
+    "agent/workflow_builder/authoring_checkpoint_redisplay.py",
+)
 
 
 def allowed_dispatches(*, pre_decide_short_circuit: bool) -> FrozenSet[str]:
@@ -259,17 +330,46 @@ def extract_dispatch_literals_from_text(source: str) -> set[str]:
 
 
 def extract_pre_decide_true_dispatches_from_text(source: str) -> set[str]:
-    """Dispatch ids near ``pre_decide_short_circuit=True`` (static window scan)."""
+    """Dispatch ids near pre_decide short-circuit stamps (static window scan).
+
+    Matches both kwarg form (``pre_decide_short_circuit=True``) and routing-dict
+    form (``"pre_decide_short_circuit": True``). The dict form is what goal_seek
+    and several leaf packages use — missing it was a seal blind spot.
+    """
     import re
 
+    pre_mark = re.compile(
+        r"pre_decide_short_circuit\s*=\s*True"
+        r"|['\"]pre_decide_short_circuit['\"]\s*:\s*True",
+    )
+    disp_re = re.compile(
+        r'(?:dispatch\s*=\s*["\']|["\']dispatch["\']\s*:\s*["\'])([a-z0-9_]+)["\']',
+    )
     found: set[str] = set()
     lines = (source or "").splitlines()
     for i, line in enumerate(lines):
-        if "pre_decide_short_circuit=True" not in line and (
-            "pre_decide_short_circuit = True" not in line
-        ):
+        if not pre_mark.search(line):
             continue
         window = "\n".join(lines[max(0, i - 14) : i + 4])
-        for m in re.finditer(r'dispatch\s*=\s*["\']([a-z0-9_]+)["\']', window):
+        for m in disp_re.finditer(window):
             found.add(m.group(1))
     return found
+
+
+def collect_dispatch_inventory_source(repo_root: str | None = None) -> str:
+    """Concatenate product sources listed in ``DISPATCH_INVENTORY_PATHS``."""
+    from pathlib import Path
+
+    root = Path(repo_root) if repo_root else Path(".")
+    parts: list[str] = []
+    for rel in DISPATCH_INVENTORY_PATHS:
+        path = root / rel
+        if path.is_file():
+            parts.append(path.read_text(encoding="utf-8", errors="replace"))
+            continue
+        if path.is_dir():
+            for p in sorted(path.rglob("*.py")):
+                if p.name.startswith("test") or "test" in p.parts:
+                    continue
+                parts.append(p.read_text(encoding="utf-8", errors="replace"))
+    return "\n".join(parts)

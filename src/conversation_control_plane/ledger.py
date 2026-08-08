@@ -812,6 +812,24 @@ def set_pending_question(
         key="pending_question",
         value=payload,
     )
+    # Residual snapshot for intent_clarify: after a path resolves, live pending
+    # is cleared but older chips may still fire bare ordinals (conv_5b54e526:
+    # pick 3 → design leaf; later click 4 on same menu → menu echo). Residual
+    # lets finite resolve survive until TTL / next open.
+    if (kind or "").strip() == "intent_clarify":
+        try:
+            _set_jsonb_key(
+                db,
+                conversation_id=conversation_id,
+                tenant_id=tenant_id,
+                key="last_intent_clarify_pending",
+                value=payload,
+            )
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).debug(
+                "last_intent_clarify_pending write skipped",
+                exc_info=True,
+            )
     _emit(
         db,
         tenant_id=tenant_id,
@@ -985,6 +1003,15 @@ def begin_task(
     effective_kind = validation.normalized_kind if validation.normalized_kind else kind
 
     rev_before = get_control_revision(db, tenant_id, conversation_id)
+    # Previous kind before we overwrite active_task (foreign pin demotion).
+    _prev_kind: str | None = None
+    try:
+        _prev_state = get_control_state(db, tenant_id, conversation_id) or {}
+        _prev_at = _prev_state.get("active_task")
+        if isinstance(_prev_at, dict):
+            _prev_kind = str(_prev_at.get("kind") or "").strip() or None
+    except Exception:  # noqa: BLE001
+        _prev_kind = None
     tid = (task_id or new_task_id()).strip()
     task = {
         "agent": agent,
@@ -1013,6 +1040,22 @@ def begin_task(
         value=task,
         expected_version=expected_version,
     )
+    # All sole-continue kinds: demote foreign product pins on owner begin
+    # (class seal — foreign_pin_leftover_under_new_owner / conv_196e8e8e).
+    try:
+        from conversation_control_plane.owner_begin_pin_demotion_contract import (
+            apply_owner_begin_pin_demotion,
+        )
+
+        apply_owner_begin_pin_demotion(
+            db,
+            tenant_id,
+            conversation_id,
+            new_kind=str(effective_kind) if effective_kind else None,
+            previous_kind=_prev_kind,
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("owner begin pin demotion skipped", exc_info=True)
     _sync_agent_type_column(
         db, conversation_id=conversation_id, tenant_id=tenant_id, agent=agent,
     )
@@ -1332,10 +1375,17 @@ def suspend_active(
     # duplicates of the SAME paused work. That clutter cascaded: orientation echoed
     # "Workflow Builder, Workflow Builder, Workflow Builder", and the decider's "what to do
     # next" went generic (it could not pick cleanly among many near-duplicate suspended
-    # tasks). Drop any existing entry for the same paused work (same pending_ref; else same
-    # agent with no ref) so suspended_tasks holds at most one entry per distinct paused task.
+    # tasks). Drop any existing entry for the same paused work:
+    #   * same pending_ref, or
+    #   * same agent with no ref, or
+    #   * same kind when kind is set (sole-continue streams — e.g. engagement_pack_plan
+    #     suspended once with pending_ref=engagement_pack:plan and again with ref=None
+    #     after a cyber detour → dual "Initiative plan in progress + paused" laundry
+    #     on where-are-we; conv_74fdf662).
+    # so suspended_tasks holds at most one entry per distinct paused task / kind.
     _ref = active.get("pending_ref")
     _agent = active.get("agent")
+    _kind = str(active.get("kind") or "").strip()
     suspended = [
         t for t in suspended
         if not (
@@ -1343,6 +1393,7 @@ def suspend_active(
             and (
                 (_ref and t.get("pending_ref") == _ref)
                 or (not _ref and t.get("agent") == _agent and not t.get("pending_ref"))
+                or (_kind and str(t.get("kind") or "").strip() == _kind)
             )
         )
     ]
@@ -1829,7 +1880,6 @@ def read_turn_claim(
         claim = row[0]
         return claim if isinstance(claim, dict) else None
     except Exception:
-        import logging
         logging.getLogger(__name__).debug(
             "read_turn_claim failed: conversation=%s",
             conversation_id, exc_info=True,
@@ -2023,7 +2073,6 @@ def claim_turn(
         session.commit()
         return "busy"
     except Exception as exc:
-        import logging
 
         logging.getLogger(__name__).error(
             "claim_turn failed (fail-closed default): conversation=%s",
@@ -2097,7 +2146,6 @@ def mark_turn_completed(
             {"turn_id": turn_id, "cid": conversation_id, "tid": tenant_id},
         )
     except Exception:  # noqa: BLE001 — bookkeeping must not break the turn
-        import logging
         logging.getLogger(__name__).warning(
             "mark_turn_completed failed: conversation=%s", conversation_id,
             exc_info=True,
@@ -2117,7 +2165,6 @@ def commit_conversation_session_boundary(db: Session) -> None:
     try:
         db.commit()
     except Exception:
-        import logging
 
         logging.getLogger(__name__).warning(
             "commit_conversation_session_boundary failed", exc_info=True,
@@ -2183,7 +2230,6 @@ def renew_turn_claim(
             result = db.execute(_renew_sql, _renew_params)
             return int(result.rowcount or 0) == 1
         except Exception:
-            import logging
             logging.getLogger(__name__).warning(
                 "renew_turn_claim failed (non-fatal): conversation=%s",
                 conversation_id, exc_info=True,
@@ -2201,7 +2247,6 @@ def renew_turn_claim(
             session.rollback()
         return renewed
     except Exception:
-        import logging
         logging.getLogger(__name__).warning(
             "renew_turn_claim failed (non-fatal): conversation=%s",
             conversation_id, exc_info=True,
@@ -2250,7 +2295,6 @@ def release_turn(
         )
         session.commit()
     except Exception:
-        import logging
         logging.getLogger(__name__).warning(
             "release_turn failed (TTL will reap): conversation=%s",
             conversation_id, exc_info=True,

@@ -251,6 +251,24 @@ KIND_REGISTRY: dict[str, KindSpec] = {
         pending_ref_type="engagement_pack_plan",
         terminal=frozenset({"complete"}),
     ),
+    # Input State Manager — host leaf under bot0 (not AGENT_REGISTRY agent).
+    "input_state_setup": _spec(
+        "input_state_setup",
+        owner="bot0",
+        exclusive="input_state_setup",
+        phases=frozenset({
+            "pick_state",
+            "show",
+            "propose_act",
+            "confirm_write",
+            "written",
+            "ready_to_run",
+            "handoff",
+            "abandoned",
+        }),
+        pending_ref_type="input_state_act_package",
+        terminal=frozenset({"handoff", "abandoned"}),
+    ),
 }
 
 

@@ -280,6 +280,64 @@ Frameworks commonly **collapse** two or three of these. This design separates th
 | **Execution orchestration** | What nodes, agents, services, or activities should run? | LangGraph / agent runtime / your `handle_turn` |
 | **Durable execution** | Retries, timers, failures, worker recovery? | Temporal / infra (optional) — or your job queue |
 
+#### Authority-adjudication turn pipeline — where this SDK sits {#authority-adjudication-pipeline-sdk-seat}
+
+Product doctrine names a **fine turn pipeline** (hydrate → interpret → adjudicate →
+policy → execute → deliver). That is **not a second control plane** — it is the same
+authority law at hop resolution. The **essay**
+([conversational-routing-authority-adjudication.md](conversational-routing-authority-adjudication.md),
+host monorepo · portable extract:
+`extract/conversation-control-plane/docs/conversational-routing-authority-adjudication.md`)
+is the architecture note; **this SDK** is the **implementation contract** for the
+authority steps.
+
+**Public value split (do not collapse):** this SDK ships **authority implementation +
+anti-patterns + cognitive seat**. Named failure-mode **slugs + Conjecture proofs** ship
+in the sibling package
+[conjecture-behaviour-runner](https://github.com/walidnegm/conjecture-behaviour-runner)
+(`incidents/registry.yaml`). Host monorepos may keep a larger private D1 registry.
+
+##### Essay layer × SDK role × app role
+
+| Essay layer | SDK role (implementation) | App role |
+|-------------|---------------------------|----------|
+| **0 Hydration** | Ledger projection / KindSpec / pins = **SoR the View is built from** | Builds the brief (`allowed_operations`, surface map) |
+| **1 Semantic** | Law only: meaning → **closed enums**, never free-text authority | Classifiers, op enum *values*, schemas |
+| **2 Adjudication** | **Core package:** `decide_turn`, sole writer, exclusive owner, A18 allow-list **shape** | Which leaves / EXTRA rows |
+| **3 Policy** | Gates, stickiness, foreign deny as **tables + lifecycle** | Continuum edges, family inventories, incident suppressions |
+| **4 Execute** | `TaskTransition` envelope; strip control keys | LangGraph / tools / SoR / workers |
+| **5 Delivery** | Finite grammar when armed; open-leaf arming; A17 fail-soft ban | Product voice, chips, continuum pin payload |
+
+**One line:**
+
+> **SDK** = who owns the turn + what transitions are admissible + durable ownership SoR. 
+> **App** = what ops / kinds / surfaces / edges mean + how the product speaks.
+
+```text
+App hydrates View ──reads──► SDK ledger
+App proposes enums ─────────► SDK adjudicates (decide_turn / owner / A18)
+App tables (policy) ────────► SDK enforces shape
+App/LangGraph executes ─────► SDK applies TaskTransition only
+App delivers continuum ─────► SDK open-leaf / armed-grammar law
+```
+
+Hydration is **app code reading SDK state** — not “more transcript.”
+
+##### Closed enums · kinds · surfaces · continuum
+
+These are **app-defined values** under **SDK-defined shapes**. The package does **not**
+hardcode Bot0’s continuum table, classifier fields, or product leaf inventory.
+
+| Extension | SDK requires | App fills |
+|-----------|--------------|-----------|
+| **Ops / enums** | Schema-validated **closed** set | `SET_FIELD`… or product-act ids |
+| **Kinds** | Registered streams + phase enums | `cost_out`, `workflow_build`, … |
+| **Surfaces** | Literacy so proposals can be adjudicated | Leaves, cards, chips |
+| **Continuum** | Invite + same-turn pin + armed-only affirm | Edge rows + `send_text` |
+
+See also [§2.1.x Extension points](#21x-extension-points-enums-kinds-surfaces-continuum)
+(portable pin / proposal shapes, disposition vocabulary, LangGraph pre-edge hook).
+
 #### Zero inherent LLM calls {#zero-inherent-llm-calls}
 
 **The control plane has 0 inherent LLM calls.** Achieving its object — durable conversational
@@ -595,6 +653,47 @@ Agent advances its own machine
 
 Kinds are a **closed registry** (`cost_out`, `drafting`, …). New multi-turn surfaces get a
 **registered kind** (or new phases on an existing kind) — not LLM-invented step names as ownership.
+
+**`TaskTransition` is not the whole multi-turn story.** The five values are **lifecycle only**
+(open / stay / success-close / bail-close / no-task). Stream position is `kind` + `phase` +
+`awaiting` on the same envelope; fat work stays behind `pending_ref`; domain ids ride
+`context_updates` (stripped of control keys). Hydration, continuum next-step arming, and
+delivery chips are **host** seat / product contracts — **do not** invent
+`TaskTransition.CONTINUUM` / `HYDRATE` / per-product begin variants.
+
+##### Worked product enums (illustrative — shape, not portable required values)
+
+| Do | Don’t |
+|---|---|
+| Document **example** kinds / phases / awaitings that worked | Add them as more `TaskTransition` members |
+| Frame as **host product examples** / portable **shape** | Ship one product’s taxonomy as SDK law |
+| Point to **closed registry** + **reject invalid** phase | Free-text phase diaries as ownership |
+
+Hosts that sealed sole-continue multi-turn used closed tables like the following. Adopt the
+**pattern** (register → validate at write → reject invalid); copy strings only if they match
+your product.
+
+| Axis | Worked examples |
+|---|---|
+| **kind** | `drafting` · `workflow_build` · `cost_out` · `agent_cost_pricing` · `cyber_risk_assessment` · `recommendation_setup` · `pattern_midflight` · `engagement_pack_plan` · `input_state_setup` · `project_workspace` · `risk_catalog_learning` |
+| **phase** (per kind) | **cost_out:** `open` → `entity_pick` → `anchored` → `sizing` → `estimated` → `save_confirm` → `terminal` · **drafting:** `awaiting_domain` → `awaiting_details` → `drafting` → `refining` → `ready_to_build` · **cyber_risk_assessment:** `anchor` → `discover` → `project` → `verify` → `score` → `complete` · **pattern_midflight:** `choose` → `gap` → `confirm_run` → `running` → `results` |
+| **awaiting** (prefer small shared grammar) | `in_progress` · `user_confirm` · `finite_pick` · product-specific arms e.g. `cost_profile_save_confirm` · `project_name` · `plan_act` |
+
+```text
+BEGIN kind=cost_out phase=entity_pick awaiting=finite_pick pending_ref=cost_out:conv_…
+CONTINUE phase=sizing awaiting=in_progress
+CONTINUE phase=save_confirm awaiting=cost_profile_save_confirm
+COMPLETE → ledger clears stickiness (ABANDON ≠ COMPLETE)
+
+# Open-leaf name ask (same envelope — arm awaiting when you ask)
+BEGIN|CONTINUE kind=project_workspace phase=naming awaiting=project_name
+
+# Pure Q&A / glossary under no task
+NONE
+```
+
+Post-complete continuum (“next you can cost-out / open Input State…”) is host pin + surface,
+not a sixth transition: user affirm → package surface or **BEGIN** a *new* kind.
 
 #### Worked example — identity missing → ask a question
 
@@ -1269,6 +1368,8 @@ else: # greenfield default
 | Blockchain / external audit lanes | §0.5 |
 | Bootstrap / integration playbook | §1 |
 | Integration guardrails (portable contract) | §2.1 |
+| Essay pipeline → SDK seat (hydrate…deliver) | [§0.0.2 authority-adjudication pipeline](#authority-adjudication-pipeline-sdk-seat) |
+| Closed enums · kinds · surfaces · continuum (app extension points) | [§2.1.x](#21x-extension-points-enums-kinds-surfaces-continuum) |
 | Multi-turn stream continue pattern (all kinds) | §2.1 multi-turn stream |
 | What the control plane is (infrastructure layer) | §3 |
 | Concurrency, hot-potato loops, context hydration | §3.1 |
@@ -1321,6 +1422,76 @@ source layer and prefer the principle, not the pattern.
 
 > **Bot0 monorepo engineers:** full repo discipline (LLM factory, prompt library, CI gates) lives in
 > §2.1 is the **portable** slice external adopters need.
+
+#### 2.1.x Extension points — enums, kinds, surfaces, continuum {#21x-extension-points-enums-kinds-surfaces-continuum}
+
+The SDK is **intentionally flexible** on product vocabulary. It does **not** ship a universal
+operation list, continuum edge table, or product surface catalog. It **does** require that
+whatever the app ships is **closed, registered, and code-owned** at the authority boundary.
+
+| Extension | SDK contract (portable shape) | App owns (values) | Not SDK package |
+|---|---|---|---|
+| **Closed enums / ops** | Meaning → **schema-validated enum or union**; unknown → clarify/refuse; never free-text as operation authority | Op set (e.g. `SET_FIELD` · `ASK_INFORMATION` *or* product-act ids) | Hardcoded Bot0 classifier fields |
+| **Task `kind`** | Registered sole-continue / pin-resume kinds; closed phase enum per kind; `KindSpec` envelope | Which streams exist (`cost_out`, `workflow_build`, …) | Product IR / FinOps domain |
+| **Phases / awaiting** | Phase owns dispatch; awaiting stamps open gates; hydrate View from ledger | Phase labels and gate arming flags | — |
+| **Product surfaces** | Literacy required for semantic proposals to be adjudicated; surface ids may appear in pins / continuum | Surface map (leaves, cards, chips) | Full FE ContentBlock registry |
+| **Continuum edges** | **Open-leaf arming:** invite + same-turn pin + armed-only affirm; edge table is product inventory | Edge rows (source event → target surface → primary `send_text`) | Concrete Bot0 chips text |
+| **Pre-decide / foreign leaves** | A18: one projected owner + UNIVERSAL ∪ EXTRA allow-set; optional **family** frozensets | Which host leaves and families are foreign under sticky owners | host chat module gauntlet call order |
+
+**Semantic proposal shape (portable — app fills values):**
+
+```text
+SemanticProposal {
+ operation: <closed enum> // never free-form string authority
+ target?: <id | pin key>
+ field?: <closed field id when SET_FIELD-class>
+ value?: <typed>
+ // optional product labels (also closed):
+ read_kind?: ...
+ task_intent?: continue | new_task | ...
+}
+```
+
+**Hydration must project (minimum):**
+
+```text
+active_task.kind · phase · awaiting
+bound entity pins / pending_ref
+allowed_operations (optional but recommended — prune for Layer 1)
+armed gates / continuum pin if any
+stickiness grade for the stream
+```
+
+**Continuum pin shape (portable — optional module key):**
+
+```text
+pending_continuum_next_step = {
+ surface, // product surface id
+ primary_send_text, // finite product grammar (chip)
+ project_id? / workflow_id? / ...
+ source, armed_at
+}
+```
+
+Affirm tokens resolve **only while the pin is armed** — not as global synonym laundry.
+
+**Adjudication disposition (vocabulary — implement as you need):**
+
+```text
+ADMISSIBLE | UNSUPPORTED | CLARIFY | REJECT | DEFER | NESTED_INTERACTION | ...
+```
+
+**Invariant:** `UNSUPPORTED` / policy `DEFER` **must not** fall through to unowned freestyle
+or a default graph edge. Owner packages UX (re-show card, clarify, refuse).
+
+**LangGraph / graph engines:** keep for Layer 4 execution. Conditional edges should run a
+**pre-edge adjudication** check (owner + proposal + policy) before choosing a target node —
+see essay §7; this SDK’s `decide_turn` + exclusive owner are the product-chat form of the same law.
+
+**Sync law (internal monorepo ↔ public extract):** this §2.1.x lives in the monorepo contract
+doc and is **copied** into `extract/conversation-control-plane/docs/` via
+`./scripts/sync_control_plane_sdk_extract.sh` (MANIFEST `docs:`). Do not maintain a divergent
+public-only wording of extension points.
 
 #### ⛔ NL cognition — code never decides what the user meant
 
@@ -1421,12 +1592,14 @@ never regex-slot topic text into a blank form.
 | **Explain with evidence** | Rationales tied to message/ledger context | Canonical numbers/tables from code paths only |
 | **Clear off-ramps** | Detour labels from classifiers | Path-switch copy on every intake elicitation |
 | **Remember what's learned** | Antecedent from recent context + ledger placeholders | Persist `intake` on drafting payload; do not re-ask confirmed facts |
-| **Responsible autonomy** | `offer_fork`, proceed/interpret labels | Confirm gates (domain pick, IR confirm, commit) stay code-owned |
+| **Responsible autonomy** | `offer_fork`, proceed/interpret labels | Confirm gates (domain pick, IR confirm, commit) stay code-owned; **propose advance** (first shot / Draft with assumptions) when intention is clear — not **passive non-advance** |
 
-**Bot0 reference:** `intake_engagement_contract.py` + `workflow_intake` assessor fields
+**Anti-shape (product voice):** **sparse ceremony** — clear create/draft intent answered with generic how-to and no finite advance. Opposite: **acknowledge-and-advance**. CAQ: `sparse_how_to_loop` · `passive_non_advance`. Lexicon: *sparse ceremony*.
+
+**Bot0 reference:** `intake_engagement_contract.py` + `sparse_drafting_advance_contract.py` + `workflow_intake` assessor fields
 (`intent_understanding`, `working_hypotheses`, `targeted_questions`). **Enforced:**
-`test_intake_engagement_contract.py`. **Anti-pattern:** template-filling `{process_topic}` without
-assessor understanding — users feel unheard.
+`test_intake_engagement_contract.py` · `test_sparse_drafting_advance_seal.py`. **Anti-pattern:** template-filling `{process_topic}` without
+assessor understanding — users feel unheard; pure product tour when the user already named the work.
 
 #### Cold system-suggest open (authoring leaf — portable)
 

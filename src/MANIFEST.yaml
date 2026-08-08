@@ -50,6 +50,8 @@ public_bundle:
     - conversation-turn-lifecycle-diagram.md
     - conversational-authority-diagnostic-taxonomy.md
     - host-transition-discipline.md
+    # Portable cognitive architecture (hand-maintained under extract/.../docs/)
+    - conversational-routing-authority-adjudication.md
   replace_section_15: docs/section-15-public.md
   sanitize_lifecycle: true
   package_root: src/conversation_control_plane

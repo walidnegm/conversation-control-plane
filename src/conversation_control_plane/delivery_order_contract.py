@@ -258,6 +258,7 @@ EXCLUSIVE_TURN_OWNER_PRIORITY: tuple[str, ...] = (
     "pattern_midflight",  # Optimize/Expand/Rewire/Precedent midflight (C11)
     "recommendation_setup",  # Recommend 2.0 gather/setup interview
     "engagement_pack",  # Dense multi-surface plan of attack (F6)
+    "input_state_setup",  # Input State Manager (chat sim assumptions)
     "surface_read",
     "advisor",
     "product_concept",
@@ -278,8 +279,10 @@ ACTION_EXCLUSIVE_OWNERS = frozenset({
     "pattern_midflight",
     "recommendation_setup",
     "engagement_pack",
+    "input_state_setup",
     "surface_read",
     "advisor",
+    "session_activities",  # orientation → ledger status, never concept_gate
 })
 
 
@@ -320,11 +323,12 @@ def select_exclusive_turn_owner(
     if signal is not None:
         try:
             from conversation_control_plane.cost_pin_refine import (
+                is_amend_estimate_kind as _is_amend_est,
                 is_pin_refine_kind as _is_pin_refine,
             )
 
             _ctk = str(getattr(signal, "cost_turn_kind", None) or "none")
-            if _is_pin_refine(_ctk):
+            if _is_pin_refine(_ctk) or _is_amend_est(_ctk):
                 return ExclusiveTurnOwner(
                     "cost_out",
                     f"cost_turn_kind={_ctk}",
@@ -356,6 +360,10 @@ def select_exclusive_turn_owner(
             except Exception:  # noqa: BLE001
                 pass
         # New strong action labels may supersede sole-continue (user switched goal).
+        # Without this, task_intent=continue (default under sticky O&V) **always**
+        # keeps sole-continue owner even when cognition stamped a foreign
+        # discovery / product / surface act — zero detour, no disambiguation
+        # (conv_6ffaf54d: every ask re-elicits value metrics or wrong leaf).
         strong_new = False
         if signal is not None:
             # Multi-surface SOW / engagement letter — supersede cost_out sole-continue
@@ -380,11 +388,99 @@ def select_exclusive_turn_owner(
                 elif sole_owner == "realization" and rk_probe != "realization_intake":
                     strong_new = True
             # Saved-workflow proposal/improve is a foreign surface start — not
-            # drafting sole-continue (recommend improvements for named workflow).
+            # drafting / IR sole-continue (recommend for a named workflow).
+            # Mid **cost_out** is different: proposal_options arms the
+            # Stay/Leave fork under ledger sole-continue (conv_019aae41) —
+            # do **not** strong_new steal to surface_read (pre-decide
+            # cost_out_recommend_fork owns the package).
             if rk_probe == "proposal_options" and sole_owner in (
-                "draft", "workflow_build", "cost_out",
+                "draft", "workflow_build",
             ):
                 strong_new = True
+            # --- Foreign detour labels (user left the sole-continue field) ---
+            # Hard inventory / catalog front-door (not soft goal_guidance — that
+            # steals knowledge packaging under sticky O&V).
+            disc_probe = str(
+                getattr(signal, "discovery_kind", None) or "none",
+            ).strip().lower()
+            _hard_front_door = frozenset({
+                "workspace_overview",
+                "platform_catalog",
+                "agent_marketplace",
+                "scorecards",
+                "capabilities",
+            })
+            # Foreign labels only supersede sole-continue when:
+            # - owner is O&V (sticky metrics must yield knowledge / inventory /
+            #   surface reads — conv_6ffaf54d), or
+            # - cognition already released the stream (detour/new_task/…).
+            # Cost_out / drafting goldens stamp scorecards / product_concept under
+            # *continue* to prove sole-continue holds (multi-detour steal seal).
+            _stream_released = task_intent in (
+                "detour",
+                "new_task",
+                "abandon",
+                "handoff",
+            )
+            _ovs_owner = sole_owner == "outcome_value"
+            if disc_probe in _hard_front_door and (
+                _ovs_owner or _stream_released
+            ):
+                strong_new = True
+            product_probe = str(
+                getattr(signal, "product_concept_kind", None) or "none",
+            ).strip().lower()
+            if product_probe not in ("", "none") and (
+                _ovs_owner or _stream_released
+            ):
+                strong_new = True
+            # Foreign surface read (not same-stream re-entry of this sole-continue)
+            if rk_probe not in ("", "none"):
+                same_stream = False
+                try:
+                    from conversation_control_plane.task_pin_contract import (
+                        KIND_TO_EXCLUSIVE_OWNER,
+                        _READ_KIND_TO_LEDGER_KIND,
+                    )
+
+                    ledger_for_rk = _READ_KIND_TO_LEDGER_KIND.get(rk_probe)
+                    if ledger_for_rk and KIND_TO_EXCLUSIVE_OWNER.get(
+                        ledger_for_rk,
+                    ) == sole_owner:
+                        same_stream = True
+                except Exception:  # noqa: BLE001
+                    same_stream = False
+                if not same_stream and (_ovs_owner or _stream_released):
+                    # simulate / list / graph / inspect under sticky O&V, etc.
+                    strong_new = True
+            # Definitional / knowledge under sticky O&V **or** sticky advisor:
+            # release sole-continue so concept packaging owns this turn
+            # (table: OWNERS_YIELD_TO_CONCEPT_PACKAGING — not phrase laundry).
+            try:
+                from conversation_control_plane.task_pin_contract import (
+                    OWNERS_YIELD_TO_CONCEPT_PACKAGING as _own_yield_pkg,
+                )
+            except Exception:  # noqa: BLE001
+                _own_yield_pkg = frozenset({"outcome_value"})
+            if sole_owner in _own_yield_pkg and (query or "").strip():
+                try:
+                    from api.services.bot0_product_knowledge import (
+                        concept_packaging_query_eligible as _pkg_elig,
+                    )
+
+                    if _pkg_elig(
+                        query,
+                        product_concept_kind=product_probe,
+                        context=(
+                            {**(context or {}), "active_task": active_task}
+                            if isinstance(context, dict) or active_task
+                            else context
+                        ),
+                        task_intent=task_intent,
+                    ):
+                        strong_new = True
+                except Exception:  # noqa: BLE001
+                    pass
         if sole_owner and not strong_new and task_intent not in (
             "detour",
             "new_task",
@@ -392,6 +488,36 @@ def select_exclusive_turn_owner(
             "handoff",
         ):
             return ExclusiveTurnOwner(sole_owner, f"active_task sole-continue kind")
+        # Packaging strong_new under O&V/advisor: claim concept_gate **before**
+        # residual route_intent=advisor re-captures (conv_828ad8d5 glossary half).
+        if (
+            strong_new
+            and sole_owner in _own_yield_pkg
+            and (query or "").strip()
+        ):
+            try:
+                from api.services.bot0_product_knowledge import (
+                    concept_packaging_query_eligible as _pkg_claim,
+                )
+
+                _pctx = context if isinstance(context, dict) else {}
+                if active_task is not None and isinstance(active_task, dict):
+                    _pctx = {**_pctx, "active_task": active_task}
+                if _pkg_claim(
+                    query,
+                    product_concept_kind=str(
+                        getattr(signal, "product_concept_kind", None) or "none",
+                    ),
+                    context=_pctx,
+                    task_intent=task_intent,
+                    unified_signal=signal,
+                ):
+                    return ExclusiveTurnOwner(
+                        "concept_gate",
+                        f"sticky {sole_owner} yield to concept packaging",
+                    )
+            except Exception:  # noqa: BLE001
+                pass
         # cost_estimate_request while cost_out active → still cost_out
         if sole_owner == "cost_out" and signal is not None and bool(
             getattr(signal, "cost_estimate_request", False),
@@ -408,6 +534,13 @@ def select_exclusive_turn_owner(
         return ExclusiveTurnOwner(
             "engagement_pack",
             "engagement_pack_request",
+        )
+
+    # Input State Manager — project sim inputs / assumptions (not agent TCO).
+    if bool(getattr(signal, "input_state_setup_request", False)):
+        return ExclusiveTurnOwner(
+            "input_state_setup",
+            "input_state_setup_request",
         )
 
     if bool(getattr(signal, "cost_estimate_request", False)):
@@ -452,9 +585,15 @@ def select_exclusive_turn_owner(
     if product not in ("", "none"):
         return ExclusiveTurnOwner("product_concept", f"product_concept_kind={product}")
 
+    # Orientation / session ledger **before** definitional packaging.
+    # Free-text "what is the status of this session" is definitional Class-B
+    # shape but router orientation owns session status (conv_2d889a55).
     disc = str(getattr(signal, "discovery_kind", None) or "none").strip().lower()
-    if disc not in ("", "none") and is_front_door_detour_kind(disc):
-        return ExclusiveTurnOwner("discovery", f"discovery_kind={disc}")
+    if disc == "orientation":
+        return ExclusiveTurnOwner(
+            "session_activities",
+            "discovery_kind=orientation",
+        )
 
     packaging_ctx: dict = context if isinstance(context, dict) else {}
     if active_task is not None and isinstance(active_task, dict):
@@ -469,18 +608,39 @@ def select_exclusive_turn_owner(
                 product_concept_kind=product,
                 context=packaging_ctx,
                 task_intent=task_intent,
+                unified_signal=signal,
+                discovery_kind=disc,
             )
         except Exception:  # noqa: BLE001
             packaging_eligible = False
-    # Explicit sole-continue refuse even if a caller forced packaging_eligible=True.
-    if packaging_eligible and sole_continue_blocks_concept_gate_owner(
+    # Under KINDS_YIELD_TO_CONCEPT_PACKAGING (O&V + sticky advisor workspace),
+    # do not block knowledge packaging. Other sole-continue streams still refuse.
+    _block_pkg = sole_continue_blocks_concept_gate_owner(
         active_task=active_task,
         context=packaging_ctx,
         task_intent=task_intent,
-    ):
+    )
+    try:
+        from conversation_control_plane.task_pin_contract import (
+            KINDS_YIELD_TO_CONCEPT_PACKAGING,
+            active_task_kind as _atk,
+        )
+
+        if _atk(packaging_ctx) in KINDS_YIELD_TO_CONCEPT_PACKAGING:
+            _block_pkg = False
+    except Exception:  # noqa: BLE001
+        pass
+    if packaging_eligible and _block_pkg:
         packaging_eligible = False
+    # Concept packaging **before** soft front-door discovery (goal_guidance /
+    # intent_clarify). Otherwise sticky O&V + goal_guidance steals AI-score /
+    # glossary questions into "Design and ground your process" (conv_6ffaf54d).
+    # Orientation already returned above — never packaging over session status.
     if packaging_eligible:
         return ExclusiveTurnOwner("concept_gate", "definitional packaging eligible")
+
+    if disc not in ("", "none") and is_front_door_detour_kind(disc):
+        return ExclusiveTurnOwner("discovery", f"discovery_kind={disc}")
 
     return ExclusiveTurnOwner("default", "orchestrator/plan default")
 

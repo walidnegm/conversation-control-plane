@@ -91,6 +91,8 @@ DRAFTING_CONTROL_PAYLOAD_KEYS: frozenset[str] = frozenset({
     "content_strength",
     "content_strength_skip_reason",
     "draft_advance_intent",
+    # Post-clarity invent stamp — must survive sanitize (conv_db94316d re-entry).
+    "prefer_chat_first_sketch",
 })
 
 # kind=engagement_pack_plan: thin plan projection + pins for handoffs.

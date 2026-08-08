@@ -169,6 +169,35 @@ def project_fine_authoring_phase(pending: dict[str, Any] | None) -> str | None:
     return None
 
 
+def ledger_phase_awaiting_from_pending(
+    pending: dict[str, Any] | None,
+) -> tuple[str | None, str | None]:
+    """Map builder pending → ledger ``phase`` + ``awaiting`` (not null while gated).
+
+    Chat/worker often lagged: pending had ``_awaiting_domain_choice`` while
+    ledger stayed ``phase=active`` / ``awaiting=null`` so A18 owner projection
+    and free-text domain bind missed (conv_dde29c0f class). Same package as the
+    domain picker card must stamp ledger ``phase=domain_picker``, ``awaiting=domain``.
+    """
+    if not isinstance(pending, dict) or not pending:
+        return None, None
+    fine = project_fine_authoring_phase(pending)
+    if not fine:
+        return None, None
+    # Ledger awaiting tokens (must match bot0 authoring-gate heal + pre_decide).
+    awaiting_map = {
+        PHASE_ROLE_PROPOSAL: "role_proposal_review",
+        PHASE_IR_REVIEW: "ir_confirmation",
+        PHASE_DOMAIN_PICKER: "domain",
+        PHASE_COMMIT_PLAN: "commit_confirmation",
+        PHASE_OPERATIONAL_DATA: "operational_data",
+    }
+    awaiting = awaiting_map.get(fine)
+    # Staffed gate historically used coarse phase=active with awaiting set.
+    phase = "active" if fine == PHASE_ROLE_PROPOSAL else fine
+    return phase, awaiting
+
+
 def _workflow_name_and_task_count(pending: dict[str, Any]) -> tuple[str, int]:
     """Best-effort name + task count from builder pending (IR or lowered nodes)."""
     nodes = pending.get("nodes") or []
@@ -356,11 +385,21 @@ def sync_authoring_snapshot_to_ledger(
     try:
         from conversation_control_plane.ledger import update_phase
 
+        _pend = load_builder_pending_state(db, tenant_id, conversation_id)
+        _phase_from_pend, _awaiting_from_pend = ledger_phase_awaiting_from_pending(
+            _pend,
+        )
         _ledger_phase = str(
-            payload.get("phase")
+            _phase_from_pend
+            or payload.get("phase")
             or payload.get("authoring_phase")
             or active.get("phase")
             or "active"
+        )
+        _ledger_awaiting = (
+            _awaiting_from_pend
+            if _awaiting_from_pend is not None
+            else active.get("awaiting")
         )
         task = update_phase(
             db,
@@ -368,7 +407,7 @@ def sync_authoring_snapshot_to_ledger(
             conversation_id,
             agent=agent,
             phase=_ledger_phase,
-            awaiting=payload.get("authoring_phase") or active.get("awaiting"),
+            awaiting=_ledger_awaiting,
             pending_ref=active.get("pending_ref"),
             payload=payload,
         )
@@ -528,18 +567,14 @@ def active_agent_task_blocks_detour(
     return False
 
 
-# Finite-grammar gate replies — not NL cognition. Mirrors workflow_builder
-# ``_confirm_tokens`` so a bare "yes" at IR/commit gates reaches decide_turn
-# instead of the discovery orientation classifier (conv_7a953788).
-WORKFLOW_CONFIRMATION_REPLIES = frozenset({
-    "yes", "y", "ok", "okay", "sure", "proceed", "continue",
-    "go ahead", "go on", "looks good", "looks right", "correct",
-    "that works", "confirm", "confirmed", "fine", "good", "great",
-    "no", "n", "nope", "cancel", "stop", "save",
-    # Exclusive IR-gate chip tokens (structure vs repair — not dual-yes).
-    "lets continue", "let's continue",
-    "apply_structure_fixes", "confirm fixes",
-})
+# Finite-grammar gate replies — **single SoT** = finite_confirm_grammar
+# (not a parallel synonym table). Bare "yes" at IR/commit reaches decide_turn
+# instead of discovery orientation (conv_7a953788).
+from conversation_control_plane.finite_confirm_grammar import (  # noqa: E402
+    GATE_REPLY_ALIASES as _GATE_REPLY_ALIASES,
+    WORKFLOW_GATE_REPLY_EXACT as WORKFLOW_CONFIRMATION_REPLIES,
+    normalize_short_gate_reply,
+)
 
 # Menu tokens for Staffed IR (role proposal review).
 ROLE_PROPOSAL_MENU_REPLIES = frozenset({
@@ -573,35 +608,6 @@ ROLE_PROPOSAL_REPLIES = (
     | ROLE_PROPOSAL_ACCEPT_REPLIES
     | ROLE_PROPOSAL_REPROPOSE_REPLIES
 )
-
-
-_GATE_REPLY_ALIASES = {
-    "lets proceed": "proceed",
-    "let's proceed": "proceed",
-    "lets continue": "continue",
-    "let's continue": "continue",
-    "lets go": "proceed",
-    "let's go": "proceed",
-    "this is fine": "fine",
-    "this is fine lets proceed": "proceed",
-    "this is fine let's proceed": "proceed",
-    # Common menu typos at Staffed IR (conv_5f2fd7a7: "accep").
-    "accep": "accept",
-    "acept": "accept",
-    "accpet": "accept",
-}
-
-
-def normalize_short_gate_reply(query: str) -> str:
-    # Collapse apostrophes / whitespace so "let's proceed" matches alias keys.
-    try:
-        from conversation_control_plane.finite_confirm_grammar import (
-            normalize_confirm_control_text,
-        )
-        reply = normalize_confirm_control_text(query or "")
-    except Exception:  # noqa: BLE001 — keep simple strip path
-        reply = (query or "").strip().lower().rstrip(".!?")
-    return _GATE_REPLY_ALIASES.get(reply, reply)
 
 
 # Prefer task_pin_contract.KINDS_PREEMPT_POST_SAVE_OV_STATUS (S8) — kept as
@@ -1316,6 +1322,7 @@ __all__ = [
     "operational_data_provision_shape",
     "strip_authoring_save_fabrication",
     "project_fine_authoring_phase",
+    "ledger_phase_awaiting_from_pending",
     "surface_read_detour_suppressed",
     "workflow_authoring_active",
     "DetourKind",
