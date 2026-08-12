@@ -1,9 +1,15 @@
 # Conversation Control Plane
 
-> **Agent runtimes such as LangGraph can manage both execution and conversational
-> state. The Conversation Control Plane extracts product-level task ownership and
-> lifecycle into a portable contract — so that authority does not have to belong
-> to any one agent runtime.**
+> **LangGraph can absolutely persist conversation and agent state, route between
+> agents, and resume execution. A Conversation Control Plane extracts a different
+> state contract: product-level task ownership and *admissible conversational
+> transitions* — which stay authoritative even when execution moves between
+> graphs, agents, deterministic handlers, jobs, or humans.**
+
+It does not merely *remember* continuity. It **enforces authority law**: what
+work is foreground, who owns the turn, what state constrains it, and which
+lifecycle transitions (`BEGIN` · `CONTINUE` · `COMPLETE` · `ABANDON`) are legal
+right now — with a single writer and `COMPLETE` never conflated with `ABANDON`.
 
 **If your whole product is one LangGraph, LangGraph may be enough.** Its
 checkpointer persists thread state, resumes conversations, and supports
@@ -50,17 +56,45 @@ not have to migrate from one execution ontology to another.
 
 LangGraph's checkpointer *is* a durable state ledger — it saves state per step,
 keys it to a thread, and supports history, replay, inspection and resume. The
-difference is not "we have a ledger and they don't." It is **what the ledger is
-authoritative about**:
+difference is not "we have a ledger and they don't." It is **which question the
+store is authoritative for**:
+
+```text
+LangGraph checkpoint          Conversation Control Plane
+"Where is this                "Why does this product task
+ graph execution?"             own this turn?"
+```
 
 | | authoritative state of |
 |---|---|
-| **LangGraph checkpoint** | graph execution · thread state |
-| **This ledger** | product task lifecycle · kind/phase · awaiting · suspend/resume · legal transition |
+| **LangGraph checkpoint** | graph execution · thread state · which node runs next |
+| **This ledger** | product task lifecycle · kind/phase · awaiting · pins · suspend/resume · admissible transition |
 
-These can even be the *same physical store* if you implement this contract on
-LangGraph. The thesis does not require another database — it requires another
-**authority abstraction**.
+The **same Postgres** can hold a LangGraph checkpointer *and* this ledger —
+different questions, not competing stores. The thesis does not require another
+database; it requires another **authority abstraction**.
+
+### …and this package is not only the ledger
+
+The ledger is the system of record underneath, not the whole of what ships. The
+package owns six seats of the turn pipeline — including **adjudication, policy
+and lifecycle**, not merely durable storage:
+
+| Seat | **This package** | **Your app** |
+|---|---|---|
+| **0 Hydration** | ledger / KindSpec / pins as the SoR the view is built from | builds the brief |
+| **1 Semantic** | law: meaning → closed enums; free text never becomes authority directly | classifiers, enum *values*, schemas |
+| **2 Adjudication** | `decide_turn`, sole writer, exclusive owner | which leaves are offered |
+| **3 Policy** | gates, stickiness, foreign-deny shape, lifecycle | continuum edges, inventories |
+| **4 Execute** | `TaskTransition` envelope, control-key stripping | LangGraph / tools / workers / SoR |
+| **5 Delivery** | finite grammar when armed, fail-soft ban | product voice, chips, payloads |
+
+> **SDK** = who owns the turn + what transitions are admissible + durable
+> ownership SoR.
+> **App** = what ops / kinds / surfaces / edges *mean* + how the product speaks.
+
+Full write-up in [the seat table below](#contract-at-a-glance) and
+[SDK §0.0.2](docs/conversation-control-plane-sdk.md#authority-adjudication-pipeline-sdk-seat).
 
 Nor is a *thread* the same as a *task*. A thread is what LangGraph persists
 checkpoints against; one conversation may carry several product tasks with
