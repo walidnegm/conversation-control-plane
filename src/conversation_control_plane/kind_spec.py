@@ -217,9 +217,20 @@ KIND_REGISTRY: dict[str, KindSpec] = {
             "active", "ready", "in_progress", "extracting", "gathering", "reviewing",
             "building", "editing", "ir_review", "role_proposal", "domain_picker",
             "operational_data", "commit_plan",
+            # Failure terminal. Without one, the ONLY terminal was the success
+            # phase (``commit_plan``), so a build that failed mid-``extracting``
+            # stayed ACTIVE forever — and ``workflow_build`` is in
+            # SOLE_CONTINUE_KINDS_SUPPRESS_SURFACE_READ, so the orphaned task
+            # silently suppressed every later saved-workflow read in that
+            # conversation. Observed: an extraction failed, and three hours
+            # later "display the graph" was still being refused, for a build
+            # the user had long abandoned.
+            #
+            # Conjecture failure mode: ``unterminated_task_on_failure``.
+            "build_failed",
         }),
         pending_ref_type="pending_workflow",
-        terminal=frozenset({"commit_plan"}),
+        terminal=frozenset({"commit_plan", "build_failed"}),
         gates=_WB_GATES,
     ),
     "pattern_midflight": _spec(
