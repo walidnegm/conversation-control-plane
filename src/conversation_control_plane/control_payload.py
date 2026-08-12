@@ -73,6 +73,10 @@ ALLOWED_CONTROL_PAYLOAD_KEYS: frozenset[str] = frozenset({
     "role_name",
     "bulk_count",
     "catalog_phase",
+    # concept_thread (glossary Q&A) — thin topic anchors only
+    "concept_slugs",
+    "concept_headline",
+    "prior_query",
 })
 
 # kind=drafting / handoff: carried process draft (not WorkflowIR). Bounded below.

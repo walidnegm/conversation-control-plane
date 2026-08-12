@@ -32,6 +32,11 @@ modules:
   - api/services/conversation_control/multi_turn_stream_contract.py
   - api/services/conversation_control/reset_commands.py
   - api/services/conversation_control/failure_modes.py
+  # Authority boundary for interpreted meaning: cognition proposes, the host
+  # grounds, the plane emits. A specialist may consume a grounded declaration
+  # but cannot construct one — the constructor requires a turn id and resolved
+  # targets, which only grounding produces.
+  - api/services/conversation_control/semantic_declaration.py
   # Host envelopes (long-turn / reattach law) — portable, transport-agnostic.
   - api/services/conversation_control/turn_timeout.py
   - api/services/conversation_control/turn_session_discipline.py

@@ -223,6 +223,27 @@ POST_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "engagement_pack_security_risk_cyber_start",
     "engagement_pack_session_resume",
     "engagement_pack_structure_already_saved",
+    # Volumes fail-closed free-text / incomplete (conv_f2315383 · C19g)
+    "engagement_pack_volumes_free_text_done",
+    "engagement_pack_volumes_free_text_partial",
+    "engagement_pack_volumes_incomplete",
+    # Multi-turn session status cards (session_activities / orientation — C23)
+    "multi_turn_session_status_cost_out",
+    "multi_turn_session_status_cost_workboard",
+    "multi_turn_session_status_agent_cost_pricing",
+    "multi_turn_session_status_cyber_risk_assessment",
+    "multi_turn_session_status_realization_intake",
+    "multi_turn_session_status_outcome_value_setup",
+    "multi_turn_session_status_drafting",
+    "multi_turn_session_status_project_workspace",
+    "multi_turn_session_status_scorecard_interrogate",
+    "multi_turn_session_status_risk_catalog_learning",
+    "multi_turn_session_status_workflow_build",
+    "multi_turn_session_status_pattern_midflight",
+    "multi_turn_session_status_recommendation_setup",
+    "multi_turn_session_status_engagement_pack_plan",
+    "multi_turn_session_status_input_state_setup",
+    "multi_turn_session_status_concept_thread",
 })
 
 # S4/S6 — must never skip decide_turn (routing trace must say post-decide delivery).

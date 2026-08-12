@@ -1162,8 +1162,44 @@ def decide_turn(
         except Exception:  # noqa: BLE001
             logger.debug("drafting risk-open detour skipped", exc_info=True)
 
+        # **Cognition decides this is a concept question; retrieval only
+        # confirms we can answer it.**
+        #
+        # This backstop used to fire on retrieval alone, and retrieval grounds
+        # essentially anything — measured 2026-08-11, ``grounded=True`` for
+        # "who am i" (1.0), a real glossary ask (4.75) and a 5.6k workflow
+        # description (11.5). The score is a raw lexical overlap **count**, so
+        # it rises with length: the more the user writes, the more certain the
+        # system became that they were asking a glossary question.
+        #
+        # conv_73cdd4b6: the card asked "Add detail in chat", the user pasted a
+        # 5,655-char clinical-trial process, the ledger said
+        # ``awaiting: intake`` — and this turned it into
+        # "drafting detour (retrieval_grounding)", answered with "name a domain
+        # and a few steps … not a free-form essay". Re-sent with an explicit
+        # "create me a workflow" prefix it compiled to a Draft IR, because the
+        # router then set ``workflow_draft_request`` and this never got a vote.
+        #
+        # So the gate is cognition's label, not corpus overlap. A mid-drafting
+        # glossary question still detours — the router marks it
+        # ``product_knowledge`` (published 2026-08-11) — while prose intake,
+        # which carries no concept label, stays intake.
+        _concept_labeled = False
+        try:
+            from conversation_control_plane.turn_owner_precedence_contract import (
+                PRODUCT_KNOWLEDGE_KIND,
+            )
+
+            _pck = str(
+                getattr(unified_signal, "product_concept_kind", None) or "none",
+            ).strip().lower()
+            _concept_labeled = _pck == PRODUCT_KNOWLEDGE_KIND
+        except Exception:  # noqa: BLE001
+            _concept_labeled = False
+
         if (
             intent != "detour"
+            and _concept_labeled
             and not _interpret_or_save
             and db is not None
             and tenant_id

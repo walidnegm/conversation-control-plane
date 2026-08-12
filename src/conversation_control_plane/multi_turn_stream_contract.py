@@ -53,6 +53,7 @@ SOLE_CONTINUE_KINDS = frozenset({
     "recommendation_setup",
     "engagement_pack_plan",
     "input_state_setup",
+    "concept_thread",
 })
 
 
@@ -107,6 +108,8 @@ ENTITY_RESOLVE_PHASES_BY_KIND: dict[str, frozenset[str]] = {
     PROJECT_WORKSPACE_KIND: frozenset({"open", ""}),
     SCORECARD_INTERROGATE_KIND: frozenset({"active", ""}),  # pick run while active
     RISK_CATALOG_LEARNING_KIND: frozenset({"browsing", ""}),
+    # concept_thread: no ambient entity re-resolve — packaging is the leaf.
+    "concept_thread": frozenset({""}),
     # O&V collecting/confirming are sole-continue (conv_8a35529c: detour then
     # field answers re-opened scorecard for ambient Keynote and abandoned CS).
     # Entity resolve only when kind is open with empty phase (pre-pin).
@@ -150,6 +153,7 @@ CONTINUE_PHASES_BY_KIND: dict[str, frozenset[str]] = {
         "collecting", "confirming", "complete", "active",
     }),
     DRAFTING_KIND: frozenset({"drafting", "refining", "ready_to_build", "active"}),
+    "concept_thread": frozenset({"open", "followup"}),
 
     # Contract B ladder phases (authoring_gate_contract + dispatch_phase).
     "workflow_build": frozenset({
@@ -380,6 +384,7 @@ STREAM_GATE_ADOPTER_PATHS: frozenset[str] = frozenset({
     "api/services/conversation_control/pattern_midflight_contract.py",
     # recommend 2.0 gather/setup sole-continue interview
     "api/services/conversation_control/recommendation_setup_contract.py",
+    # concept_thread ensure_* lives in task_pin_contract (already listed)
 })
 
 

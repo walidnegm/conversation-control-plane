@@ -1,9 +1,154 @@
 # Conversation Control Plane
 
-**Conversation Control Plane SDK** — A production-grade, DB-authoritative control
-plane for multi-agent conversational AI. **LLM proposes; code owns the turn.**
-Durable session ownership, deterministic handoffs, task lifecycle, and resume —
-compose with LangGraph/tools; **do not replace them.**
+> **Agent runtimes such as LangGraph can manage both execution and conversational
+> state. The Conversation Control Plane extracts product-level task ownership and
+> lifecycle into a portable contract — so that authority does not have to belong
+> to any one agent runtime.**
+
+**If your whole product is one LangGraph, LangGraph may be enough.** Its
+checkpointer persists thread state, resumes conversations, and supports
+interrupts; its handoff pattern already shows `active_agent` being persisted
+across turns to decide who handles the next interaction. You can model
+`active_task`, `phase`, `awaiting` and pins in that state and drive handoffs from
+it. That is a perfectly good architecture, and this SDK is not claiming a
+deficiency LangGraph does not have.
+
+The value shows up when a conversation **spans more than one execution world** —
+multiple graphs, a second agent runtime, deterministic product surfaces, async
+jobs, tools, or human approval steps. Then one question needs a single shared
+answer:
+
+> *What work is active, and what may happen next?*
+
+Putting that answer inside one particular graph gets awkward when some of the
+work isn't in that graph.
+
+```text
+   OPTION A — one runtime owns everything
+   ┌──────────────────────────────┐
+   │ LangGraph                    │
+   │   execution                  │
+   │   conversation authority     │   ← often sufficient
+   └──────────────────────────────┘
+
+   OPTION B — authority outlives any single runtime
+   ┌──────────────────────────────┐
+   │ Conversation Control Plane   │
+   │   product task authority     │
+   └──────────────┬───────────────┘
+        ┌─────────┼──────────┬────────────┐
+        ▼         ▼          ▼            ▼
+    LangGraph  Agents SDK  host code   human step
+```
+
+Both are valid. The bet behind Option B is that **product-level continuity
+outlives any single agent runtime**: if the pricing specialist moves from
+LangGraph to the OpenAI Agents SDK next quarter, the product's task state should
+not have to migrate from one execution ontology to another.
+
+### On ledgers, precisely
+
+LangGraph's checkpointer *is* a durable state ledger — it saves state per step,
+keys it to a thread, and supports history, replay, inspection and resume. The
+difference is not "we have a ledger and they don't." It is **what the ledger is
+authoritative about**:
+
+| | authoritative state of |
+|---|---|
+| **LangGraph checkpoint** | graph execution · thread state |
+| **This ledger** | product task lifecycle · kind/phase · awaiting · suspend/resume · legal transition |
+
+These can even be the *same physical store* if you implement this contract on
+LangGraph. The thesis does not require another database — it requires another
+**authority abstraction**.
+
+Nor is a *thread* the same as a *task*. A thread is what LangGraph persists
+checkpoints against; one conversation may carry several product tasks with
+independent lifecycles:
+
+```text
+  thread: conversation_42
+    ├── task_913   kind=cost_out         SUSPENDED
+    ├── task_927   kind=workflow_build   ACTIVE
+    └── bounded glossary detour          (no task)
+```
+
+You can build that in LangGraph state. The claim here is narrower and, we think,
+stronger: **the task model is worth being a first-class contract independent of
+whichever graph happens to execute it.**
+
+### Topology vs product authority
+
+This is the sharpest form of the distinction. A graph handoff naturally encodes
+**topology** — *which node runs next*:
+
+```text
+active_agent = sales
+        ↓
+route to sales_agent node
+```
+
+The control plane encodes **product authority** — *what work is open, and which
+deliveries are legal for it*:
+
+```text
+task_913
+  kind    = cost_out
+  phase   = pricing
+  awaiting = approval
+        ↓
+  legal delivery choices
+    ├── LangGraph pricing agent
+    ├── deterministic pricing service
+    └── human approval
+```
+
+The product task exists **above** the implementation topology. Concretely: when
+the pricing specialist moves from
+
+```text
+Pricing Agent: LangGraph      →      Pricing Agent: OpenAI Agents SDK
+```
+
+the product's task state does not migrate from one execution ontology to
+another. `task_913` is still `cost_out`, still in `pricing`, still `awaiting`
+approval — only the executor changed. That property is the whole point of
+keeping authority outside any single runtime, and it is worth exactly as much as
+your application's heterogeneity: near zero if everything is one graph, a great
+deal once it isn't.
+
+```text
+                       USER
+                         │
+                         ▼
+              PRODUCT CONTROL PLANE
+              task_913 · cost_out · pricing · awaiting approval
+                         │  authorized work
+          ┌──────────────┼───────────────┐
+          ▼              ▼               ▼
+      LangGraph      OpenAI SDK       host leaf
+       workflow      specialist      deterministic
+          │              │               │
+          ▼              ▼               ▼
+       Temporal         MCP            human
+         job           server         approval
+```
+
+The question that layer answers: **which of these systems is the authority for
+the user's ongoing product task?** Putting that inside one particular graph gets
+less attractive as more of the work happens outside it.
+
+Your application still defines what kinds of work exist — `checkout`,
+`claims_review`, `workflow_build` — and which agents and tools perform it.
+
+**Compose with these runtimes; do not replace them.** LLM proposes; code owns
+the turn.
+
+<sub>*Naming:* “Conversation Control Plane” is the architectural layer. This
+repository is its portable open-source implementation, built around the ledger
+as the authoritative projection and journal. It is more than storage —
+`decide_turn`, `KindSpec`, transition validation, gates, claims, suspension and
+the provenance boundary are all control-plane behaviour.</sub>
 
 Who is foreground, what is pinned, when ownership may yield — portable across how
 each turn is **run** (LangGraph · agent SDKs · Temporal · plain code · human operator).
@@ -214,21 +359,56 @@ Wrap sketches: [examples/integrations/](examples/integrations/).
 
 ## Where it sits (compose once)
 
+This package is the **authority kernel** of a larger architecture — not the whole
+of it. The layers above it interpret language; the layers below it execute work.
+It owns the part in between: *who may act, on what, right now.*
+
 ```text
-  Product chat / API / worker
-            │
-            ▼
-  ┌─ This package ─────────────────────────────┐
-  │  claim → decide_turn → handle → apply → release │
-  │  L1 projection · L2 journal · gates · resume │
-  └────────────────────────────────────────────┘
-            │ handle dispatches into
-            ▼
-  LangGraph · Agents SDK · CrewAI · Rasa · ChatKit · plain Python · Temporal
-            │
-            ▼
-  Models · tools / MCP · domain DB · model memory (Letta / mem0 / Zep / …)
+   PRODUCT SEMANTIC MODEL          your app
+   what acts, objects and concepts exist
+              │
+              ▼
+   TURN COMPOSITION                your app  ·  reference_host/
+   free text → acts, entities, references,
+   modifiers, declared semantics
+              │
+              ▼
+   SEMANTIC GROUNDING              your app  ·  reference_host/
+   resolve references against state;
+   bind declarations to THIS turn
+              │
+              ▼
+   STATE ADJUDICATION              shared boundary
+              │
+   ╔══════════▼═══════════════════════════════╗
+   ║  OPEN-SOURCE SDK — authority kernel      ║
+   ║                                          ║
+   ║  decide_turn · KindSpec · task lifecycle ║
+   ║  ownership · gates / pins · transitions  ║
+   ║  ledger (L1 projection · L2 journal)     ║
+   ║  suspend / resume · single-writer        ║
+   ╚══════════╤═══════════════════════════════╝
+              │ handle dispatches into
+              ▼
+   AGENT / HOST LEAF               your app
+   LangGraph · Agents SDK · CrewAI · Rasa ·
+   ChatKit · Temporal · plain Python
+              │
+              ▼
+   SKILL / TOOL / MCP              your app / runtime
+              │
+              ▼
+   DOMAIN SYSTEM OF RECORD         your enterprise
 ```
+
+**Bring your own product semantics and execution runtime.** The hard portable
+part is the deterministic authority substrate in the middle — that is what this
+package is, and the only thing it claims to be.
+
+`reference_host/` shows the seam above the kernel (`TurnSemantics` → grounding →
+`GroundedTurn` → `decide_turn`). It is a reference architecture, **not** a
+dependency: nothing in `conversation_control_plane` imports it, and you are
+expected to replace it. See [`examples/declared_vs_inferred.py`](examples/declared_vs_inferred.py).
 
 | Layer | Owns |
 |-------|------|
@@ -307,11 +487,22 @@ Longer bootstrap: SDK [§1.1](docs/conversation-control-plane-sdk.md#11-adopter-
 
 ## When to adopt
 
-**Adopt when** you have multi-specialist sticky chat, need SQL-auditable ownership,
-hit stuck sessions / double-writers, or mix run leaves without rewriting control law.
+**Adopt when** the conversation spans more than one execution world — several
+graphs, a second agent runtime, deterministic product surfaces, async jobs, or
+human approval — and they all need one shared answer to *what work is active and
+what may happen next*. Also when you need SQL-auditable ownership, hit stuck
+sessions / double-writers, or want to swap a specialist's runtime without
+migrating product state.
 
-**Skip when** a single graph/session is enough, Temporal already owns everything you
-care about, or you are still prototyping single-agent flows.
+**Skip when one runtime already owns everything.** If your whole product is a
+single LangGraph — all agents are nodes, all handoffs are edges, all state is
+graph state — then LangGraph is very likely already a good control plane for it,
+and this SDK is an abstraction you do not yet need. Same if Temporal already owns
+the orchestration you care about, or you are prototyping single-agent flows.
+
+That is a real "don't adopt this" answer, and it is meant sincerely: the
+abstraction earns its keep when authority must **outlive** any single runtime,
+not before.
 
 Adoption cost: moderate thin host loop; **0 inherent LLM calls** on the authority path.
 
@@ -333,12 +524,19 @@ Adoption cost: moderate thin host loop; **0 inherent LLM calls** on the authorit
 
 | Path | Role |
 |------|------|
-| [`src/conversation_control_plane/`](src/conversation_control_plane/) | Installable package |
+| [`src/conversation_control_plane/`](src/conversation_control_plane/) | **Installable package — the authority kernel** |
+| [`reference_host/`](reference_host/) | **Reference architecture, NOT installed.** Turn composition + grounding above the kernel. Replace it. |
 | [`docs/`](docs/) | SDK contract + lifecycle + host discipline |
+| [`examples/declared_vs_inferred.py`](examples/declared_vs_inferred.py) | User declaration vs agent inference, end to end |
 | [`examples/e2e_host_loop.py`](examples/e2e_host_loop.py) | Runnable host + COMPLETE≠ABANDON demo |
 | [`examples/cyber_risk_assessment/`](examples/cyber_risk_assessment/) | Optional specialist scaffold |
 | [`examples/integrations/`](examples/integrations/) | Wrap sketches (not full E2E products) |
 | [`tests/`](tests/) | Portable contract tests |
+
+**The line between the two top rows is the point.** `src/` is portable law:
+install it, depend on it, expect it to be stable. `reference_host/` is one
+worked answer to *"what must become true before the kernel is asked to decide"* —
+useful to read, not meant to be adopted. Nothing in `src/` imports it.
 
 ---
 

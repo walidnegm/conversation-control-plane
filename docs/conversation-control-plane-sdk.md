@@ -2812,6 +2812,67 @@ building them yourself:
 
 These are real wins. For single-agent tool loops and research graphs, LangGraph alone is often enough.
 
+#### 14.1a Correction — LangGraph *can* own conversational state (2026-08-12)
+
+Earlier framing in this document, and in the public README, said in effect
+*"LangGraph manages the agent; the control plane manages who owns the
+conversation."* **That is too strong and should not be repeated.**
+
+LangGraph has checkpointed state organised into persistent threads, resumes from
+that state, and supports interrupts and durable continuation. Its own handoff
+pattern shows state such as `active_agent` / `current_step` being updated and
+persisted across turns to decide who handles the next interaction. You can model
+`active_task`, `kind`, `phase`, `awaiting` and pins in graph state and drive
+handoffs from it. **LangGraph is fully capable of implementing conversational
+ownership.**
+
+The defensible claim is about **architectural location, not capability**:
+
+> LangGraph gives you the machinery to implement conversational ownership
+> *inside an execution graph*. The Conversation Control Plane makes
+> conversational ownership an explicit, **framework-independent application
+> contract**.
+
+Three consequences worth keeping straight:
+
+* **Do not claim "we have a ledger and LangGraph doesn't."** The checkpointer
+ *is* a durable state ledger — per-step saves, thread-keyed, with history,
+ replay, inspection and resume. The difference is what the ledger is
+ *authoritative about*: graph execution and thread state, versus product task
+ lifecycle, kind/phase, awaiting, suspend/resume and legal transition. They can
+ even be the **same physical store**. The thesis does not require another
+ database; it requires another **authority abstraction**.
+* **A thread is not a task.** A thread is what checkpoints are keyed to. One
+ conversation may carry several product tasks with independent lifecycles — one
+ suspended `cost_out`, one active `workflow_build`, plus a bounded detour with
+ no task at all. That model is buildable in LangGraph state; the claim is that
+ it is worth being a first-class contract independent of whichever graph
+ executes it.
+* **Say plainly when the SDK is not needed.** If the whole product is one
+ LangGraph — all agents are nodes, all handoffs are edges, all state is graph
+ state — LangGraph may already be an excellent control plane, and adopting this
+ is premature abstraction. The value appears when a conversation spans several
+ graphs, a second agent runtime, deterministic surfaces, jobs, tools or human
+ steps, and they need one shared answer to *what work is active and what may
+ happen next*.
+
+The positioning is therefore **not competitive**: this extracts one architectural
+concern LangGraph is capable of implementing and makes it independent of
+LangGraph. Both configurations are legitimate —
+
+```text
+OPTION A OPTION B
+LangGraph Conversation Control Plane
+ ├── execution └── product authority
+ └── conversation authority │
+ ▼
+ LangGraph (execution)
+```
+
+— and the bet behind B is that product-level continuity outlives any single
+agent runtime: moving a specialist from LangGraph to the Agents SDK should not
+migrate product state from one execution ontology to another.
+
 ### 14.2 What conversational products still fight (even with LangGraph)
 
 Production chat with **multiple specialists sharing one thread** tends to surface gaps that checkpoints do

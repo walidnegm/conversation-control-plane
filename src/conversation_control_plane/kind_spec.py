@@ -269,6 +269,15 @@ KIND_REGISTRY: dict[str, KindSpec] = {
         pending_ref_type="input_state_act_package",
         terminal=frozenset({"handoff", "abandoned"}),
     ),
+    # Stacked glossary / product-knowledge Q&A (concept packaging home).
+    "concept_thread": _spec(
+        "concept_thread",
+        owner="bot0",
+        exclusive="default",
+        phases=frozenset({"open", "followup", "complete"}),
+        pending_ref_type="none",
+        terminal=frozenset({"complete"}),
+    ),
 }
 
 

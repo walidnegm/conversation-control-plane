@@ -1032,6 +1032,75 @@ def domain_picker_blocks_inventory_soft_name(
     )
 
 
+def authoring_workflow_name_capture_open(
+    pending: dict[str, Any] | None,
+    *,
+    context: object = None,
+) -> bool:
+    """True when free-text is a **new draft title / save act**, not inventory open.
+
+    Incident (conv_0d9db90b): user typed suggested save name
+    ``Keynote-to-Revenue Follow-Up — As-Is`` while authoring asked for a name;
+    inventory said "Exact name matches 6 saved items — which did you mean?"
+    implying save-over. Product: **no inventory multi-match** on save-name turns;
+    colliding titles get a **unique-name** ask (``workflow_name_contract``).
+
+    Name capture owns free-text even when a draft title is already prefilled
+    (user re-types the suggestion or is still on commit confirm).
+    """
+    if not isinstance(pending, dict):
+        return False
+    if pending.get("_committed") or pending.get("workflow_created"):
+        return False
+    # Explicit durable name ask — owns free-text even if a draft title is set
+    # BUT never while staffable role gaps own the primary CTA (name is later;
+    # Continue to staffing must not be treated as a title — conv_85e7bde5).
+    try:
+        from conversation_control_plane.commit_staffing_gate_contract import (
+            staffing_gap_owns_next_act as _staff_gap_owns,
+        )
+
+        _gap_owns = bool(_staff_gap_owns(pending))
+    except Exception:  # noqa: BLE001
+        _gap_owns = False
+    # Staffable gap owns residual staffing (not inventory multi-match). Still
+    # block inventory resolve so free-text stays with builder handoff.
+    if _gap_owns:
+        return True
+    if pending.get("_awaiting_workflow_name"):
+        return True
+    st = str(pending.get("_state") or "").strip().lower()
+    if st == "awaiting_workflow_name":
+        return True
+    # Commit plan / confirm open: free-text is yes / rename / unique-name —
+    # never "which saved workflow did you mean?"
+    commit_open = bool(
+        pending.get("_awaiting_commit_confirmation")
+        or pending.get("_awaiting_staffing_gap")
+        or st == "awaiting_commit_confirmation"
+    )
+    # Commit arm owns free-text (confirm / unique rename) — never inventory
+    # multi-match pick when a title is already suggested or pinned.
+    if commit_open:
+        return True
+    phase = project_fine_authoring_phase(pending)
+    if phase == PHASE_COMMIT_PLAN:
+        return True
+    # Ledger sticky commit / name without pending flag (reload race)
+    ctx = context if isinstance(context, dict) else {}
+    active = ctx.get("active_task") if isinstance(ctx.get("active_task"), dict) else {}
+    kind = str(active.get("kind") or "").strip()
+    agent = str(active.get("agent") or "").strip()
+    if kind == "workflow_build" or agent in ("workflow_builder", "workflow_editor"):
+        await_s = str(active.get("awaiting") or "").strip().lower()
+        ph = str(active.get("phase") or "").strip().lower()
+        if await_s in ("commit_confirmation", "workflow_name", "name"):
+            return True
+        if ph in ("commit_plan", "awaiting_commit_confirmation"):
+            return True
+    return False
+
+
 def authoring_gate_blocks_inventory_resolve(
     db: Any,
     *,
@@ -1042,9 +1111,9 @@ def authoring_gate_blocks_inventory_resolve(
 ) -> bool:
     """Open pre-commit authoring gates exclusive over inventory short-circuit.
 
-    Domain / Staffed IR / IR / KPI / commit must not lose free-text to
-    ``inventory_name_resolve`` / inspect-saved (conv_e0008ce7: KPI labels
-    without a number → Help Desk invalid graph; conv_5e398f46 domain).
+    Domain / Staffed IR / IR / KPI / commit / **name capture** must not lose
+    free-text to ``inventory_name_resolve`` / inspect-saved (conv_e0008ce7,
+    conv_5e398f46 domain, **conv_0d9db90b name-as-inventory-pick**).
     """
     if domain_picker_blocks_inventory_soft_name(
         db,
@@ -1056,6 +1125,8 @@ def authoring_gate_blocks_inventory_resolve(
         return True
     pending = load_builder_pending_state(db, tenant_id, conversation_id)
     pending = reconcile_authoring_gate_flags(pending) if pending else None
+    if authoring_workflow_name_capture_open(pending, context=context):
+        return True
     if operational_data_kpi_gate_open(pending, context=context):
         return True
     phase = project_fine_authoring_phase(pending)
@@ -1311,6 +1382,7 @@ __all__ = [
     "domain_gate_owns_authoring_turn",
     "domain_gate_owns_pick_turn",
     "domain_picker_blocks_inventory_soft_name",
+    "authoring_workflow_name_capture_open",
     "authoring_gate_blocks_inventory_resolve",
     "exclusive_owner_blocks_inventory_early",
     "exclusive_owner_blocks_foreign_pre_decide",
