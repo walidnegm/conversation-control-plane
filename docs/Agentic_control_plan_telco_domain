@@ -1,4 +1,4 @@
-#An agent control plane for BSS, OSS, and the network
+# An agent control plane for BSS, OSS, and the network
 
 Cognition proposes. Control owns the session. Execution authorizes. Action mutates. Knowledge says what is true. Evidence says what was done. Models and graphs live only in the planner.
 
@@ -20,9 +20,7 @@ Most agent drawings collapse planning, tool calls, and side effects into one box
 
 ## What the original stack got right
 
-text
-
-```
+```text
 NORTHBOUND     UI / NOC / CSR / External APIs
                REST / GraphQL / gRPC
                     │
@@ -51,9 +49,7 @@ What it lacked is the rest of a production OSS: a closed loop, shared state, an 
 
 One sentence: Cognition proposes a grounded plan; Agent Control owns the session and the objects; Execution decides whether the plan may happen; Action is the only thing that mutates; Knowledge says what is true; Evidence says what was done.
 
-text
-
-```
+```text
 NORTHBOUND
      UI · NOC · CSR · External APIs · Peer agents
      REST / GraphQL / gRPC / A2A
@@ -749,7 +745,6 @@ A framework-level handoff such as “delegate to the Network Remediation Agent�
 ---
 
 
-
 ## Multi-agent and human-agent workflows
 
 Carrier workflows are not single-agent chats. A single outcome may involve a customer-service agent, assurance agent, resource/inventory agent, network-change agent, provisioning agent, and a human operator. The architecture represents **ownership, authority, and evidence** across those actors rather than relying on agents to coordinate by free-text consensus.
@@ -1317,7 +1312,6 @@ These are especially important for assist-to-automate promotion because an agent
 ## L6 — LLM evaluation, assurance, and assist-to-automate gates
 
 > **Drift role.** L6 does not replace the runtime contracts in L1–L5. It continuously verifies them. When a repeated probabilistic failure can be made impossible by a lower-layer contract, the architecture should ratchet that failure downward into a deterministic invariant.
-
 
 
 Evaluation follows the architecture. Do not ask one benchmark to prove what belongs to different control boundaries.
