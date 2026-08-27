@@ -2103,4 +2103,3 @@ This means **drift prevention is not owned by one governance layer.** The refere
 A useful conformance question for every pod is:
 
 > **What can drift at this layer, what contract contains it, and what L6 evidence proves the contract still holds?**
-
