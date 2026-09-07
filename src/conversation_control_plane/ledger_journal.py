@@ -228,6 +228,17 @@ def append_control_event(
             "payload": json.dumps(body),
         },
     )
+    # Every journaled event IS plane movement. Hooking the single journal writer
+    # means a handler that goes through the ledger is compliant by construction,
+    # and one that stamps context_updates["active_task"] directly is not --
+    # which is exactly the distinction findings C2/S9 measure. See
+    # conversation_control/plane_movement.py.
+    try:
+        from conversation_control_plane.plane_movement import mark_plane_moved
+
+        mark_plane_moved(event_type)
+    except Exception:  # noqa: BLE001 - telemetry must never break a write
+        pass
     return {
         "event_id": event_id,
         "seq": seq,

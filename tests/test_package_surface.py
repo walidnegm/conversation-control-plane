@@ -19,6 +19,9 @@ class PackageImportTests(unittest.TestCase):
         self.assertTrue(hasattr(ccp, "inline_chat_turn_timeout_seconds"))
         self.assertTrue(hasattr(ccp, "build_session_staleness_reorientation"))
         self.assertEqual(ccp.CHAT_TURN_TIMEOUT_ERROR_CODE, "chat_turn_timed_out")
+        self.assertTrue(hasattr(ccp, "OperationOutcome"))
+        self.assertTrue(hasattr(ccp, "DeferredOperation"))
+        self.assertEqual(ccp.OperationOutcome.DEFERRED.value, "deferred")
 
     def test_host_transition_discipline_doc_ships(self) -> None:
         from pathlib import Path
@@ -34,6 +37,8 @@ class PackageImportTests(unittest.TestCase):
         # Adopter doctrine: specialists own phase machine + honest surface
         self.assertIn("Specialists own their own machinery", text)
         self.assertIn("Surface must not lie about phase", text)
+        self.assertIn("DEFERRED", text)
+        self.assertIn("Deferred operations are not COMPLETE", text)
 
     def test_no_top_level_api_package_required(self) -> None:
         """Public package must not require or squat top-level ``api``."""

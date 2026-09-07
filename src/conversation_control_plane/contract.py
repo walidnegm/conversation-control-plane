@@ -517,16 +517,26 @@ def resolve_conversational_agent(agent_id: str, db: Any, tenant_id: str) -> Any:
                     session_id=thread_id,
                     account_id=None,
                 )
-                # Map using P2b transition fields if present in res (from builder returns), else heuristic
+                # Map using P2b transition fields if present in res (from builder
+                # returns), else heuristic. S1 (coherence epic): the terminal
+                # half of the decision is the shared predicate - the same one
+                # bot0._finalize_result and the async builder sink read.
+                from conversation_control_plane.terminal_completion_contract import (
+                    terminal_outcome as _terminal_outcome,
+                )
+
                 transition = TaskTransition.CONTINUE
                 phase = res.get("phase") or "building"
                 awaiting = res.get("awaiting")
                 pending_ref = res.get("pending_ref") or f"pending_workflow:{thread_id or 'no-id'}"
-                if res.get("workflow_created"):
-                    transition = TaskTransition.COMPLETE
-                    phase = "committed"
-                elif res.get("transition") in ("complete", "abandon"):
-                    transition = TaskTransition.COMPLETE if res.get("transition") == "complete" else TaskTransition.ABANDON
+                _terminal = _terminal_outcome(res, res.get("context_updates"))
+                if _terminal:
+                    transition = (
+                        TaskTransition.ABANDON if _terminal == "abandon"
+                        else TaskTransition.COMPLETE
+                    )
+                    if res.get("workflow_created"):
+                        phase = "committed"
                 # Domain-only: strip any control keys the builder result still
                 # carries so they cannot leak into the ledger (epic §9.2).
                 cu = strip_control_keys(res.get("context_updates"))

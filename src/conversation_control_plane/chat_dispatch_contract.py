@@ -24,6 +24,10 @@ class ChatDispatchContractError(Exception):
 
 # S7 — deterministic pre-decide KEEP paths (must match ``dispatch=`` in bot0.chat).
 PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
+    # "What do you mean?" mid-intake is answered from the clarity card's own
+    # reason, before the concept gate can hand back a foreign glossary card
+    # (conv_9fe86149: Draft IR graph repair, then ledger "kind" names).
+    "drafting_clarity_reason",
     "pending_question_pick",
     "pending_workflow_pick",
     "pending_entity_pick",
@@ -39,6 +43,10 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     # Home/recommendation starter — proposal options for saved workflows.
     "recommendation_entry",
     "surface_read_early",
+    # Signed-in identity under any sticky owner (conv_2c612bab Staffed IR).
+    "account_profile_read",
+    # Agent Cost Model howto — yield sticky Staffed IR (conv_2c612bab).
+    "agent_cost_howto",
     # Pinned-workflow multi-clause sim BEFORE sticky advisor (not post-decide-only).
     "workflow_simulation_entry_early",
     # Post-run metric explain (how is agent investment calculated…) — beats
@@ -51,6 +59,7 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "catalog_plan_exec",
     "ir_gate_role_proposal",
     "ir_gate_finite_token_early",
+    "ir_gate_finite_token_worker_exclusive",
     "authoring_gate_proceed_early",
     "authoring_gate_ir_confirm_early",
     "authoring_gate_ir_freeform_repair_early",
@@ -92,6 +101,7 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "recommendation_setup_continue",
     "recommendation_gather_chip",
     "recommendation_gather_create_project",
+    "recommendation_gather",
     "recommendation_not_ready",
     # Cost-out Stay/Leave when recommend grammar mid pricing
     "cost_out_recommend_fork",
@@ -111,6 +121,11 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "catalog_role_ordinal_detail",
     "catalog_role_named_detail",
     "drafting_handoff_host_ir_open",
+    "drafting_handoff_worker_ir_open",
+    "drafting_handoff_worker_ir_open_failed",
+    # Continue-to-IR persist / first Continue enqueue (conv_4d003209)
+    "draft_proceed_existing_ir",
+    "draft_proceed_first_continue_enqueue",
     "interrogate_project",
     "d4_abandon_wipe",
     # Goal-seek continuum gaps + chat surface packages (pre-decide short-circuit)
@@ -124,6 +139,8 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "goal_seek_results",
     "input_state_goal_seek_bridge",
     "list_cost_catalog",
+    "list_realization_plans",
+    "get_realization_plan",
     "pending_entity_pick_input_state_setup",
     "hollow_open_transfer_refuse",
     # Project create open / re-arm (finite chips)
@@ -141,6 +158,10 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "input_state_setup_written",
     # Authoring resume / midflight status card (code-owned redisplay)
     "authoring_checkpoint",
+    # Threadless hydrate refuse (no family head) — before decide_turn
+    "threadless_bind",
+    # Glossary / howto / product 101 packaging (pre-decide family).
+    "product_concept",
 })
 
 # S4 collapse — post-decide deliveries (decide_turn runs first).
@@ -164,6 +185,8 @@ POST_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "cost_out_fork",
     "cost_out_sparse",
     "cost_out_estimate",
+    "cost_out_save_confirm_card",
+    "cost_out_reasoner_truncated",
     "save_agent_cost_profile",
     "agent_cost_pricing",
     "agent_cost_pricing_elicit",
@@ -244,6 +267,10 @@ POST_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "multi_turn_session_status_engagement_pack_plan",
     "multi_turn_session_status_input_state_setup",
     "multi_turn_session_status_concept_thread",
+    # Continuum / mid-authoring process ideas (post-decide packaging).
+    "compiled_workflow_continuum",
+    "draft_ir_improvement_ideas",
+    "mid_authoring_process_ideas",
 })
 
 # S4/S6 — must never skip decide_turn (routing trace must say post-decide delivery).

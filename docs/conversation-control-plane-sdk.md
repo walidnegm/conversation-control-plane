@@ -1,5 +1,486 @@
 # Conversation Control Plane SDK — reference implementation by Bot0.ai
 
+## 🎯 TARGET — the turn pipeline
+
+Every turn should flow one way. Each stage has one owner, and cognition leads
+while code enforces.
+
+```
+free text
+ ↓
+cognition proposes composed product meaning → operation + typed SLOTS + task_intent
+ ↓
+semantic validation + grounding → slots resolved to REFS
+ ↓
+stream / task resolution
+ ↓
+declared authority + ownership
+ ↓
+delivery leaf ──── owner is another agent ────▶ handoff act ─── take-once ──┐
+ ↓ (ActRequirement + delivery_mode; CONTINUES has a named reader) │
+tool / skill / domain execution ◀──────────────────────────────────────────┘
+```
+
+**Continuum — a semantic act is not automatically an operational act.**
+A declared `operation` answers what is meant. It does not, by itself, prove
+executable work crossed into the next owner.
+
+| Dimension | Question the plane must answer |
+|-----------|--------------------------------|
+| **Operation** | What does the user want done? |
+| **Task intent** | New work, continuation, clarification, resume, or completion? |
+| **Delivery mode** | Does this owner terminate here, or must the work continue? |
+| **Owner** | Who now owns the work? |
+| **Operational act** | Did typed slots + grounded refs + claim policy cross the boundary? |
+| **Next act** | What concrete action advances the *domain graph* now? (graph-owned) |
+
+Hollow: `operation` named, `delivery_mode=CONTINUES`, result = "Opening…".
+Nothing executable crossed. Operational: a registry-addressed envelope with
+slots, resolved refs, provenance, `next_act`, and `take_once`.
+
+**Who owns what:** the workflow / state graph owns navigation (`next_act`).
+The control plane owns the transition protocol and admissibility.
+Execution owns mutation authority. `next_act` must not become a giant switch
+in the plane.
+
+#### The two mutations (read this before "delivery vs execute")
+
+This document states the pipeline twice, and the orders differ: the TARGET
+above runs `delivery leaf → execution`, while *Essay layer × SDK role* below
+runs `4 Execute → 5 Delivery`. Both are right; they name **different
+mutations**.
+
+| | Writes | When | Envelope |
+|---|---|---|---|
+| **Control mutation** | the ledger — `active_task`, phase, pins | inside the turn, **part of delivery** | `TaskTransition`, single writer |
+| **Domain mutation** | the specialist store — IR, graph, profile, run | at execution; may leave the turn | `OperationOutcome`, `take_once` |
+
+The ledger write is not a side effect of answering; it is **half of
+answering**. Hence the detector name: a turn that produced words and moved no
+plane is `turn_plane_unmoved`.
+
+> **Hollow = the turn spoke and neither plane moved.**
+> No **control** mutation → the next turn misroutes on stale `active_task`.
+> No **domain** mutation → "Opening…", "you can rename it in the editor".
+
+#### Grounding is more than identity
+
+Stage 2 has three jobs, and resolution is one of them:
+
+* **resolve** — slots → refs against a closed inventory;
+* **consult** — read the record for values the act needs, not only ids;
+* **qualify** — check the act's `ActRequirement` is satisfied.
+
+The third is why the seam invariant reads *"sufficiency gates precedence: a
+pin wins by SATISFYING, not by being earlier"* — a lookup cannot gate
+precedence; a judgement of satisfaction can. Host summaries that shorten this
+to "grounding resolves identities" lose the clause that does the work.
+
+#### Delivery is the only seat with no closed inventory (A20)
+
+Every other seat closes over a declared set: cognition emits from closed
+enums, grounding resolves against a closed inventory, stream/task uses
+registered kinds, authority picks from an owner table. **Delivery does not.**
+Any branch that can `return` an answer is a destination, and nothing requires
+it to say which leaf it is.
+
+That asymmetry is a failure class, not an implementation detail. Measured in
+the reference host: **159 answer-producing return sites, 40 of which stamp no
+dispatch at all** — invisible to every instrument keyed on a dispatch name,
+findable only by a user landing on one.
+
+It produces a specific, repeatable defect: two labels for one situation reach
+two handlers with different quality. One renders the surface that owns the
+choices and arms a pick-list; the other returns a sentence with `blocks: []`,
+so the follow-up *"1"* has no owner. Same question, two answers, and which one
+you get depends on which label the model happened to emit.
+
+**Law.** Every answer-producing site declares its leaf. The undeclared count
+is shrink-only. This is not an eval concern — eval finds instances; a closed
+delivery inventory makes the class impossible, and it is the **pre-condition**
+for extending any dispatch-keyed instrument down to the delivery seat.
+
+**Related but different:** a *hollow act* is a turn that claims and does not
+complete; a *finite surface without an owner* is a visible choice nothing owns.
+This is the third corner — an owner nothing declared.
+
+**The seat produces more than one class, and they share this root.** Measured
+in the reference host:
+
+| Class | Question | Measured |
+|---|---|---|
+| **A20** undeclared destination | which leaves exist | 40 of 159 answer sites name no leaf |
+| **unowned voice** | what a leaf says | 88 of 133 composable concepts have no curated presentation, so a model writes the reply |
+| **unbounded composition** | how many things one turn says | 19 sites build a reply by appending to one already in flight — a POINTER, not a ceiling (see below) |
+
+The third is worth stating as its own law, because it is invisible in review:
+each contributor appends a reasonable line and **nobody reads the sum**. One
+shipped reply carried a costing status, the same fact three ways, an
+instruction written for the implementers rather than the reader, and a
+call-to-action about an artifact saved in an earlier turn.
+
+> **A turn belongs to one stream, states a fact once, and asks for a thing
+> once.** A reply assembled by concatenation has no owner.
+
+**This class is deliberately un-ratcheted.** The other two carry shrink-only
+ceilings; this one does not, because two static measures were tried and both
+failed. Counting every append caught ordinary sentence assembly — `summary +=
+"."`, a multi-paragraph message built across branches. Narrowing to appends
+whose value carries a call matched `len(workboard)`. A source crawl cannot
+separate *one contributor finishing a sentence* from *two contributors talking
+over each other*, and a ceiling on that reading would push people to contort
+normal code to satisfy it. **A bad metric is worse than none.**
+
+The site count stays as an audit pointer — it says where to look, not what is
+wrong. The sound check is `foreign_stream_defects`, which reads **declared**
+fragments (`TurnFragment.stream`) instead of inferring intent from source
+shape. That is the general rule for this seat: measure what the code
+*declares*, not what its syntax *looks like*.
+
+A worked migration is in `multi_turn_session_status_contract`, and it carries
+its own lesson. The multi-item cost summary prepended an "Agent costing
+workboard" frame that the card **title** already stated — a real duplication.
+But the same field feeds `package_cost_out_session_status_answer`, which
+builds the chat reply from summary + next_steps and **never includes the
+title**. Removing the frame fixed the card and left the answer with no
+statement of what the user was looking at. *One string, two consumers, and
+only one of them had the surrounding context that made the phrase redundant.*
+The frame stays; what was cut is the clause that repeated the agent name a
+second time. Composition is per-consumer, and a fragment is only redundant
+relative to what its own surface already says.
+
+The remedy is a composer over **declared** fragments — each naming its speech
+act, the facts it states, what it asks for, and the stream it speaks for — so
+duplicate and foreign contributions are dropped by contract rather than by
+review. Never by inference over the fragment's own prose.
+
+#### Admissibility is Control's, not the graph's
+
+When a finite surface and the ledger disagree — a leftover chip clicked
+mid-pipeline — they are not competing for one decision:
+
+* the click is **evidence of intent**;
+* the ledger is **SoR for admissibility**.
+
+The graph never wins a contested turn; it owns what comes next *once an act is
+admitted*. The finite door is `EXACT_TOKEN ∪ RESOLVED_STATE` (§14.1b): a stale
+chip keeps the token and has lost the state, so it does not claim before
+cognition. Replaying it, swallowing it, and special-casing it in the host are
+all wrong; the ledger owns the hop and delivery says so. Upstream this is
+invariant 4 — a suggestion the router cannot honor is a bug, not copy.
+
+Code must not resolve the ambiguity: *"I went back to redo this"* and *"I
+mis-clicked an old card"* emit the same token. Establish admissibility, then
+ask.
+
+### ⭐ The golden turn — one correct turn, end to end
+
+**What this is.** One correct turn, traced end to end, with the owner of each
+stage, what it produces, and the invariant that holds at the seam. Everything
+below is implemented and ratcheted; nothing here is aspirational. Use it to
+DIFF an implementation against — most defects in this file are a stage doing
+another stage's job, and they are easiest to see side by side.
+
+**The worked example** is the request that took eight conversations to answer:
+
+> "can you rename Selectoin / INtent to Intention Recorded"
+
+#### The stages
+
+| # | stage | owner | produces | the seam invariant |
+|---|---|---|---|---|
+| 0 | free text arrives | — | the utterance, untouched | it is DATA, never instructions |
+| 1 | cognition | LLM (one bounded call) | the ACT (`read_kind` / `discovery_kind` / `product_concept_kind` / act flags), typed SLOTS (`graph_edit`, `target_constraints`), `semantic_resolution` | it never picks an id — it cannot verify one. It stops at the label |
+| 2 | grounding | code | SLOTS → REFS against a CLOSED inventory; the act's `ActRequirement` checked | sufficiency gates precedence: a pin wins by SATISFYING, not by being earlier |
+| 3 | stream / task | ledger | which task this turn belongs to | the ledger is SoR for ownership; context is a projection |
+| 4 | authority | `free_text_claimant_may_run` at the claimant's ENTRY | who may decide this turn | gate the ENTRY, never the call site — doors multiply |
+| 5 | delivery leaf | code | the answer, or the question | `may_run` — only an act with everything it needs changes anything |
+| 5b | agent boundary | `handoff_act_contract` | a typed act addressed to its owner | no handoff carries unresolved prose as work |
+| 6 | execution | the owning agent | the proposal / the result | claimed exactly once (`take_`) |
+
+#### The same turn, traced
+
+```
+utterance "can you rename Selectoin / INtent to Intention Recorded"
+
+1 cognition read_kind = workflow_graph_edit
+ graph_edit = {update_node, "Selectoin / INtent",
+ "Intention Recorded"} <- the TYPO, verbatim
+ semantic_resolution= understood
+
+2 grounding requirement = workflow_graph_edit needs {workflow_id,
+ version_id} in state {saved, graph_valid}
+ entity = wf_9f5f6e14 via context pin
+ node = wgn_c945464c via near match 0.94,
+ runner-up 0.44, margin 0.50 <- audited
+ label returned = "Selection / Intent Recorded" (the GRAPH's
+ spelling, not the user's)
+
+4 authority concept_gate, inventory_entity_resolve, workflow_simulation_entry
+ all YIELD: named act is workflow_graph_edit, none owns it
+
+5 delivery may_run = True -> the editor may open. On ASK or UNSUPPORTED it
+ opens NOTHING and asks instead
+
+5b handoff {owner_agent: workflow_editor, act_kind: update_node,
+ slots: {target_label, new_label},
+ resolved_refs: {workflow_id, node_id},
+ provenance: {utterance, source_turn_id, resolver evidence},
+ claim_policy: take_once}
+
+6 execution workflow_editor take_s it, proposes the rename, context cleared
+```
+
+#### The invariants, in one place
+
+1. **Cognition leads, code enforces.** Meaning is the model's; identity,
+ arithmetic and state are code's.
+2. **One decider per decision.** Before adding a field, grep the enums. Three
+ names for one fact survived here behind a sync test.
+3. **Instructions are not enforcement.** Ship the ratchet, or it is a wish.
+4. **An act is executable only when its typed requirements are satisfied.**
+5. **No agent handoff carries unresolved prose as work.** Prose travels as
+ provenance; executable fields are typed slots or resolved refs.
+6. **A surface that invites a finite reply arms its owner in the same turn.**
+ Rendering the choice and arming the owner are ONE act.
+7. **Refusal is first-class.** Ask for the gap and keep everything already
+ understood. A tenant-wide list is the failure wearing a question mark.
+8. **Every declaration needs a reader.** A field, a mode, a contract or an
+ enum value with no consumer is a station the architecture believes is
+ enforced and is not.
+9. **Fuzzy matching only over closed inventories**, after cognition produced
+ the slot, with a unique winner AND a margin, and the evidence recorded.
+ Never for act selection, never for what free text means.
+10. **The publish source may not regress the live release.** DB-backed prompts
+ are authoritative; diff before publishing from a spec.
+11. **A semantic act is not automatically an operational act.** `CONTINUES`
+ without a named reader, typed slots, grounded refs, and take-once claim
+ is a hollow act.
+12. **Graphs own navigation; Control owns admissibility; Execution owns
+ mutation.** `next_act` is not a central switch in the control plane.
+
+#### The telemetry a healthy turn emits
+
+`named_act` · `authority_conflict` · `delivery_mode` / `continues_act` ·
+`act_target_status` + `act_target_source` + `act_target_rejected` ·
+`resolver_method` + `resolver_score` + `resolver_runner_up_score` ·
+`handoff_owner_agent` + `handoff_claimed` + `handoff_outcome` ·
+`finite_surface_subcases`.
+
+**If a turn goes wrong and none of these say so, the instrument is the bug.**
+That has been true three times in this file: `authority_conflict` under-reported
+by half, `ACT_DELIVERY_MODE` had zero readers, and the act-flag family was half
+invisible to the gate.
+
+#### How to tell you have deviated
+
+| symptom | the stage that slipped | seen in |
+|---|---|---|
+| a list where an answer was asked for | 2 — requirements never checked | "recommendations for my keynote workflow" |
+| a glossary answer to a stated act | 4 — a claimant that never yielded | conv_6b245f0e, conv_c832462f |
+| the right room opened and nothing done | 5b — CONTINUES with no reader | conv_6b245f0e turn 2 |
+| "reply with 1" understood by nobody | 6 — a surface with no owner | TC-U |
+| an act named at 0.95 and executed by no one | 4/5 — owner refused its own act | conv_d8d6b40f |
+| a capability nobody can reach in words | 1 — no label exists for it | `list_domains`, `simulate_workflow` |
+| a fix that works locally and not on staging | prompt published to one env only | TC-Q |
+
+---
+
+### The bottom of the pipeline — the verdict boundary
+
+The pipeline above ends at execution. It never said what happens when a turn
+reaches the bottom and finds **no leaf**. Until 2026-08-23 that turn fell
+through to freestyle and was answered as if the product did the thing (A4).
+
+**Acceptance law:** *a semantic miss, a capability miss, a state constraint, an
+authorization constraint, and an internal routing defect must never collapse
+into the same user-facing outcome.*
+
+Authority splits at the boundary:
+
+```
+MODEL / COGNITION CODE / GROUNDING
+ operation = <known> | unknown does the operation exist?
+ semantic_resolution = understood is the capability registered?
+ | unresolved are the references resolvable?
+ confidence (telemetry, not a verdict) is it legal now? authorized?
+```
+
+`unsupported` is **not** an operation the model may emit — whether Bot0 has a
+given capability is product state, not meaning. The model says what was asked;
+code says whether we do it.
+
+| operation | semantic_resolution | grounding | verdict |
+|---|---|---|---|
+| known | understood | all OK | EXECUTE |
+| known | understood | state forbids | BLOCKED |
+| known | understood | unauthorized | FORBIDDEN |
+| known | understood | no implementation | CONTRACT_FAILURE |
+| unknown | understood | no capability | UNSUPPORTED |
+| unknown | understood | capability exists | PRODUCT_SURFACE_DRIFT |
+| unknown | unresolved | — | CLARIFY |
+
+The last two are **our** bugs, never a user-facing "we don't support that": a
+product that reports its own wiring defects as unsupported hides them from the
+user and from telemetry. This epic already found two live instances of exactly
+that shape — `input_state_setup` with no opener (A2) and `outcome_value_setup`
+unreachable by natural language (C1).
+
+Two invariants follow, both checkable between
+`compose_cognition_product_surfaces_brief` and `tool_registry`:
+
+1. If execution supports a capability, cognition must have a representable way
+ to ask for it.
+2. If cognition emits a known operation, the capability contract must know how
+ it is realized.
+
+### Delivery mode — the shape of the leaf
+
+`handle (your leaf)` is one phrase for two shapes, and an act routed to the
+wrong one cannot finish:
+
+| mode | meaning |
+|---|---|
+| **TERMINAL** | one call answers the turn — list, inspect, open an editor when *opening is the answer* |
+| **CONTINUES** | the call is a PREREQUISITE; an agent loop / planner / second tool must run after it |
+
+Nothing made a host declare which an act needs, so every row in an act→tool
+table was implicitly terminal. A stated graph edit was mapped to the same
+opener as "open the editor"; the path ran one tool and ended the turn, while
+the editor agent refused to run until an editor ledger task existed — which
+that same call had just created. The edit cost two turns and the first
+instruction was discarded (`conv_f4ae6ec0`).
+
+Declared per act and asserted by `delivery_mode_contract`; an undeclared act
+fails the check rather than defaulting to terminal. Audit and the suspected
+same-shape `start_*` handlers: turn-composition epic, slice **TC-G**.
+
+Full design, six lockdowns and truth-table fixtures: **§G of
+[turn_composition_audit_findings.md](docs/epics/turn_composition_audit_findings.md)**.
+
+### Act requirements — "can this act run at all?"
+
+Before an act is routed anywhere, one question decides whether the turn is
+ready: **what does this act require, and does the control plane already have
+it?** Skipping it produces a distinctive failure — the system answers a
+narrower request with a broader one and calls that helpful.
+
+> "give me recommendations to improve my keynote workflow that was most
+> recently created"
+
+The act was read correctly. The user supplied three constraints — entity,
+name term, recency. Every one was discarded and the whole workflow inventory
+was listed. Nothing errored. Nothing was logged. The user got a list instead
+of an answer.
+
+**The law: an act is executable only when its typed requirements are
+satisfied.** Each act declares an `ActRequirement` — entity type, required
+fields, required state. The turn then grounds it in order:
+
+| source | what it is |
+|---|---|
+| `explicit` | an id, a selected row, an ordinal against an ARMED pending pick |
+| `ledger` | the active task's own payload |
+| `context` | projection pins (last read workflow, current project) |
+| `constraints` | cognition's DESCRIPTION of the target, grounded via DB |
+| `sole_candidate` | exactly one thing it could be, in scope |
+
+**Sufficiency gates precedence.** A ledger pin wins only if it SATISFIES the
+requirement. A pin without the `version_id` an act needs is not an answer, and
+resolution continues past it. "We have something" and "we have what this act
+needs" are different questions, and conflating them is how a stale pin answers
+a fresh one.
+
+**Who owns which half.** Cognition emits `TargetConstraints` — entity type,
+text terms, filters, sort — and never picks an id. Code compares requirements
+to state, resolves constraints against the database, and computes what is
+missing. Deliberately NOT emitted by cognition: the missing-field list
+(requirement − candidate is deterministic; a second opinion can only disagree)
+and the ambiguity policy (the model must not choose how its own uncertainty is
+handled).
+
+**Asking is part of the act, and asking badly is the failure wearing a
+question mark.** "Which workflow?" plus a tenant-wide list discards everything
+already understood. Keep it and ask only the open part — *"I found several
+keynote workflows — pick one, or say latest"* — and when a constraint is real
+but unsupported, name which part: *"I can filter by name and recency today,
+but not by ROI yet."*
+
+Same error as the two below, one layer earlier: an act executed without its
+requirements checked, a surface rendered without its owner, an act handed over
+without its payload. Each looked complete and was missing the state that makes
+it real.
+
+### The agent boundary — where a CONTINUES act actually goes
+
+Declaring an act CONTINUES says something must run after the call. It does not
+say **who**, or **how the request reaches them**. When the next runner is a
+different agent, that gap is where the turn dies — politely.
+
+`conv_6b245f0e`: on a selected workflow the user said *"can you rename
+Selectoin / INtent to Intention Recorded"*. The host opened the editor and
+replied *"you can rename it directly in the editor"*. Every component was
+correct in isolation:
+
+* the front-door agent owned only `open_workflow_editor_session`; the tools
+ that change a graph (`propose_graph_edits`, `apply_graph_edits`) belong to
+ the editor agent;
+* opening switched the session's agent to that editor;
+* the act was declared CONTINUES, and the declaration **had no reader**.
+
+So the right room was opened and the reason for opening it was dropped. The
+user was asked to redo work the conversation already contained. **A correct
+component chain can still lose the request, because losing it is nobody's
+error.**
+
+**The contract: no handoff may carry unresolved prose as work.** Prose may
+travel as *provenance* — what the user said, for quoting and audit — but every
+executable field is a typed **slot** or a resolved **ref**.
+
+```
+intent → slots → refs → owned act → take-once execution
+```
+
+| stage | owner | produces | on failure |
+|---|---|---|---|
+| intent + slots | cognition | `act_kind`, user-facing values (`target_label`, `new_label`) | no act; ask |
+| refs | code | platform identity (`workflow_id`, `node_id`) resolved against a closed inventory | **ambiguous or missing ⇒ ask before opening anything** |
+| owned act | registry | `owner_agent`, `required_slots`, `required_refs`, `resolver`, `delivery_mode` | undeclared act refused |
+| claim | receiving agent | `take_once` — reading claims it | another agent's act is neither claimed nor destroyed |
+
+Cognition stops at the **label** on purpose. A signal carrying a node id would
+mean the model resolved an identity it cannot verify. Code stops at
+**identity**: which member of a known set was named is a lookup, not an
+interpretation.
+
+**Refusal is a feature.** A handoff that cannot execute makes the sending turn
+believe the work was passed on — the failure above, one layer deeper. Missing
+slot, unresolved ref, or a slot holding prose: no envelope, and the turn asks
+the one question that is genuinely open while keeping the act it understood.
+
+**Telemetry closes it.** `declared_delivery_mode`, `owner_agent`, `claimed`,
+`resolved`, `outcome`. Without `outcome`, *handed over* and *done* are the same
+row in history — which is why `conv_6b245f0e` read as a success.
+
+The abstraction is not workflow-specific. Scenario creation, cost-profile
+attachment, role and task edits, simulation setup and plugin actions are the
+same five stages with different registry rows.
+
+Bot0 implementation: `handoff_act_contract` (envelope + `ACT_REGISTRY` +
+telemetry) · `graph_target_resolver` (one resolver) ·
+`UnifiedTurnSignal.graph_edit` (typed slots).
+
+**How to use it.** Locate the stage you are touching before you write anything.
+Most defects we ship are a stage doing another stage's job — a `len` at
+stage 2 deciding meaning that belongs to stage 1, an opener at stage 4 that
+re-runs stage 1 instead of yielding, a delivery leaf at stage 5 asserting state
+it never read.
+
+Per-stage failures, owners and checks:
+[checklist against the target pipeline](turn-capability-lifecycle-checklist.md).
+
+Three laws above every stage: **cognition leads, code enforces** · **one decider
+per decision** · **instructions are not enforcement**.
 | Field | Value |
 |---|---|
 | **Full name** | Conversation Control Plane SDK |
@@ -10,6 +491,16 @@
 | **Citation** | *Conversation Control Plane SDK* (reference implementation by Bot0.ai). Public repo: `https://github.com/walidnegm/conversation-control-plane`. Integration contract: `docs/conversation-control-plane-sdk.md` |
 | **Code identity** | `api/services/conversation_control/sdk_identity.py` |
 | **Future package slugs** | PyPI `conversation-control-plane` · npm `@bot0/conversation-control-plane` — **not published yet** |
+
+> ### 🧭 Touchstone — before wiring or routing a capability
+>
+> **[Checklist against the target pipeline](docs/turn-capability-lifecycle-checklist.md)**
+> — cognition → validation/grounding → stream/task → authority/ownership →
+> delivery leaf → execution. It invents nothing: at each stage it names the
+> failure we have shipped there, what already owns it, and how to check.
+> **Read the architecture before adding to it** — `value_metrics_request` was
+> added beside an existing `read_kind=outcome_value_setup` that already meant
+> "collect or configure". Grep the enums before adding a field.
 
 Status: Living reference implementation (2026-07-07) — **integration contract available now**; **public repo scaffolded**; standalone registry `pip install` is **future** (§0.3)
 Owner: Bot0 control-plane / conversation layer
@@ -303,7 +794,7 @@ in the sibling package
 | **1 Semantic** | Law only: meaning → **closed enums**, never free-text authority | Classifiers, op enum *values*, schemas |
 | **2 Adjudication** | **Core package:** `decide_turn`, sole writer, exclusive owner, A18 allow-list **shape** | Which leaves / EXTRA rows |
 | **3 Policy** | Gates, stickiness, foreign deny as **tables + lifecycle** | Continuum edges, family inventories, incident suppressions |
-| **4 Execute** | `TaskTransition` envelope; strip control keys | LangGraph / tools / SoR / workers |
+| **4 Execute** | `TaskTransition` envelope; **`OperationOutcome`** when execution leaves the turn; strip control keys | LangGraph / tools / SoR / workers / job runtimes |
 | **5 Delivery** | Finite grammar when armed; open-leaf arming; A17 fail-soft ban | Product voice, chips, continuum pin payload |
 
 **One line:**
@@ -320,6 +811,25 @@ App delivers continuum ─────► SDK open-leaf / armed-grammar law
 ```
 
 Hydration is **app code reading SDK state** — not “more transcript.”
+
+##### Golden turn × essay seats — not two pipelines {#golden-turn-vs-essay-seats}
+
+The **[golden turn](#the-golden-turn--one-correct-turn-end-to-end)** (stages 0–6 + **5b**) is the product turn: what happens, in order, with one owner per seam. The essay seats above are **who owns each concern** on that same turn (SDK vs app). Do not treat them as a second flowchart.
+
+| Golden turn | Essay seat | Notes |
+|-------------|------------|-------|
+| 0 free text | — | Utterance is data, never instructions |
+| 1 cognition | **1 Semantic** | Closed enums; the model never picks an id |
+| 2 grounding | reads **0 Hydration** SoR | Slots → refs on a closed inventory |
+| 3 stream / task | **2 Adjudication** (kind on the ledger) | Ledger is SoR; context is a projection |
+| 4 authority | **2 Adjudication** + **3 Policy** | `decide_turn`, exclusive owner, gates |
+| 5 delivery leaf | **5 Delivery** | Finite grammar when armed; `may_run` |
+| **5b agent boundary** | **4 Execute** (envelope) | Typed handoff; CONTINUES has a named reader; `take_once` |
+| 6 execution | **4 Execute** (runtime) | Your graph / agent / job; mutation lives here |
+
+Invariant 11 of the golden turn is the seat-4/5b law: a semantic act is not automatically an operational act. `delivery_mode_contract` is how a host *declares* TERMINAL vs CONTINUES; the host still delivers.
+
+Per-stage failures and checks: [checklist against the target pipeline](turn-capability-lifecycle-checklist.md).
 
 ##### Closed enums · kinds · surfaces · continuum
 
@@ -1022,6 +1532,49 @@ so adopters can decide without reading internal epics.
 | **Day-2 UI productization** | No built-in ops console in the package yet | SQL-native read model + lifecycle diagram + traces (§0.1.4); `ccp inspect` / session viewer are **open** productization, not missing contract |
 | **Visualization deferred** | No LangGraph Studio equivalent in the SDK | Persist traces + ledger fields (§11.1); [trace export sample](conversation-control-plane-sdk.md#111-intent-router-layers-l0l4-and-per-turn-routing-trace) — intentional separation from in-house graph UI |
 
+### External review — the three trade-offs (2026-08-30)
+
+A third-party architecture review graded this pipeline **A+ for production
+reliability and enterprise governance, C for developer velocity and R&D
+flexibility**, judging it favourably against LLM-as-router frameworks
+(LangGraph / AutoGen / CrewAI), durable workflow engines (Temporal / Step
+Functions), and semantic or prompt-based routers. Its summary of the design —
+*"the LLM is a semantic parser, not an autonomous decision-maker"* — is
+accurate, and it is the trade the contract makes on purpose.
+
+The grade is not the useful part. These three are, and each has an obvious
+remedy that would spend a guarantee to buy convenience:
+
+| Trade-off | Our position |
+|---|---|
+| **Capability overhead.** A new capability touches the router, a closed enum, the act registry, and a resolver — *"prompt engineering becomes a database migration."* | **Agreed; it is the price, not the bug.** The four exist because a capability added at three of the four stations is silently inert. |
+| **Threshold sensitivity.** Entity resolution leans on a score cutoff and a runner-up margin that grow sensitive as inventories grow. | **Agreed, factually.** Reference values are global, not tenant-aware, and a mis-set one looks exactly like a routing bug. |
+| **Single-turn bound.** *"Not built for an LLM that breaks one prompt into fifteen sub-tasks and executes them over an hour."* | **Partly — a gap read as a law.** See below. |
+
+**On capability overhead — do not let the prompt declare capabilities.**
+Rubric naming a field the code does not know is *silently inert*
+(prompt↔code lock-step). The honest direction is **less ceremony, same
+contract**: one scaffold that adds the enum value, the act-registry row, the
+rubric sentence and the ratchet **together**, so the four cannot drift apart.
+That is tooling, not architecture. Making any of the four optional
+reintroduces the failure the contract exists to prevent.
+
+**On thresholds — do not tune them per tenant.** Per-tenant thresholds are
+un-reviewable and un-ratchetable. The margin is already the right shape: it
+refuses `0.74` against `0.73` as *a coin toss wearing a number*. What is owed
+is not better numbers but **ambiguity as a first-class outcome** — resolve, or
+**ask**, never win narrowly. The telemetry to see it already exists; watching
+it as a series is the work.
+
+**On the single-turn bound — the contract forbids unauthorized mutation, not
+long work.** A fifteen-step autonomous run is a sequence of *authorized* acts
+carrying `OperationOutcome` across turns; that is what **§2.2 deferred
+operation continuity** specifies. More than one act arriving in one utterance
+is already handled. *"One decider per decision"* constrains **who decides** —
+never **how many decisions a session may contain**. Adopters should read this
+ceiling as "the deferred-continuity surface is young", not as a law against
+autonomy, and should not weaken single-writer semantics to get it.
+
 ### Applicability — good fit vs poor fit
 
 | Good fit ✅ | Poor fit ❌ |
@@ -1275,6 +1828,7 @@ suppress laundry.
 | A17 | **Fail-soft option laundry** | **D** | Code pretends to be product voice after intent is already settled | “I didn’t catch that — reply **accept** / **skip** / **use X** / **try again**…”; menu drifts every new act | Classifier labels · code gate · **card chips** · LLM reasoner from code-owned facts | `failsoft_option_laundry_contract.py` · AGENTS §4 · product-voice audit |
 | A18 | **Dispatch-order laundry** (suppress stacks) | **S**+**D** | O(N²) leaf politics: seal inventory → sim early still steals | KPI “cost per ticket” → Help Desk graph; after inventory seal → `workflow_simulation_entry_early` | **One** `project_pre_decide_owner` + `FOREIGN_PRE_DECIDE_DISPATCHES` allow-list; extend table — **never** `*_blocks_<leaf>_early` | `pre_decide_owner_contract.py` · `test_pre_decide_owner_contract.py` |
 | A19 | **Soft existence / unsealed transition** | **E**+**S** | Dialogue pin treated as registry SoR; model re-confirms or freestyles create instead of code tool | “You already have project Jasmin2” with no `project_id`; name+yes → “Create Jasmin2?” again | **Thin-verify:** LLM proposes intent → code verifies thin state (id / open leaf / pin) → tool or honest refuse; existence = registry id only — **not** dual create FSM / skip-phrase laundry | `advisor_create_continue_contract` · CAQ `soft_existence_claim` · purity v4 **L31** · `test_advisor_create_name_continue_seal.py` |
+| A20 | **Undeclared delivery leaf** | **D** | A behavioural destination that answers users and has no registry row. Seats 1–4 all have closed inventories (enums, refs, ledger kinds, owner tables); **delivery is the only seat where anything can happen and nothing declares it** | Two labels for one situation reach two handlers thousands of lines apart with different quality — one with paths and an armed pick-list, one a hardcoded sentence with `blocks: []`, so the follow-up "1" has no owner. Measured in the reference host: **159 answer-producing return sites, 40 stamping no dispatch at all** | Every answer-producing site declares which leaf it is. Undeclared count is **shrink-only**. Not an eval problem: eval finds instances, a closed delivery inventory makes the class impossible — and it is the pre-condition for any dispatch-keyed instrument to see these sites at all | delivery-leaf inventory · sibling of A18 (order) and the finite-surface owner contract (a surface with no owner; this is an owner with no declaration) |
 
 #### ⛔ Soft existence — not thin-verify (A19 · root **E**/**S**)
 
@@ -1369,6 +1923,7 @@ else: # greenfield default
 | Essay pipeline → SDK seat (hydrate…deliver) | [§0.0.2 authority-adjudication pipeline](#authority-adjudication-pipeline-sdk-seat) |
 | Closed enums · kinds · surfaces · continuum (app extension points) | [§2.1.x](#21x-extension-points-enums-kinds-surfaces-continuum) |
 | Multi-turn stream continue pattern (all kinds) | §2.1 multi-turn stream |
+| Deferred operation continuity (async execution boundary) | [§2.2](#22-deferred-operation-continuity-portable-contract) |
 | What the control plane is (infrastructure layer) | §3 |
 | Concurrency, hot-potato loops, context hydration | §3.1 |
 | Root bug class (two parallel state systems) | §4 |
@@ -1400,6 +1955,7 @@ else: # greenfield default
 | `decide.py` | `decide_turn` — the only dispatcher |
 | `classifier.py` / `unified_turn_router.py` | Bounded cognition → structured signals |
 | `turn_timeout.py` | Inline SSE turn wall-clock cap |
+| `deferred_operation.py` | `OperationOutcome` + `DeferredOperation` — execution left this turn; opaque `execution_ref` (§2.2) |
 | `session_staleness.py` | Idle-thread reorientation gate |
 | `recent_context.py` | Bounded classifier/specialist context hydration |
 | `projection.py` | Canonical active-agent projection from ledger snapshot |
@@ -1892,6 +2448,97 @@ Bot0 implementation playbook (monorepo only) for the reference mapping.
  before the fourth patch.
 3. **Bot0 monorepo:** `` is the full authority for repo-specific enforcement.
 
+### 2.2 Deferred operation continuity (portable contract) {#22-deferred-operation-continuity-portable-contract}
+
+Execution can leave the current HTTP / chat turn. The control plane already
+owns **Turn**, **Operation**, **Ledger**, task identity, `kind`, `phase`,
+ownership, handoff, resumption, and validated transitions. It must also be
+able to say:
+
+> This turn did not finish. It authorized an operation that is continuing
+> asynchronously, and this operation still belongs to this conversational task.
+
+That is a **control-plane** fact. It is **not** a sixth `TaskTransition`.
+Lifecycle (`BEGIN` / `CONTINUE` / `COMPLETE` / `ABANDON` / `NONE`) answers
+*who owns the task*. `OperationOutcome` answers *whether authorized execution
+finished inside this turn*.
+
+**Async analogue of “LLM proposes; code owns”:**
+
+> Runtime executes; control plane owns continuity.
+
+#### What the SDK owns vs what the host owns
+
+| Concern | Open-source Control Plane SDK | Host / product |
+|---|---|---|
+| Operation has become async / deferred | **Owns** | Implements |
+| Stable operation / job identity | **Owns the contract** | Generates / maps the runtime id |
+| Originating `turn_id` / `task_id` correlation | **Owns** | Persists it |
+| Conversation remains resumable | **Owns the invariant** | Implements reopening |
+| Async result belongs to the same task | **Owns the invariant** | Renders the result |
+| Worker execution | No | **Owns** |
+| Poll / SSE / WebSocket | No | **Owns** |
+| Chat-row / card persistence mechanism | No | **Owns** |
+| Card UX | No | **Owns** |
+
+Do **not** put “the UI must poll” into this SDK. Do **not** create a second
+public “experience plane SDK.” Hosts stack a stronger product law on top
+(every deferred operation becomes observable, durable, and reopenable).
+That experience law is **not** this package.
+
+#### Types
+
+```text
+OperationOutcome = COMPLETED | DEFERRED | FAILED
+
+DeferredOperation
+ operation_id
+ task_id
+ originating_turn_id
+ execution_ref # opaque to the control plane
+ continuation # await_result | await_terminal
+ owner? # specialist / kind, optional
+```
+
+`execution_ref` is the same *shape* as `pending_ref`: an opaque pointer, not
+execution state. A Bot0 adapter may translate it to `async_job_queued` +
+`job_id`. A Temporal adapter may use a workflow id. A LangGraph host may use
+a run id. The SDK cares that execution is **deferred**, not what the runtime
+calls the job.
+
+```text
+Turn
+ → decide_turn
+ → Operation authorized
+ → DEFERRED
+ operation_id = op_…
+ task_id = task_…
+ originating_turn_id = turn_…
+ execution_ref = <opaque>
+ owner = <specialist>
+```
+
+#### Host conformance — Deferred Operation Continuity
+
+Once an authorized operation returns `DEFERRED`, the originating task remains
+authoritative until that operation reaches a terminal state. A host **MUST**
+preserve the operation reference and **MUST NOT** reinterpret the deferred
+outcome as a completed conversational answer.
+
+| Envelope | Legal? |
+|---|---|
+| `DEFERRED` + lifecycle `BEGIN`/`CONTINUE` + non-answer host action + intact `DeferredOperation` | Yes |
+| `DEFERRED` + `action=answer` (or `complete` / `completed`) | **No** — flattened into a finished turn |
+| `DEFERRED` + lifecycle `COMPLETE` or `NONE` | **No** — authority dropped while execution is live |
+| `DEFERRED` without `execution_ref` / `task_id` / originating turn | **No** — fail closed |
+| `COMPLETED` / `FAILED` + `action=answer` | Yes — execution finished inside the turn |
+
+Module: `deferred_operation.py` · ratchet: extract
+`tests/test_deferred_operation.py`. Any host path that receives `DEFERRED`
+and returns `action=answer` has **violated the Control Plane contract**.
+Host crawls of their own dispatch wrappers are **adoption tests of this
+law**, not a second SDK surface.
+
 ---
 
 ## 3. What the control plane is
@@ -2208,7 +2855,7 @@ to their own domain agents. It is **not** a list of Bot0 product surfaces (`spec
 | **Bounded setup / build** | `bounded` | `active_task.kind` + `payload`; terminal `COMPLETE` clears stickiness | Code-handler state machine + validators | Multi-turn pipelines with commit gate |
 | **Bounded edit / apply** | `bounded` | Minimal `active_task`; handoff from builder or direct route | Single-shot LLM + tools, 2-phase commit | Edit committed artifacts |
 | **Phase-from-history** | `bounded` or `unbounded` | `classify_phase` from durable state — no parallel context flags | Phase inferred from transcript + private tables | Multi-turn tables without a pending row |
-| **Long-running async specialist** | `bounded` | Same ledger task; work enqueued; claim/renew/release on job | Sync plan + async worker handler | Turns that exceed inline SSE budget |
+| **Long-running async specialist** | `bounded` | Same ledger task; **`OperationOutcome.DEFERRED`** + opaque `execution_ref`; claim/renew/release on the runtime job | Sync authorize + async worker | Turns that exceed the inline budget. **Must not** flatten `DEFERRED` to a completed answer. See [§2.2](#22-deferred-operation-continuity-portable-contract) |
 | **Vision → deterministic artifact** | `bounded` (often embedded) | Outcome on async job result; code owns IR/graph | One multimodal call → validator pipeline | Diagram/doc upload flows |
 | **Orchestrator detour** | ledger task, not `AGENT_REGISTRY` | Short `active_task` owned by control plane; finite picks via `pending_question` | Classifier + orchestrator modules | Front-door clarify branches |
 
@@ -2218,6 +2865,9 @@ to their own domain agents. It is **not** a list of Bot0 product surfaces (`spec
 2. Copy the **integration shape** (bounded vs unbounded, sync vs async enqueue, code-owned renderers).
 3. Implement `ConversationalAgent` for your domain — do not copy Bot0 prompts/tools.
 4. Register in your `AGENT_REGISTRY` equivalent; add regression per §5 (resume, complete, no auto-switch).
+5. If `handle_turn` (or a tool it authorizes) cannot finish inside this chat turn, return
+ **`OperationOutcome.DEFERRED`** with a `DeferredOperation` — never a completed conversational
+ answer. Hosts map `execution_ref`; they do not invent a second ownership machine.
 
 **Bot0 monorepo only:** per-agent engines, file paths, routing vocabulary gaps (`personal_score`,
 `catalog_role_create` adapters), and heterogeneity audit →

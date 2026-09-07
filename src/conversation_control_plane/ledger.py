@@ -522,6 +522,20 @@ def propose_switch(
         new_command_id,
     )
 
+    # A SWITCH TO THE AGENT ALREADY IN CONTROL IS NOT A SWITCH.
+    # Proposing one arms pending_switch, journals switch_proposed, AND emits
+    # task_suspended — so the turn suspends the very task doing the work in
+    # order to ask whether to hand over to itself. conv_debaea7b journalled
+    # two of these back to back (from_agent == to_agent == workflow_builder)
+    # while three task ids were being minted; the turn ran 228s and ended on
+    # "What would you like to work on?".
+    if _canonical_agent(from_agent) == _canonical_agent(to_agent):
+        logger.info(
+            "propose_switch refused self-switch agent=%s conv=%s",
+            from_agent, conversation_id,
+        )
+        return {}
+
     payload = _build_pending_switch(
         from_agent=from_agent,
         to_agent=to_agent,
@@ -943,6 +957,55 @@ def sync_agent_type_summary(
     return effective
 
 
+def _canonical_agent(name: str | None) -> str:
+    return (name or "").strip().lower()
+
+
+def _pending_ref_object(ref: str | None) -> str:
+    """The object a pending_ref names, with its stage prefix removed.
+
+    ``workflow_builder:conv_x`` and ``pending_workflow:conv_x`` are the same
+    builder state seen at two stages, not two different things.
+    """
+    r = (ref or "").strip()
+    return r.split(":", 1)[1].strip() if ":" in r else r
+
+
+# Kinds that carry the user's typed process description. A cost_out or cyber
+# task must not inherit a workflow seed.
+_SEED_BEARING_KINDS = ("drafting", "workflow_build")
+
+
+def _stranded_intake_seed(
+    db: Session, tenant_id: str, conversation_id: str,
+) -> str:
+    """Most recent intake_seed parked on a suspended drafting task.
+
+    Read-only recovery for the suspend-then-begin ordering: the seed outlives
+    the task that captured it, because the user should never be asked to
+    re-type words the conversation already holds.
+    """
+    try:
+        state = get_control_state(db, tenant_id, conversation_id) or {}
+        suspended = state.get("suspended_tasks")
+        if not isinstance(suspended, list):
+            return ""
+        for entry in reversed(suspended):  # most recently suspended first
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("kind") or "").strip() not in _SEED_BEARING_KINDS:
+                continue
+            payload = entry.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            seed = str(payload.get("intake_seed") or "").strip()
+            if seed:
+                return seed
+    except Exception:  # noqa: BLE001 - recovery never breaks a begin
+        logger.debug("stranded intake_seed lookup failed", exc_info=True)
+    return ""
+
+
 def begin_task(
     db: Session,
     tenant_id: str,
@@ -1005,14 +1068,73 @@ def begin_task(
     rev_before = get_control_revision(db, tenant_id, conversation_id)
     # Previous kind before we overwrite active_task (foreign pin demotion).
     _prev_kind: str | None = None
+    _prev_agent: str | None = None
+    _prev_payload: dict[str, Any] | None = None
+    _prev_task_id: str | None = None
+    _prev_pending_ref: str | None = None
     try:
         _prev_state = get_control_state(db, tenant_id, conversation_id) or {}
         _prev_at = _prev_state.get("active_task")
         if isinstance(_prev_at, dict):
             _prev_kind = str(_prev_at.get("kind") or "").strip() or None
+            _prev_agent = str(_prev_at.get("agent") or "").strip() or None
+            _prev_task_id = str(_prev_at.get("task_id") or "").strip() or None
+            _prev_pending_ref = str(_prev_at.get("pending_ref") or "").strip() or None
+            if isinstance(_prev_at.get("payload"), dict) and _prev_at["payload"]:
+                _prev_payload = dict(_prev_at["payload"])
     except Exception:  # noqa: BLE001
         _prev_kind = None
-    tid = (task_id or new_task_id()).strip()
+        _prev_agent = None
+        _prev_payload = None
+        _prev_task_id = None
+        _prev_pending_ref = None
+    # Re-beginning the SAME logical task keeps its identity.
+    #
+    # The command_id idempotency guard above is dead code for 36 of 37 call
+    # sites: they pass neither command_id nor task_id, so both are minted fresh
+    # and the guard can never match. Every re-entry therefore created a NEW
+    # task_id while completions still referenced the old one.
+    #
+    # conv_c3aacaed seq 144-150, four passes inside 0.4s:
+    #   144 began 7700ac78 / 145 completed 7700ac78   (paired)
+    #   146 began a26debfb / 147 completed b99d8ca3   (never begun here)
+    #   148 began 1cc58f91 / 149 completed 061e7a96   (never begun here)
+    #   150 began 4abe4b28 -- never completed, left armed for 11h
+    #
+    # That orphan is what resumption later read as "still mid initiative plan".
+    # This is the identity half of the rule the payload logic below already
+    # states: a begin with no explicit id means "start or continue this task",
+    # never "mint a second one alongside it".
+    # pending_ref NAMES THE OBJECT; ITS PREFIX IS A STAGE, NOT AN IDENTITY.
+    #
+    # One workflow_build task passes through workflow_builder:<conv> while in
+    # progress, then pending_workflow:<conv> at ir_review, and mid-flight
+    # begins can carry none at all. Comparing the raw string made each of
+    # those a DIFFERENT logical task, so the identity rule below — added
+    # precisely to stop re-entry minting orphans — minted one at every stage
+    # transition instead.
+    #
+    # conv_debaea7b, one turn, three ids for one task:
+    #   seq 3  workflow_builder:conv_debaea7b   task_f4ad1dc4
+    #   seq 6  (null)                           task_44a8443a
+    #   seq 7  pending_workflow:conv_debaea7b   task_ba8d1db4
+    # The turn ran 228s and answered "What would you like to work on?".
+    #
+    # So compare the object after the prefix, and let an absent ref mean
+    # "unchanged" rather than "different".
+    _new_ref = (pending_ref or "").strip()
+    _same_pending_object = (
+        not _new_ref
+        or not _prev_pending_ref
+        or _pending_ref_object(_prev_pending_ref) == _pending_ref_object(_new_ref)
+    )
+    _same_logical_task = bool(
+        _prev_task_id
+        and _prev_agent == agent
+        and (_prev_kind or None) == (effective_kind or None)
+        and _same_pending_object
+    )
+    tid = (task_id or (_prev_task_id if _same_logical_task else "") or new_task_id()).strip()
     task = {
         "agent": agent,
         "phase": phase,
@@ -1023,15 +1145,65 @@ def begin_task(
     }
     if effective_kind is not None:
         task["kind"] = effective_kind
-    if payload is not None:
+    # Re-beginning the SAME task carries its payload forward. active_task is
+    # replaced wholesale here, so a begin with payload=None used to erase what
+    # the task was carrying. conv_a800255e: the drafting -> workflow_builder
+    # handoff passed draft_handoff on the first begin, then workflow_build was
+    # begun fourteen more times with no payload; by the time the builder read
+    # the task the draft was gone and it answered "I couldn't find a workflow
+    # in your message" with the draft still on screen. A begin with no payload
+    # means "start or continue this task", never "forget what it holds".
+    _same_task = (
+        payload is None
+        and _prev_payload is not None
+        and _prev_agent == agent
+        and (_prev_kind or None) == (effective_kind or None)
+    )
+    _effective_payload = _prev_payload if _same_task else payload
+    # THE USER'S OWN PROCESS DESCRIPTION IS CONVERSATION-SCOPED, NOT TASK-SCOPED.
+    #
+    # The carry-forward above reads active_task, so it only fires when a task
+    # is re-begun in place. When the prior task is SUSPENDED first and a new
+    # one begins a beat later, active_task is already empty — _prev_payload is
+    # None, and the seed the user typed is stranded on the suspended twin.
+    #
+    # conv_69c6e375: a workflow_build holding the tailoring paste was suspended
+    # (reason=drafting_open) at 18:05:27.98; a second workflow_build began at
+    # 18:05:28.88 from authoring_snapshot_ledger_payload, which projects
+    # phase/gates and carries no intake_seed. The live task truthfully held
+    # nothing, so every following turn asked for a paste the ledger already
+    # had — through "just use that", "just use what i gave you", and "i want
+    # you to go ahead and just write a workflow draft from this".
+    #
+    # Only intake_seed is inherited, and only between drafting kinds: pins and
+    # gates SHOULD reset on a new task, but words the user already typed must
+    # never have to be typed again.
+    if effective_kind in _SEED_BEARING_KINDS and not (
+        isinstance(_effective_payload, dict) and _effective_payload.get("intake_seed")
+    ):
+        _inherited = _stranded_intake_seed(db, tenant_id, conversation_id)
+        if _inherited:
+            _effective_payload = dict(_effective_payload or {})
+            _effective_payload["intake_seed"] = _inherited
+            logger.info(
+                "begin_task inherited stranded intake_seed kind=%s conv=%s len=%d",
+                effective_kind, conversation_id, len(_inherited),
+            )
+    if _effective_payload is not None:
         from conversation_control_plane.control_payload import (
             sanitize_control_payload,
         )
 
         # B5: strip IR/graph; kind=drafting may keep bounded draft.steps + seed.
         task["payload"] = sanitize_control_payload(
-            payload, kind=effective_kind if isinstance(effective_kind, str) else None,
+            _effective_payload,
+            kind=effective_kind if isinstance(effective_kind, str) else None,
         )
+        if _same_task:
+            logger.debug(
+                "begin_task carried existing payload forward agent=%s kind=%s conv=%s",
+                agent, effective_kind, conversation_id,
+            )
     _set_jsonb_key(
         db,
         conversation_id=conversation_id,

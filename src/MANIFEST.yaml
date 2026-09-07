@@ -18,6 +18,11 @@ modules:
   - api/services/conversation_control/delivery_order_contract.py
   - api/services/conversation_control/sdk_identity.py
   - api/services/conversation_control/contract.py
+  # I3 — the one reading of "did this turn close its task?". The adapter in
+  # contract.py calls it, and a host's own sinks should too: three sinks each
+  # re-deriving the rule is how a committed build closed its task on one path
+  # and stayed open on another (conv_b899a066 / conv_9c5f24a6).
+  - api/services/conversation_control/terminal_completion_contract.py
   - api/services/conversation_control/decide.py
   - api/services/conversation_control/dispatch_phase.py
   - api/services/conversation_control/ledger.py
@@ -32,6 +37,12 @@ modules:
   - api/services/conversation_control/multi_turn_stream_contract.py
   - api/services/conversation_control/reset_commands.py
   - api/services/conversation_control/failure_modes.py
+  # Delivery mode: can this act finish in one leaf, or does it need a loop?
+  # "handle (your leaf)" in the host cycle is one phrase for two shapes, and a
+  # host had no way to say which an act needs — so an act was routed to a mode
+  # that could not complete it and the turn ended on a greeting (conv_f4ae6ec0).
+  # Vocabulary + assertion only; the host still owns delivery.
+  - api/services/conversation_control/delivery_mode_contract.py
   # Authority boundary for interpreted meaning: cognition proposes, the host
   # grounds, the plane emits. A specialist may consume a grounded declaration
   # but cannot construct one — the constructor requires a turn id and resolved
@@ -41,6 +52,9 @@ modules:
   - api/services/conversation_control/turn_timeout.py
   - api/services/conversation_control/turn_session_discipline.py
   - api/services/conversation_control/session_staleness.py
+  # Deferred execution continuity — OperationOutcome.DEFERRED + opaque
+  # execution_ref. Not poll/SSE/card UX (host experience plane).
+  - api/services/conversation_control/deferred_operation.py
 
 docs:
   - docs/epics/conversation-control-plane-sdk.md
@@ -57,6 +71,8 @@ public_bundle:
     - host-transition-discipline.md
     # Portable cognitive architecture (hand-maintained under extract/.../docs/)
     - conversational-routing-authority-adjudication.md
+    # Golden turn + per-stage checklist (publish script already copies this file)
+    - turn-capability-lifecycle-checklist.md
   replace_section_15: docs/section-15-public.md
   sanitize_lifecycle: true
   package_root: src/conversation_control_plane

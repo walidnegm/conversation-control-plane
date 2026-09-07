@@ -205,6 +205,7 @@ when chat still looks fine and ledger law is wrong.
 ## Contract at a glance
 
 **Spec (lookup):** [docs/conversation-control-plane-sdk.md](docs/conversation-control-plane-sdk.md)  
+**Golden turn + checklist:** [SDK — the golden turn](docs/conversation-control-plane-sdk.md#the-golden-turn--one-correct-turn-end-to-end) · [docs/turn-capability-lifecycle-checklist.md](docs/turn-capability-lifecycle-checklist.md)  
 **Lifecycle diagram:** [docs/conversation-turn-lifecycle-diagram.md](docs/conversation-turn-lifecycle-diagram.md)  
 **Host laws:** [docs/host-transition-discipline.md](docs/host-transition-discipline.md)  
 **Authority diagnostics:** [docs/conversational-authority-diagnostic-taxonomy.md](docs/conversational-authority-diagnostic-taxonomy.md)  
@@ -212,6 +213,23 @@ when chat still looks fine and ledger law is wrong.
 Operating sheet: **ladder** (causal) vs **triage** (investigation order). Roots **M/E/S/D**
 parallel (D = delivery *authority* leakage). Quality stack = CAQ/purity · named **ratchet**
 ≠ suite · CI · eval (WIP). **Sealed** = checklist, not “looks fixed.”
+
+**The golden turn** (full write-up + worked rename: [SDK — the golden turn](docs/conversation-control-plane-sdk.md#the-golden-turn--one-correct-turn-end-to-end) ·
+[checklist](docs/turn-capability-lifecycle-checklist.md)):
+
+```text
+free text → cognition → grounding → stream/task → authority
+        → delivery leaf ── another agent ──▶ handoff (take-once) ──┐
+        → execution ◀─────────────────────────────────────────────┘
+```
+
+Stages **0–6 + 5b**. Crossing to another agent is a stage. A `CONTINUES` act
+without a named reader, typed slots, grounded refs, and take-once claim is
+hollow. Per-stage failures: the [checklist](docs/turn-capability-lifecycle-checklist.md).
+
+The **essay seats** below are who owns each concern on that same turn (this
+package vs your app) — not a second pipeline
+([SDK mapping](docs/conversation-control-plane-sdk.md#golden-turn-vs-essay-seats)).
 
 **Turn pipeline seat** (full write-up: [SDK §0.0.2](docs/conversation-control-plane-sdk.md#authority-adjudication-pipeline-sdk-seat) ·
 [adjudication note](docs/conversational-routing-authority-adjudication.md) ·
@@ -255,6 +273,27 @@ claim_turn → decide_turn → handle (your leaf) → apply_transition → relea
 - **Claim** — at most one live turn per conversation (per-row, not a global lock).
 - **`decide_turn`** — pure code: who owns this turn given projection + router labels.
 - **`handle`** — your agent / graph / job / human; **must not** write control keys.
+- **…and when there is no leaf** — a host obligation, not this package. A turn
+  whose meaning resolves to no handler has at least five distinct causes:
+  cognition could not read it, the capability does not exist, state forbids it,
+  the actor is unauthorized, or your own routing lost the door. **They must not
+  collapse into one user-facing outcome.** Reporting a missing route as "we
+  don't support that" hides your wiring defect from the user *and* from your
+  telemetry. Deciding this needs a prompt registry and a tool/capability
+  registry — both explicitly *not owned here* (see below) — so the verdict is
+  yours to build; this package only tells you who owned the turn.
+- **…and which SHAPE of leaf** — `handle` is one word for two things, and an
+  act routed to the wrong one cannot finish. **TERMINAL**: one call answers the
+  turn (list, inspect, open an editor when *opening is the answer*).
+  **CONTINUES**: the call is a prerequisite and something must run after it —
+  an agent loop, a planner, a second tool. Declare which mode each act needs
+  and assert it (`delivery_mode_contract`); an undeclared act silently becomes
+  terminal, which is how a stated graph edit was answered with *"Ready to work
+  on X."* and nothing else — the opener had just created the very ledger task
+  the agent was waiting for, so the edit cost two turns and the first
+  instruction was thrown away. Nothing was broken in the ledger, the router or
+  this package: the act was routed to a mode that could not complete it, and
+  no contract could express the difference.
 - **`apply_transition`** — sole writer of ledger ownership from a typed transition.
 - **Release** — free the claim (incl. orphan steal / timeout paths).
 
@@ -295,6 +334,19 @@ Agents return `TaskTransition` (+ domain-only `context_updates`).
 `strip_control_keys(...)` removes control keys from agent payloads.  
 **Only** host / `decide_turn` write `active_task` and siblings.
 
+#### Deferred execution (not a sixth transition)
+
+`TaskTransition` is lifecycle. When authorized execution **leaves this turn**,
+the host returns `OperationOutcome.DEFERRED` with a `DeferredOperation`
+(`operation_id`, `task_id`, `originating_turn_id`, opaque `execution_ref`).
+The originating task stays alive (`BEGIN` / `CONTINUE`). Flattening
+`DEFERRED` into `action=answer` is a **Control Plane contract violation**.
+
+The SDK does **not** own poll / SSE / WebSocket, worker runtimes, chat-row
+persistence, or card UX. Hosts map `execution_ref` to a job id, Temporal
+workflow id, LangGraph run id, or equivalent. Depth:
+[SDK §2.2](docs/conversation-control-plane-sdk.md#22-deferred-operation-continuity-portable-contract).
+
 #### Worked product enums (illustrative — register *your* closed tables)
 
 | Do | Don’t |
@@ -333,7 +385,10 @@ Depth: [SDK §0.1.3](docs/conversation-control-plane-sdk.md#013-ledger-projectio
 ### What this package does *not* own
 
 Orchestration graphs · durable job infra · prompt registries · tool/MCP schemas ·
-model memory · model vendors. Compose with them; do not re-implement them here.
+model memory · model vendors · poll / SSE / WebSocket · chat-row persistence ·
+card UX. Compose with them; do not re-implement them here. **Deferred
+continuity** (task still alive + opaque `execution_ref`) *is* this package;
+the host experience of observing / persisting / rendering the result is not.
 
 Full anti-pattern library (**A1 — parallel ownership flags** … **A19 — soft existence**):  
 [SDK §1.6](docs/conversation-control-plane-sdk.md#16-adoption-anti-patterns-engineering-doctrine--do-not-generate-these).  

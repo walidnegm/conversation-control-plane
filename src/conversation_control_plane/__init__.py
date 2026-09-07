@@ -60,14 +60,24 @@ from conversation_control_plane.turn_session_discipline import (  # noqa: E402
 from conversation_control_plane.session_staleness import (  # noqa: E402
     build_session_staleness_reorientation,
 )
+from conversation_control_plane.deferred_operation import (  # noqa: E402
+    DEFERRED_CONTINUITY_LAW,
+    DeferredOperation,
+    OperationOutcome,
+    make_deferred_operation,
+    violates_deferred_continuity,
+)
 
 __all__ = [
     "AGENT_REGISTRY",
     "CHAT_TURN_TIMEOUT_ERROR_CODE",
     "CONTROL_KEYS",
     "ChatDispatchContractError",
+    "DEFERRED_CONTINUITY_LAW",
+    "DeferredOperation",
     "KindSpec",
     "LEDGER_MUTABLE_PROJECTION_KEYS",
+    "OperationOutcome",
     "POST_DECIDE_DISPATCHES",
     "POST_DECIDE_ONLY_DISPATCHES",
     "PRE_DECIDE_DISPATCHES",
@@ -88,6 +98,7 @@ __all__ = [
     "inline_chat_turn_timeout_client_wait_ms",
     "inline_chat_turn_timeout_seconds",
     "ledger_kind_for_agent",
+    "make_deferred_operation",
     "plan_summary_for_dispatch",
     "prepare_session_for_second_connection",
     "registry_route_intent_labels",
@@ -97,6 +108,7 @@ __all__ = [
     "resolve_conversational_agent",
     "strip_control_keys",
     "validate_dispatch",
+    "violates_deferred_continuity",
     "workflow_agent_ids",
 ]
 

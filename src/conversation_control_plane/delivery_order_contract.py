@@ -302,6 +302,12 @@ class ExclusiveTurnOwner:
 #: routed to ``concept_gate`` rather than to a how-to overview. Registered in
 #: ``unified_turn_router._PRODUCT_CONCEPT_KIND_VALUES``.
 PRODUCT_KNOWLEDGE_KIND = "product_knowledge"
+try:
+    from conversation_control_plane.product_knowledge_family_contract import (
+        GLOSSARY_PRODUCT_CONCEPT_KINDS as _GLOSSARY_PCK,
+    )
+except Exception:  # noqa: BLE001
+    _GLOSSARY_PCK = frozenset({PRODUCT_KNOWLEDGE_KIND})
 
 
 def select_exclusive_turn_owner(
@@ -322,6 +328,15 @@ def select_exclusive_turn_owner(
     that kind owns delivery even if this turn's labels omitted cost_estimate_request
     (chat-complete multi-turn contract — follow-up stickiness).
     """
+    # A sealed signal already carries the answer. Re-deriving it was the
+    # conv_602a5640 bug: the seal picks the owner and then clears the losing
+    # owners' labels, so asking again reads different evidence than the seal
+    # did and can return a different owner. Honour the stamp.
+    if signal is not None:
+        stamped = str(getattr(signal, "exclusive_owner", "") or "").strip()
+        if stamped:
+            return ExclusiveTurnOwner(stamped, "sealed for this turn")
+
     # **Exclusivity-contract check.** The router prompt declares the owner
     # fields mutually exclusive ("ONE OWNER PER TURN"). When more than one is
     # set the model declined to choose, and everything below is code picking
@@ -336,10 +351,24 @@ def select_exclusive_turn_owner(
 
             _collision = signal_label_collision(signal)
             if _collision:
+                # Not every collision is the same defect, and logging them
+                # identically is why this instrument has never been triaged.
+                # The ontology says whether anyone has DECIDED these two
+                # concepts are different: a declared pair is a remapper doing
+                # its job; an undeclared pair is the actionable hit.
+                from conversation_control_plane.concept_ontology_contract import (
+                    classify_label_collision,
+                )
+
+                _kind = classify_label_collision(_collision["labels"])
                 logger.warning(
-                    "turn_owner_label_collision — router set %d owner labels: %s",
+                    "turn_owner_label_collision [%s] — router set %d owner "
+                    "labels: %s · declared=%s undeclared=%s",
+                    _kind["status"],
                     _collision["count"],
                     _collision["labels"],
+                    _kind["declared_pairs"] or "-",
+                    _kind["undeclared_pairs"] or "-",
                 )
         except Exception:  # noqa: BLE001 — observability must not decide turns
             pass
@@ -445,13 +474,10 @@ def select_exclusive_turn_owner(
             disc_probe = str(
                 getattr(signal, "discovery_kind", None) or "none",
             ).strip().lower()
-            _hard_front_door = frozenset({
-                "workspace_overview",
-                "platform_catalog",
-                "agent_marketplace",
-                "scorecards",
-                "capabilities",
-            })
+            from conversation_control_plane.discovery_packaging_authority_contract import (
+                front_door_discovery_kinds as _front_door_kinds,
+            )
+
             # Foreign labels only supersede sole-continue when:
             # - owner is O&V (sticky metrics must yield knowledge / inventory /
             #   surface reads — conv_6ffaf54d), or
@@ -465,14 +491,19 @@ def select_exclusive_turn_owner(
                 "handoff",
             )
             _ovs_owner = sole_owner == "outcome_value"
-            if disc_probe in _hard_front_door and (
+            if disc_probe in _front_door_kinds() and (
                 _ovs_owner or _stream_released
             ):
                 strong_new = True
             product_probe = str(
                 getattr(signal, "product_concept_kind", None) or "none",
             ).strip().lower()
-            if product_probe not in ("", "none") and (
+            # Costing howto is orthogonal to Staffed IR / Draft IR (cannot
+            # be the answer to accept-staffing). Yield even on task_intent
+            # continue — conv_2c612bab.
+            if product_probe == "agent_cost_howto":
+                strong_new = True
+            elif product_probe not in ("", "none") and (
                 _ovs_owner or _stream_released
             ):
                 strong_new = True
@@ -621,6 +652,7 @@ def select_exclusive_turn_owner(
     try:
         from conversation_control_plane.read_intent import (
             PROJECT_SURFACE_READ_KINDS,
+            REALIZATION_SURFACE_READ_KINDS,
             WORKFLOW_SURFACE_READ_KINDS,
             WORKFLOW_SURFACE_SIMULATION_KINDS,
         )
@@ -629,6 +661,7 @@ def select_exclusive_turn_owner(
             *WORKFLOW_SURFACE_READ_KINDS,
             *WORKFLOW_SURFACE_SIMULATION_KINDS,
             *PROJECT_SURFACE_READ_KINDS,
+            *REALIZATION_SURFACE_READ_KINDS,
         )
         if rk in surface:
             return ExclusiveTurnOwner("surface_read", f"read_kind={rk}")
@@ -646,79 +679,56 @@ def select_exclusive_turn_owner(
     # staff_catalog_agent_howto) deliver code-owned procedural overviews and
     # own the turn here; a plain product question belongs to concept_gate
     # below, which packages a grounded answer from the corpus.
-    if product not in ("", "none", PRODUCT_KNOWLEDGE_KIND):
+    if product not in ("", "none") and product not in _GLOSSARY_PCK:
         return ExclusiveTurnOwner("product_concept", f"product_concept_kind={product}")
 
     # Orientation / session ledger **before** definitional packaging.
     # Free-text "what is the status of this session" is definitional Class-B
     # shape but router orientation owns session status (conv_2d889a55).
     disc = str(getattr(signal, "discovery_kind", None) or "none").strip().lower()
-    if disc == "orientation":
-        return ExclusiveTurnOwner(
-            "session_activities",
-            "discovery_kind=orientation",
-        )
-
-    # Hard inventory discovery (scorecards, catalogs, …) beats definitional
-    # packaging. "what are my scorecards" is Class-B definitional opener shape
-    # and glossary-grounds, but apply_scorecards_discovery_authority keeps
-    # discovery_kind=scorecards for inventory; concept_gate must not wipe it.
-    # Definitional product concept ("what is a scorecard") demotes discovery to
-    # none first — then packaging below may win.
     packaging_ctx: dict = context if isinstance(context, dict) else {}
     if active_task is not None and isinstance(active_task, dict):
         packaging_ctx = {**packaging_ctx, "active_task": active_task}
 
-    _hard_inventory_discovery = frozenset({
-        "workspace_overview",
-        "platform_catalog",
-        "agent_marketplace",
-        "scorecards",
-        "capabilities",
-    })
-
-    # ---- Declared precedence: PRODUCT_KNOWLEDGE beats inventory discovery ----
-    #
-    # **Claim domain:** both labels claim "what does this turn want?" — this is
-    # a genuine authority overlap, not a type error, so it is declared here
-    # rather than settled by which check appears first in the file
-    # (turn-composition epic 9.2).
-    #
-    # **Why product_knowledge wins:** it is the router's statement that the user
-    # asked *about* the product; a discovery kind only names *which surface*
-    # would be listed. The router demotes discovery itself when the question is
-    # unambiguous — measured 2026-08-11, "what is a scorecard" returns
-    # product_knowledge + discovery_kind=none — but leaves both set when the
-    # phrasing also names a surface. conv_c767adca, turn 0 of a cold
-    # conversation: "what aer the simualtion patterns in this platform" came
-    # back product_knowledge + platform_catalog, and the positional early
-    # return below answered with the industry reference taxonomy.
-    #
-    # **Why this is safe:** the router does not over-emit product_knowledge —
-    # "what are my scorecards", "show me my marketplace agents", "list my
-    # workflows" and "show me the platform catalog" all return
-    # product_concept_kind=none, so their discovery kinds are untouched. And
-    # the value is new, so no prior behaviour depends on losing to discovery.
-    if product == PRODUCT_KNOWLEDGE_KIND and disc in _hard_inventory_discovery:
-        return ExclusiveTurnOwner(
-            "concept_gate",
-            f"product_knowledge beats discovery_kind={disc}",
+    _concept_open = False
+    try:
+        from conversation_control_plane.concept_thread_pin_contract import (
+            concept_thread_is_open,
         )
 
-    if disc in _hard_inventory_discovery:
-        # Soft page-affordance (capabilities) yields to open concept_thread
-        # sole-continue — allow-table, not laundry (conv_bede1f66 stacked Q&A).
+        _concept_open = concept_thread_is_open(packaging_ctx)
+    except Exception:  # noqa: BLE001
         _concept_open = False
-        try:
-            from conversation_control_plane.concept_thread_pin_contract import (
-                concept_thread_is_open,
-            )
 
-            _concept_open = concept_thread_is_open(packaging_ctx)
+    from conversation_control_plane.discovery_packaging_authority_contract import (
+        lookup_discovery_packaging_owner,
+        soft_discovery_kinds,
+    )
+
+    # Soft / page-affordance rows may need packaging_eligible before lookup.
+    if packaging_eligible is None and disc in soft_discovery_kinds() and (query or "").strip():
+        try:
+            from api.services.bot0_product_knowledge import concept_packaging_query_eligible
+
+            packaging_eligible = concept_packaging_query_eligible(
+                query,
+                product_concept_kind=product,
+                context=packaging_ctx,
+                task_intent=task_intent,
+                unified_signal=signal,
+                discovery_kind=disc,
+            )
         except Exception:  # noqa: BLE001
-            _concept_open = False
-        if not (_concept_open and disc == "capabilities"):
-            return ExclusiveTurnOwner("discovery", f"discovery_kind={disc}")
+            packaging_eligible = False
+
+    decided = lookup_discovery_packaging_owner(
+        disc,
+        product_concept_kind=product,
+        packaging_eligible=bool(packaging_eligible),
+        concept_thread_open=_concept_open,
+    )
+    if decided is not None:
+        return ExclusiveTurnOwner(decided[0], decided[1])
 
     if packaging_eligible is None and (query or "").strip():
         try:
@@ -826,22 +836,18 @@ def front_door_detour_supersedes_active_flow(
 
     Action exclusive owners (cost / draft / cyber / surface / advisor) never yield
     to discovery — seals the multi-winner race.
+
+    Composed ``product_concept`` / ``concept_gate`` / ``default`` also never
+    yield: leftover ``intent_clarify`` on a stale discovery dict must not
+    steal Realization howto (conv_a4805af5). Only owner ``discovery`` may
+    supersede via the front door.
     """
     if unified_signal is not None:
         owner = select_exclusive_turn_owner(unified_signal)
         if owner.owner_id in ACTION_EXCLUSIVE_OWNERS:
             return False
         if owner.owner_id in ("product_concept", "concept_gate", "default"):
-            # Only discovery owner may supersede active flow via front door.
-            if owner.owner_id != "discovery" and not any(
-                is_front_door_detour_kind(k)
-                for k in _discovery_kind_candidates(
-                    discovery=discovery,
-                    unified_signal=unified_signal,
-                    plan=plan,
-                )
-            ):
-                return False
+            return False
     return any(
         is_front_door_detour_kind(k)
         for k in _discovery_kind_candidates(

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, Final
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +214,72 @@ def build_post_save_monetization_clarification(
     )
 
 
+# What the post-save setup offer is waiting for, in plain language. Grounding
+# for the classifier so it can tell a real answer from a side-question — a
+# description to reason with, never tokens to match.
+_POST_SAVE_EXPECTS: Final[str] = (
+    "a reply to the post-save setup offer just made: the workflow type, a "
+    "menu choice from that offer, or the numbers for the workflow's scorecard "
+    "(annual volume, value per unit)"
+)
+
+_POST_SAVE_OFF_FLOW_INTENTS: Final[tuple[str, ...]] = (
+    "detour", "new_task", "handoff", "abandon", "resume",
+)
+
+
+def _numeric_answer_to_the_offer(q: str) -> bool:
+    """Is this turn shaped like an ANSWER rather than a sentence containing one?
+
+    ``3`` and ``52000`` are replies to the offer. "What improvements are
+    available for my 2024 workflow?" merely contains a digit. Deterministic and
+    narrow on purpose: anything wider is a meaning judgement, and that belongs
+    to cognition below.
+    """
+    t = (q or "").strip().rstrip(".")
+    if not t or len(t) > 24:
+        return False
+    # Digits, separators and currency only — no words.
+    return any(c.isdigit() for c in t) and all(
+        c.isdigit() or c in ",.$%/ -" for c in t
+    )
+
+
+def _post_save_turn_is_off_flow(
+    db: Any,
+    tenant_id: str,
+    *,
+    query: str,
+    messages: list | None = None,
+) -> str | None:
+    """LLM-owned: is this a side-question rather than a reply to the offer?
+
+    Consulted only after the deterministic parsers above have declined, so a
+    real answer never reaches a model. Degrades safe: any failure, or any
+    non-off-flow read, keeps the turn here rather than dropping a genuine
+    reply.
+    """
+    try:
+        from conversation_control_plane.classifier import classify_intent
+
+        perceived = classify_intent(
+            db,
+            tenant_id,
+            query=query,
+            active_task={
+                "agent": "post_save_setup",
+                "phase": "offered",
+                "awaiting": _POST_SAVE_EXPECTS,
+            },
+            suspended_tasks=[],
+            messages=messages,
+        )
+    except Exception:  # noqa: BLE001 - perception must never eat a reply
+        return None
+    intent = getattr(perceived, "intent", None)
+    return intent if intent in _POST_SAVE_OFF_FLOW_INTENTS else None
+
+
 def post_save_setup_owns_turn(
     db: Any,
     tenant_id: str,
@@ -298,7 +364,25 @@ def post_save_setup_owns_turn(
     if parse_workflow_type_pick(q):
         return True, wf_id
 
+    # A reply SHAPED like an answer is deterministic — own it.
+    if _numeric_answer_to_the_offer(q):
+        return True, wf_id
+
+    # Anything else that merely CONTAINS a digit is a meaning question, and
+    # this handler runs before the router. `any(ch.isdigit())` claimed
+    # "What improvements are available for my 2024 workflow?" and answered it
+    # from the scorecard offer — the C8 shape: a turn answered by a pinned
+    # flow that never classified it. Ask cognition before claiming.
     if any(ch.isdigit() for ch in q):
+        off = _post_save_turn_is_off_flow(
+            db, tenant_id, query=q, messages=messages,
+        )
+        if off:
+            logger.info(
+                "post_save_setup released the turn (intent=%s) — a digit in "
+                "the text is not a reply to the offer", off,
+            )
+            return False, None
         return True, wf_id
 
     return False, None

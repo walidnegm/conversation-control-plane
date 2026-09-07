@@ -22,8 +22,8 @@ CHAT_TURN_ABORTED_ERROR_CODE = "chat_turn_aborted"
 CHAT_TURN_TIMEOUT_DEFAULT_SECONDS = 45
 
 CHAT_TURN_TIMEOUT_USER_MESSAGE = (
-    "This is taking longer than expected and was stopped to protect your session. "
-    "Please try again — if it keeps happening, refresh the page or start a fresh message."
+    "This is taking longer than expected. Work may still be finishing — "
+    "refresh this conversation in a moment. Don't start over."
 )
 
 CHAT_TURN_ABORTED_USER_MESSAGE = (

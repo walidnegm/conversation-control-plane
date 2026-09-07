@@ -15,6 +15,7 @@ PUBLIC_DOCS = (
     "host-transition-discipline.md",
     "conversational-authority-diagnostic-taxonomy.md",
     "conversational-routing-authority-adjudication.md",
+    "turn-capability-lifecycle-checklist.md",
 )
 
 MONOREPO_ONLY_DOCS = (
@@ -74,3 +75,15 @@ class PublicDocBundleTests(unittest.TestCase):
         text = SDK.read_text(encoding="utf-8")
         self.assertNotIn("active-backlog", text)
         self.assertNotRegex(text, r"conversation-control-plane-implementation\.md")
+
+    def test_golden_turn_and_checklist_ship(self):
+        text = SDK.read_text(encoding="utf-8")
+        self.assertIn("The golden turn", text)
+        self.assertIn("5b", text)
+        check = (DOCS / "turn-capability-lifecycle-checklist.md").read_text(
+            encoding="utf-8",
+        )
+        self.assertIn("Stage 5b", check)
+        self.assertTrue(
+            (ROOT / "src" / "conversation_control_plane" / "__init__.py").is_file(),
+        )

@@ -67,15 +67,23 @@ def builder_pending_pk(tenant_id: str, conversation_id: str) -> str:
 
 
 def reconcile_authoring_gate_flags(pending: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Heal dual-flag drift so Staffed IR / IR / commit gates stay armed.
+    """Sole healer of awaiting flags.
 
-    conv_5e8d3caa: ``_state`` stayed ``awaiting_role_proposal_review`` while
-    ``_awaiting_role_proposal_review`` was cleared on a failed leave — routing
-    then treated the turn as free bot0 chat and ``get_project_staffing`` used
-    the *draft workflow name* as a project (hallucinated miss).
+    After staffing, flags follow ``next_pre_save_leaf``
+    (``post_staff_leaf_contract``). Before staffing, keep dual-flag
+    heal so an open Staffed / IR gate is not dropped (conv_5e8d3caa).
     """
     if not isinstance(pending, dict) or not pending:
         return pending
+    if pending.get("_staffed_ir_satisfied"):
+        try:
+            from conversation_control_plane.post_staff_leaf_contract import (
+                apply_post_staff_leaf_writes,
+            )
+
+            return apply_post_staff_leaf_writes(pending)
+        except Exception:  # noqa: BLE001
+            return pending
     st = str(pending.get("_state") or "").strip().lower()
     if st == "awaiting_role_proposal_review" or pending.get("_awaiting_role_proposal_review"):
         pending["_awaiting_role_proposal_review"] = True
@@ -83,8 +91,6 @@ def reconcile_authoring_gate_flags(pending: dict[str, Any] | None) -> dict[str, 
         pending["_awaiting_ir_confirmation"] = True
     if st == "awaiting_commit_confirmation" or pending.get("_awaiting_commit_confirmation"):
         pending["_awaiting_commit_confirmation"] = True
-    # Domain gate: dual-flag heal (conv_d94e7043 purity — coarse phase alone
-    # dropped domain / commit / staffed awaiting from ledger projection).
     if st == "awaiting_domain" or pending.get("_awaiting_domain_choice"):
         pending["_awaiting_domain_choice"] = True
         if st != "awaiting_domain":
@@ -113,7 +119,16 @@ def load_builder_pending_state(
         state = row[0] if isinstance(row[0], dict) else json.loads(row[0])
         if not isinstance(state, dict) or not state:
             return None
-        return reconcile_authoring_gate_flags(state)
+        state = reconcile_authoring_gate_flags(state) or state
+        try:
+            from conversation_control_plane.finite_gate_rerun_contract import (
+                clear_stale_pipeline_graph_error,
+            )
+
+            clear_stale_pipeline_graph_error(state)
+        except Exception:  # noqa: BLE001
+            pass
+        return state
     except Exception:  # noqa: BLE001 — best-effort projection, never raises
         return None
 
@@ -129,8 +144,38 @@ def project_fine_authoring_phase(pending: dict[str, Any] | None) -> str | None:
     # commit left _committed=true + _awaiting_ir_confirmation=true; projecting
     # COMMITTED first made invent/New plan miss the gate and freestyle
     # "Topology Fix Proposed" under pack plan_act (conv_6a6dbadb msg80).
-    if pending.get("_awaiting_ir_confirmation"):
+    # Exception: staffed + compiled + confirmed — leftover IR flag is drift
+    # (conv_50ff3023). Follow the pre-save ladder, not IR review.
+    _staffed_compiled = bool(
+        pending.get("_staffed_ir_satisfied")
+        and pending.get("nodes")
+        and pending.get("_graph_validated")
+        and pending.get("_ir_confirmed")
+    )
+    if pending.get("_awaiting_ir_confirmation") and not _staffed_compiled:
         return PHASE_IR_REVIEW
+    if _staffed_compiled:
+        try:
+            from conversation_control_plane.pre_save_ladder_contract import (
+                next_pre_save_leaf,
+            )
+
+            leaf = next_pre_save_leaf(pending)
+            if leaf == "build_fix":
+                return PHASE_REVIEWING
+            if leaf == "compile":
+                return PHASE_BUILDING
+            if leaf == "commit":
+                return PHASE_COMMIT_PLAN
+            if leaf == "domain":
+                return PHASE_DOMAIN_PICKER
+            if leaf == "ops_kpi":
+                return PHASE_OPERATIONAL_DATA
+            if leaf == "done":
+                return PHASE_COMMITTED
+            return PHASE_BUILDING
+        except Exception:  # noqa: BLE001
+            return PHASE_BUILDING
     if pending.get("_committed") or pending.get("workflow_created"):
         return PHASE_COMMITTED
     if pending.get("_awaiting_operational_data"):
@@ -267,7 +312,10 @@ def next_step_for_authoring_phase(phase: str | None, pending: dict[str, Any] | N
     if phase == PHASE_BUILDING:
         return "Review the graph, then save the workflow."
     if phase == PHASE_COMMITTED:
-        return "Reply **save** to commit the workflow."
+        return (
+            "This workflow is already saved. Next: model AI on it, "
+            "simulate, or open it in the Designer."
+        )
     if phase == PHASE_EXTRACTING or phase == PHASE_GATHERING:
         return "I'm interpreting your workflow — hang tight."
     return ""
@@ -304,6 +352,10 @@ def authoring_resume_in_progress(pending: dict[str, Any] | None) -> bool:
     """True when builder pending holds a non-committed in-flight workflow."""
     if not pending:
         return False
+    # Post-save Staffed IR is still an open gate (Save as-is then Continue
+    # to staffing). Committed graph + awaiting role review must resume.
+    if pending.get("_awaiting_role_proposal_review"):
+        return True
     if pending.get("_committed") or pending.get("workflow_created"):
         return False
     return bool(
@@ -455,8 +507,38 @@ def resume_authoring_owns_turn(
     if not authoring_resume_in_progress(pending):
         return False
     if _unified_signals_authoring_resume(unified_signal):
+        try:
+            from agent.workflow_builder.staffed_leave_continuum_contract import (
+                post_staff_continue_is_compile_not_status as _staff_acc_compile,
+                post_staff_continue_opens_save_plan as _staff_acc_save,
+            )
+
+            if _staff_acc_compile(pending, query) or _staff_acc_save(pending, query):
+                return False
+        except Exception:  # noqa: BLE001
+            logger.debug("staffed accept compile resume yield skipped", exc_info=True)
         phase = project_fine_authoring_phase(pending)
         if phase in _AUTHORING_GATE_PHASES:
+            try:
+                from conversation_control_plane.structure_complete_authority_contract import (
+                    post_staff_orientation_owns_status as _post_staff_status,
+                )
+
+                if _post_staff_status(pending):
+                    return True
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "post-staff orientation resume own skipped",
+                    exc_info=True,
+                )
+            # conv_31b4880d: composed orientation at a gate is a *thin*
+            # host answer (lifecycle + next act), not a worker recap of
+            # the previous card. Proceed still wins — it runs first in chat().
+            dk = str(
+                getattr(unified_signal, "discovery_kind", None) or "",
+            ).strip().lower()
+            if dk == "orientation":
+                return True
             return False
         try:
             from conversation_control_plane.orientation import (
@@ -1036,6 +1118,7 @@ def authoring_workflow_name_capture_open(
     pending: dict[str, Any] | None,
     *,
     context: object = None,
+    query: str = "",
 ) -> bool:
     """True when free-text is a **new draft title / save act**, not inventory open.
 
@@ -1048,6 +1131,17 @@ def authoring_workflow_name_capture_open(
     Name capture owns free-text even when a draft title is already prefilled
     (user re-types the suggestion or is still on commit confirm).
     """
+    if not isinstance(pending, dict):
+        pending = None
+    try:
+        from conversation_control_plane.workflow_name_contract import (
+            save_name_token_owns_turn as _save_name_owns,
+        )
+
+        if _save_name_owns(query, pending=pending, context=context):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
     if not isinstance(pending, dict):
         return False
     if pending.get("_committed") or pending.get("workflow_created"):
@@ -1076,7 +1170,6 @@ def authoring_workflow_name_capture_open(
     # never "which saved workflow did you mean?"
     commit_open = bool(
         pending.get("_awaiting_commit_confirmation")
-        or pending.get("_awaiting_staffing_gap")
         or st == "awaiting_commit_confirmation"
     )
     # Commit arm owns free-text (confirm / unique rename) — never inventory
@@ -1125,7 +1218,9 @@ def authoring_gate_blocks_inventory_resolve(
         return True
     pending = load_builder_pending_state(db, tenant_id, conversation_id)
     pending = reconcile_authoring_gate_flags(pending) if pending else None
-    if authoring_workflow_name_capture_open(pending, context=context):
+    if authoring_workflow_name_capture_open(
+        pending, context=context, query=query,
+    ):
         return True
     if operational_data_kpi_gate_open(pending, context=context):
         return True
@@ -1245,6 +1340,42 @@ def ir_gate_owns_role_proposal_turn(
     return classify_propose_roles_request(db, tenant_id, query=query)
 
 
+def turn_names_orthogonal_read() -> bool:
+    """Cognition named a read that cannot be an answer to the open gate.
+
+    ``SCOPE_ORTHOGONAL_READS`` already declares these harmless — *"a different
+    object entirely; it cannot be the answer, so never contested"*. Until now
+    that table was unreachable for the kinds that matter: the gate-continue
+    synthesis below forces the live route to the authoring owner **before** any
+    surface is compared, and `decide.py` then takes a detour's agent FROM that
+    forced route. So `conv_e56c5d2a` msg 2 — *"list my proejcts"* during an open
+    IR review — was correctly classified a detour and handed to the workflow
+    builder anyway, for 62.8 s.
+
+    Read from the turn signal, which exists by the time this runs (the router is
+    upstream of the gate-continue synthesis). No phrase matching: cognition
+    names the surface, the declared table says whether it is orthogonal.
+    """
+    try:
+        from conversation_control_plane.hop_budget_contract import (
+            get_turn_unified_signal,
+        )
+        from conversation_control_plane.ledger_conflict_adjudication_contract import (
+            SCOPE_ORTHOGONAL_READS,
+        )
+
+        signal = get_turn_unified_signal()
+        if signal is None:
+            return False
+        for field in ("read_kind", "discovery_kind", "product_concept_kind"):
+            named = str(getattr(signal, field, "") or "").strip().lower()
+            if named and named in SCOPE_ORTHOGONAL_READS:
+                return True
+    except Exception:  # noqa: BLE001 — never break routing on the check
+        return False
+    return False
+
+
 def synthesize_gate_continue_route(
     db: Any,
     tenant_id: str | None,
@@ -1289,6 +1420,15 @@ def synthesize_gate_continue_route(
     if not discovery_cognition_suppressed(
         db, tenant_id, conversation_id, query, context=context, messages=messages,
     ):
+        return None
+    # An orthogonal read is a different object entirely — it cannot be the
+    # answer to the open gate, so it must not be captured by it. Suppression
+    # governs the OUTCOME here, not whether cognition ran: the router has
+    # already named the surface, and only surfaces the declared table calls
+    # harmless are released. Free text with no named read ("show me the
+    # staffing again") still continues the authoring session, which is what
+    # this synthesis exists for (conv_5e8d3caa).
+    if turn_names_orthogonal_read():
         return None
     ctx = context if isinstance(context, dict) else {}
     active = ctx.get("active_task")

@@ -85,6 +85,7 @@ DRAFTING_CONTROL_PAYLOAD_KEYS: frozenset[str] = frozenset({
     "draft_handoff",
     "intake_seed",
     "domain",
+    "workflow_seed_kind",
     "awaiting_intake_choice",
     "intake",
     "intake_fork_resolved",

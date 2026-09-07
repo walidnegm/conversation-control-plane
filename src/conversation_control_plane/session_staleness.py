@@ -66,12 +66,14 @@ _AWAITING_LABEL: dict[str, str] = {
     "ir_review": "Draft IR review",
     "awaiting_ir_confirmation": "Draft IR confirmation",
     "awaiting_role_proposal_review": "staffed role review",
+    "role_proposal_review": "staffing",
     "awaiting_commit_confirmation": "save confirmation",
     "awaiting_domain_choice": "domain choice",
     "awaiting_details": "waiting for more detail",
     "staff_as_is_accept": "staffing the as-is workflow",
     "staff_to_be_accept": "staffing the to-be workflow",
     "cost_profile_save_confirm": "cost profile save",
+    "estimate_pending": "the cost estimate (not finished yet)",
     "the previous step": "where you left off",
 }
 
@@ -151,8 +153,8 @@ def transport_resume_product_lead(
             f"Here's where you left off."
         )
     return (
-        "**Connection restored** — you're still on this chat. "
-        "Continue with your next step when ready."
+        "You're still on this chat. "
+        "What would you like to work on next?"
     )
 
 
@@ -170,6 +172,21 @@ def _humanize_age(minutes: float) -> str:
 
 SESSION_REORIENTATION_RESUME_ACTION = "resume_current_session"
 SESSION_REORIENTATION_START_FRESH_ACTION = "start_fresh"
+# Start Fresh success — same copy on the idle card *and* a minted fresh pane
+# (conv_f4fdae70: no pause card on the new thread).
+START_FRESH_LEAD = "Starting fresh. What would you like to work on next?"
+
+
+def session_reorientation_stale_choice_lead() -> str:
+    """Chip arrived when this thread has no Resume/Start Fresh card pending.
+
+    Not \"pause card\" — the user may never have seen one here (Start Fresh
+    mints a fresh pane, conv_f4fdae70).
+    """
+    return (
+        "That choice is no longer open on this chat. "
+        "What would you like to work on next?"
+    )
 SESSION_REORIENTATION_ACTION_IDS = frozenset(
     {
         SESSION_REORIENTATION_RESUME_ACTION,
@@ -314,6 +331,44 @@ def needs_session_reorientation_surface(
     pending (user clicked Continue repair again without Resume).
     """
     ctx = context or {}
+    try:
+        from conversation_control_plane.commit_staffing_gate_contract import (
+            is_continue_to_staffing_token,
+        )
+        from conversation_control_plane.finite_ir_chip_exclusive_contract import (
+            classify_finite_act,
+        )
+
+        if is_continue_to_staffing_token(query) or classify_finite_act(query) in {
+            "accept_residuals",
+            "staff_provisional",
+        }:
+            return False
+        from conversation_control_plane.workflow_name_contract import (
+            save_name_token_owns_turn,
+        )
+        from conversation_control_plane.dispatch_phase import (
+            load_builder_pending_state,
+        )
+
+        pending = None
+        ctx = context or {}
+        tid = str(ctx.get("tenant_id") or "").strip()
+        cid = str(
+            ctx.get("conversation_id") or ctx.get("thread_id") or "",
+        ).strip()
+        if db is not None and tid and cid:
+            pending = load_builder_pending_state(db, tid, cid)
+        if save_name_token_owns_turn(
+            query,
+            pending=pending if isinstance(pending, dict) else None,
+            context=ctx,
+        ):
+            # Allow-table: exact Use-name under authoring is name-capture,
+            # not Resume (conv_5d17d831). Not a per-chip exception list.
+            return False
+    except Exception:  # noqa: BLE001
+        pass
     if ctx.get("session_reorientation_pending"):
         return True
     return should_reorient_before_acting(db, context=ctx, query=query)
@@ -406,8 +461,10 @@ __all__ = [
     "product_voice_awaiting_label",
     "reorientation_threshold_minutes",
     "resume_session_product_lead",
+    "session_reorientation_stale_choice_lead",
     "SESSION_REORIENTATION_ACTION_IDS",
     "SESSION_REORIENTATION_RESUME_ACTION",
     "SESSION_REORIENTATION_START_FRESH_ACTION",
+    "START_FRESH_LEAD",
     "should_reorient_before_acting",
 ]

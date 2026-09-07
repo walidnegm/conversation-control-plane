@@ -7,7 +7,7 @@ description: >-
  refreshed 2026-08 for A18 families, continuum/open-leaf, cognitive seat, CBR pair).
 type: reference
 date: 2026-07-07
-updated: 2026-08-07
+updated: 2026-09-07
 related:
  - conversation-control-plane-sdk.md
  - 
@@ -22,10 +22,11 @@ related:
 (`api/routers/host chat module`) → `api/services/host chat module::chat` → `conversation_control/`. It shows where
 perception, short-circuits, `decide_turn`, delivery, and ledger writes happen.
 
-**How to read this vs the SDK (2026-08):** this file is the **Bot0 host flowchart** (gauntlet + plane
-together). For the portable **cognitive seat** (hydrate → semantic → adjudicate → policy → execute →
-deliver) and app vs SDK roles, see [SDK §0.0.2](conversation-control-plane-sdk.md#authority-adjudication-pipeline-sdk-seat)
-and [conversational-routing-authority-adjudication.md](conversational-routing-authority-adjudication.md).
+**How to read this vs the SDK (2026-08, refreshed 2026-09):** this file is the **Bot0 host flowchart** (gauntlet + plane
+together). The **product turn** is the [golden turn](conversation-control-plane-sdk.md#the-golden-turn--one-correct-turn-end-to-end)
+(stages 0–6 + **5b**). The portable **cognitive seat** (hydrate → semantic → adjudicate → policy → execute →
+deliver) is who owns each concern on that same turn — not a second pipeline
+([SDK §0.0.2 mapping](conversation-control-plane-sdk.md#golden-turn-vs-essay-seats)).
 Post-mid-July addenda (A18 families, continuum, Conjecture) live in [§11](#11-post-mid-july-refresh-a18-continuum-cognitive-seat-cbr).
 
 ### Gauntlet vs ledger (do not conflate)

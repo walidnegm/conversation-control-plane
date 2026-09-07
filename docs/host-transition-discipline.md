@@ -6,6 +6,16 @@ adding a new multi-turn kind.
 [SDK §3.1 — loops & stuck threads](conversation-control-plane-sdk.md#31-hard-questions-for-adopters) ·
 [Conjecture Behaviour Runner](https://github.com/walidnegm/conjecture-behaviour-runner) (state-law scripts / parameterized templates).
 
+**Wider arc:** this doc is stations 3–5 (LAND · CONTINUE · FINISH) of
+[the six stations](turn-capability-lifecycle-checklist.md), which also covers
+SAY (can the model express the intent, and is its prompt published?) and SAY SO
+(does the card offer the next act, and never claim what did not happen?).
+Those six stations are **host reachability** of a capability. The product turn
+they sit on is the **[golden turn](conversation-control-plane-sdk.md#the-golden-turn--one-correct-turn-end-to-end)**
+(0–6 + **5b agent boundary**). SAY ⊂ stage 1 · LAND ⊂ stages 3–5 · CONTINUE ⊂ stage 3
+stickiness · FINISH ⊂ stage 6 · SAY SO ⊂ stage 5. A CONTINUES act with no named
+reader is a stage-**5b** miss, not a missing COMPLETE.
+
 This is **host law**, not a new ledger API. The ledger faithfully records whatever
 transition you apply. Wrong COMPLETE / missing CONTINUE is a **host bug**.
 
@@ -90,6 +100,24 @@ Illegal COMPLETE triggers (non-exhaustive):
 | Status ask (“what am I working on?”, “what we have so far”) | **continue** or **none** — never complete |
 | Detour Q&A while sole-continue is live | Usually **none** / suspend policy — not complete of the primary stream |
 | Ambiguous classifier miss | Clarify or continue — not complete |
+| Authorized execution still running (`OperationOutcome.DEFERRED`) | **continue** (task stays the owner) — **never** complete |
+
+### Deferred operations are not COMPLETE
+
+When a specialist authorizes work that cannot finish inside this chat turn,
+the host returns **`DEFERRED`**, not a completed conversational answer.
+
+| Layer | Owns |
+|---|---|
+| **Control Plane SDK** | The task is still alive; `execution_ref` + `task_id` + originating turn survive; host MUST NOT flatten `DEFERRED` → `action=answer` |
+| **Host / product** | Queue, observe, persist, render, reopen — poll vs SSE is a host choice |
+
+`DEFERRED` + lifecycle `COMPLETE` or `NONE` is a host bug: authority dropped
+while execution is live. Module: `deferred_operation.py` ·
+[SDK §2.2](conversation-control-plane-sdk.md#22-deferred-operation-continuity-portable-contract).
+
+Do not put “the UI must poll” into the SDK. Do not invent a second public
+experience-plane package.
 
 ---
 
