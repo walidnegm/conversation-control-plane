@@ -88,6 +88,8 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "cost_out_estimate",
     # Finite chip: bind agentic cost profile → catalog role (not NL).
     "attach_agent_cost_profile",
+    # Finite chip: mark workflow output step (Rewire meter).
+    "mark_workflow_output_step",
     # Finite chip: cost-out detour from Optimize attach card (return pin).
     "cost_out_for_attach",
     # Finite chip / typo-tolerant publish of a draft profile then attach.
@@ -175,6 +177,11 @@ POST_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "session_activities",
     "project_interrogation",
     "workflow_simulation_entry",
+    # Rec 2.0 / simulation-entry catalogue leaf, dispatched post-decide
+    # (pre_decide_short_circuit=False, bot0.py ~28705). Landed with bf775025e
+    # and was never declared here, which the inventory crawl caught — the
+    # seal working as intended.
+    "recommendation_catalogue",
     "workflow_surface_read",
     # Pattern midflight free-text continue (router labels → stay/ask/abandon).
     "pattern_midflight_continue",

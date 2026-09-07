@@ -2020,6 +2020,40 @@ def decide_turn(
                          phase=current_active.get("phase", "active"), awaiting=None)
             return plan
 
+        # 4b) Cognition named an act the OPEN TASK owns — that is the task's own
+        # work arriving, not a side question. conv_7446cb2a: a process paste
+        # named workflow_draft_request while workflow_build was open, fell
+        # through to (5), and dispatched to the 78-tool orchestrator, which
+        # picked draft_workflow and minted a prose card the kill-switch had
+        # already turned off. The owner was declared the whole time; only the
+        # trace-time instrument read it. Fails closed on an unnamed turn.
+        try:
+            from conversation_control_plane.pre_decide_owner_contract import (
+                named_acts_continue_task_kind,
+            )
+
+            if named_acts_continue_task_kind(
+                str(current_active.get("kind") or ""),
+                classified=unified_signal,
+            ):
+                plan = TurnPlan(
+                    agent=agent, mode="active_task", task=active_task_obj,
+                    reason=(
+                        f"active_task continue: cognition named the task's own "
+                        f"act ({intent_source})"
+                    ),
+                )
+                _maybe_log_conflict(
+                    db, tenant_id, conversation_id, plan, live_route_intent,
+                    live_route_layer, "active_task continue (named act)",
+                )
+                update_phase(db, tenant_id, conversation_id, agent=agent,
+                             phase=current_active.get("phase", "active"),
+                             awaiting=None)
+                return plan
+        except Exception:  # noqa: BLE001 — a rescue must never break the turn
+            logger.debug("named-act continue check skipped", exc_info=True)
+
         # 5) Otherwise a detour while active (a side question; answer then offer resume).
         plan = TurnPlan(agent=live_route_intent, mode="detour", task=active_task_obj,
                         reason=f"detour while active_task present ({intent_source})")

@@ -1,5 +1,121 @@
 # Conversation Control Plane
 
+**Defensive engineering for non-deterministic systems.**
+
+Most agent architectures fail in the same direction: they give the model
+operational authority. It picks the tool, invents the plan, decides when work is
+finished, and passes prose to the next agent as if prose were a work order. That
+works in a demo and degrades in production, because a language model is not an
+executive. It is an excellent *semantic parser* and an unreliable *operator*.
+
+This package takes the opposite bet. The model is treated as a **fuzzy-to-structured
+parser with no operational authority**: it proposes meaning, in a closed
+vocabulary, and nothing else. Identity, arithmetic, state transitions, and the
+question of who may act next belong to code.
+
+> **Meaning is the model's; identity, arithmetic and state are code's.**
+
+That single line is the whole doctrine. Everything below is its consequences.
+
+It is not a novel idea so much as the place serious teams arrive at after
+roughly six months of fighting dynamic agent loops in production — the point
+where you stop asking the model to be reliable and start building a system that
+is reliable *while containing* something that isn't. If you have already been
+burned by an agent that confidently took the wrong action, this will read as
+familiar rather than clever.
+
+### The three layers, and what each is *not*
+
+| Layer | What it is | What it is **not** |
+|---|---|---|
+| **Cognition** | One bounded classifier proposes enums and typed slots from free text. | **Not act selection.** It cannot verify an ID. Fuzzy matching grounds a *label* to a closed inventory — never "which tool". |
+| **Control** | Tables plus `decide_turn`: who may run, is the act TERMINAL or CONTINUES, are slots and refs sufficient, does a sticky owner yield. | **Not a ReAct loop.** The model does not read a tool menu and guess. |
+| **Host delivery** | The turn: finite chips, named doors, `decide_turn`, then a leaf or a handoff envelope. | Not a place for new `if`s. Each door should consult a table; an `if` added instead of a row is debt. |
+
+**Navigation is not a central switch.** Graphs own navigation, control owns
+admissibility, execution owns mutation. `next_act` must not become one giant
+`switch` in the control plane.
+
+### Instructions are not enforcement
+
+The rule that does the most work here, and the easiest one to skip:
+
+> **If an invariant is not an executable test, it does not exist.**
+
+A system prompt that says "always confirm before sending" is a suggestion to a
+non-deterministic component. A schema field that says `"Requires confirmation"`
+is documentation. Neither is a control. In this architecture an invariant is a
+row in a registry plus a ratchet in CI that fails when the row is missing — so
+declaring a `CONTINUES` act with no reader breaks the build rather than
+producing a hollow open at runtime.
+
+This is also the most common way an otherwise-good agent system rots: a
+declared rule that nothing enforces, discovered months later when the behaviour
+it described was never actually happening.
+
+### What this costs you
+
+This architecture buys predictability with flexibility, and the trade is real.
+If these costs do not sound acceptable, do not adopt it — the honest failure
+mode of this doctrine is a team that pays them without wanting them.
+
+- **Developer velocity.** Elsewhere a new capability is a `@tool` decorator and
+  the model figures it out. Here it is a closed-vocabulary change: enum →
+  grounding → registry row → door → deploy, and a published prompt if cognition
+  must be able to *name* it. That friction is the point, and it is still
+  friction. Prototyping is slower.
+- **No emergent orchestration.** Because navigation is the ledger's kind and
+  phase plus each specialist's own machine, the system cannot invent a novel
+  sequence of tool calls to solve a problem nobody anticipated. It will refuse
+  or ask. A dynamic agent might have improvised something useful.
+- **Take-once is contention.** "The owner takes once" is idempotency, and under
+  concurrency idempotency is locks. A busy multi-writer deployment will meet
+  row contention and must serialize deliberately rather than hope.
+- **Refusal has a UX cost.** Refusal being first-class is mathematically right
+  and can be conversationally miserable. A system that halts on every soft
+  ambiguity trains users to give up. Refuse on missing *authority*, not on every
+  under-specified slot.
+
+### A new act is a code change
+
+Stated plainly because it is a product decision, not an oversight: **the tables
+are a closed inventory, not decoration around a dynamic router.** A request the
+vocabulary cannot name cannot be routed — only guessed at, which is the failure
+this package exists to prevent. New capability is a row, a door, and a deploy,
+not a hot-loaded tool list the model browses.
+
+The minimum stations for one new named act, and what breaks if you skip each:
+
+| Station | What you add | If you skip it |
+|---|---|---|
+| Cognition enum | the valid kind / act flag | the model cannot say it; prompt text is inert |
+| Prompt rubric | published body, same session | environments run an old act set |
+| Delivery mode | TERMINAL vs CONTINUES | a CONTINUES act with no reader is a hollow open |
+| Host door | a registered reader | control returns "fresh" and the host never delivers |
+| Claimant yield | the claimant's owned surfaces | other leaves fail open and steal the turn |
+| Handoff | an `ACT_REGISTRY` row if another agent executes | prose travels as work; the agent says "you can do that in the editor" |
+| Multi-turn | sole-continue kind + spec + status card | pin-resume failure and turn stealing |
+| Tools | a `tool_registry` row | the agent cannot call the tool even when correctly routed |
+
+Only tool *permission* is DB-dynamic. Conversation routing does not appear
+because a row showed up in Postgres.
+
+### Target law vs. the system you are reading about
+
+Everything above is the **target law**. The reference host that inspired this
+package implements that law *plus* a long gauntlet of `if` statements that
+frequently short-circuits it. That gap is stated here rather than hidden,
+because it is the honest shape of the problem: the protocol is
+`claim → decide → handle → apply`, and a host is permitted to short-circuit
+around it. That becomes a defect the moment "a kind is present" is treated as
+"this turn continues" — which is precisely how orientation flows, recommendation
+surfaces, and setup wizards have historically stolen turns from one another.
+
+Read the tables as law. Read the gauntlet as debt.
+
+---
+
+
 > **LangGraph can absolutely persist conversation and agent state, route between
 > agents, and resume execution. A Conversation Control Plane extracts a different
 > state contract: product-level task ownership and *admissible conversational
@@ -571,6 +687,40 @@ Deliver: (1) port ledger + decide_turn to our store (2) one sole-continue KindSp
 ```
 
 Longer bootstrap: SDK [§1.1](docs/conversation-control-plane-sdk.md#11-adopter-brief-copy-to-your-coding-agent).
+
+---
+
+## Compared with durable execution (Temporal, Step Functions, Inngest)
+
+The control and host layers describe a domain-specific implementation of
+durable execution, and the overlap is not accidental.
+
+**Shared philosophy.** Temporal's core thesis is that workflow logic must be
+strictly deterministic; this doctrine says the same thing about the
+conversational layer. Temporal passes strongly typed payloads between
+activities; this package requires slots to become grounded refs before an act
+crosses an agent boundary. Temporal's execution history makes retries safe;
+"the owner takes once" is the same guarantee against duplicate mutation.
+
+**Where it diverges.** Temporal is a generic primitive; this is a conversational
+OS. Temporal has no opinion about a user turn, a chip, or the difference between
+a TERMINAL and a CONTINUES act — and it deliberately shouldn't. It also has no
+cognition layer: it will execute a graph faithfully, but something still has to
+decide *which* graph the user meant, from prose, and that is the part this
+package governs.
+
+**Where Temporal is straightforwardly better.** Versioning. Temporal runs V1 and
+V2 of a workflow concurrently with first-class version gates. The host pattern
+here has a long gauntlet of `if` statements where those distinctions would, in a
+Temporal deployment, be cleanly separated workflow definitions. If your problem
+is mostly orchestration versioning and only incidentally conversational, use
+Temporal and put this doctrine's ideas *inside* it.
+
+The reason this exists as its own thing is narrow: agent frameworks index on
+model autonomy, which fails in production; durable execution engines index on
+backend orchestration, which ignores fuzzy intent, turn ownership, and
+human-in-the-loop yields. The gap between those two is where conversational
+products actually break.
 
 ---
 
