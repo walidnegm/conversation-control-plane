@@ -512,8 +512,7 @@ Declared per act and asserted by `delivery_mode_contract`; an undeclared act
 fails the check rather than defaulting to terminal. Audit and the suspected
 same-shape `start_*` handlers: turn-composition epic, slice **TC-G**.
 
-Full design, six lockdowns and truth-table fixtures: **§G of
-[turn_composition_audit_findings.md](docs/epics/turn_composition_audit_findings.md)**.
+Full design, six lockdowns and truth-table fixtures: **§G of the turn-composition audit findings** (publisher monorepo).
 
 ### Act requirements — "can this act run at all?"
 
