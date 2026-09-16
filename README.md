@@ -1,5 +1,29 @@
 # Conversation Control Plane
 
+**A fail-closed control plane for multi-agent conversations.**
+
+Session ownership, agent handoffs, and in-flight tasks are durable and
+DB-authoritative. Each turn is frozen into a canonical act, bound to current
+state, then authorized — or it is asked, rejected, or deferred. Execution is
+idempotent. **The model may interpret. It may not improvise at the effect
+boundary.**
+
+| | |
+|---|---|
+| **Durable session ownership** | one owner at a time, survives process death |
+| **Deterministic handoffs** | the handoff is a recorded act, not a vibe |
+| **Task lifecycle + resume** | restart mid-turn without double-firing |
+| **Canonical act envelope** | `act` + `slots` + `refs`, committed before anything runs |
+| **Grounding choke** | `plan_act()` binds the act to live state — cheap, synchronous, not an LLM |
+| **Fail-closed** | missing, stale or ambiguous state → ASK · REJECT · REFRESH · DEFER |
+| **Authority separate from cognition** | the model does not grant itself permission |
+
+The pipeline those last four describe, with the laws that make it
+unavoidable: [**the act pipeline, as an
+architecture**](docs/conversation-control-plane-sdk.md#the-same-pipeline-as-an-architecture).
+
+---
+
 **Defensive engineering for non-deterministic systems.**
 
 Most agent architectures fail in the same direction: they give the model

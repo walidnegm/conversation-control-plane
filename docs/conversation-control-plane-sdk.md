@@ -21,6 +21,120 @@ delivery leaf ──── owner is another agent ────▶ handoff act �
 tool / skill / domain execution ◀──────────────────────────────────────────┘
 ```
 
+### The same pipeline, as an architecture
+
+The sequence above says what happens in what order. This says why a turn
+cannot go any other way — which is the part an adopter needs, because every
+bypass anyone has shipped was a locally reasonable shortcut.
+
+```
+        EVIDENCE PROVIDERS
+        classifiers · state · pins · discovery · context · UI signals
+        ASSERT EVIDENCE ONLY — MAY NOT SELECT / DELIVER / EXECUTE
+                              │
+                              ▼
+                 ┌────────────────────────────┐
+                 │         COGNITION          │
+                 │   What does this turn mean?│
+                 │                            │
+                 │  PRECEDENCE RESOLVES HERE  │
+                 │  competing evidence → ONE  │
+                 │                            │
+                 │  deterministic lookup      │
+                 │    chip act id · ordinal   │
+                 │    against an offered list │
+                 │              OR            │
+                 │  LLM interpretation        │
+                 │    ambiguous / free text   │
+                 └─────────────┬──────────────┘
+                               ▼
+                 ┌────────────────────────────┐
+                 │  CANONICAL ACT ENVELOPE    │
+                 │  act + slots + refs        │
+                 │      + evidence            │
+                 │  SEMANTIC COMMIT POINT     │
+                 └─────────────┬──────────────┘
+                               ▼
+         ╔═════════════════════════════════════════════╗
+         ║            GROUNDING BOUNDARY               ║
+         ║                  CHOKE                      ║
+         ║  resolve requirements / entities / parts    ║
+         ║  bind the act to authoritative state        ║
+         ║                                             ║
+         ║  ONCE PER ACTIONABLE TURN                   ║
+         ║  CHEAP · SYNCHRONOUS · NOT A MODEL CALL     ║
+         ║                                             ║
+         ║  DOES NOT: reinterpret the act · arbitrate  ║
+         ║  raw evidence · decide authority · execute  ║
+         ╚═══════════════════╤═════════════════════════╝
+                             │
+              ┌──────────────┴───────────────┐
+        sufficiently grounded          missing / stale / ambiguous
+              │                               │
+              ▼                               ▼
+          ┌────────┐                  ASK · REJECT · REFRESH · DEFER
+          │ LEDGER │                     NEVER IMPROVISE
+          └───┬────┘
+              ▼
+        ┌───────────┐
+        │ AUTHORITY │   May this act be committed?
+        └─────┬─────┘
+              │
+      authorized │ denied → DENY · REQUEST APPROVAL
+              ▼
+        ┌──────────┐      ┌───────────────────────────┐
+        │ DELIVERY │ ───► │ EXECUTION                 │
+        └──────────┘      │ idempotent · observable   │
+                          │ truthful                  │
+                          └───────────────────────────┘
+```
+
+**The control laws.**
+
+1. **Evidence may ASSERT. Evidence may not EXECUTE.**
+2. **Precedence happens once, in cognition.** Conflicting evidence does not
+   travel downstream as competing owners for a later stage to settle by
+   source-line order.
+3. **Cognition produces ONE canonical act.** Deterministic lookup and model
+   interpretation are two implementations of one stage, not two pipelines. A
+   chip is the cheap engine, never a side door.
+4. **Every actionable turn crosses ONE grounding boundary EXACTLY ONCE.** Not
+   *at least* once: two traversals are two answers to *"what does this refer
+   to"*, and nothing downstream is placed to notice they differ.
+5. **The architecture is the boundary, not the function that implements it.**
+   Coverage is not more call sites; a second caller is a doctrine change.
+6. **Downstream may REFINE, ASK, REJECT, DEFER, DENY or FAIL. It may not
+   reinterpret the canonical act into another act.**
+7. **Grounding ≠ authority.** *"I know what this act refers to"* is not
+   *"I may execute it."*
+8. **No failure falls through into conversational invention.** Unresolved
+   means ASK, REJECT or DEFER — never fabricate a behaviour to fill the gap.
+9. **No feature creates another door.** A new capability contributes evidence
+   or an act to this pipeline; it does not open a parallel execution path.
+10. **System / transport mechanics are not an extensible bypass category.**
+    Anything capable of domain or work behaviour is an actionable turn and
+    crosses the boundary. The test is structural — *can this cause work?* —
+    never a label a caller applies to itself.
+
+**Law 6 is the one adopters under-build**, because it only fails in
+production. A worked failure: a user clicks **Use recommended domain**. The
+act is unambiguous, grounding resolves it correctly — and three separate
+downstream sites each answer as though it were something else: a topicality
+guard replies with a product blurb, a recovery classifier evaluates the chip
+against a surface where it means nothing, and a pre-save ladder whose return
+type cannot express the state it is in falls through to *"describe the
+workflow you'd like to build"* — while holding that workflow. Four replies,
+one act, no stage that was individually wrong.
+
+**Law 4 is enforceable by construction, and this package already does it
+once.** `GroundedDeclaration` (§16.3) cannot be built without a
+`source_turn_id` and non-empty `resolved_targets` — facts only grounding
+produces. That makes an ungrounded declaration *unrepresentable* rather than
+merely discouraged. The same construction applied to the act itself is what
+turns laws 4, 8 and 9 from review discipline into architecture: if delivery
+accepts only a grounded act, a new door fails the first time it is exercised
+instead of the first time someone notices.
+
 **Continuum — a semantic act is not automatically an operational act.**
 A declared `operation` answers what is meant. It does not, by itself, prove
 executable work crossed into the next owner.
@@ -176,10 +290,25 @@ ask.
 ### ⭐ The golden turn — one correct turn, end to end
 
 **What this is.** One correct turn, traced end to end, with the owner of each
-stage, what it produces, and the invariant that holds at the seam. Everything
-below is implemented and ratcheted; nothing here is aspirational. Use it to
-DIFF an implementation against — most defects in this file are a stage doing
-another stage's job, and they are easiest to see side by side.
+stage, what it produces, and the invariant that holds at the seam. Use it to
+DIFF an implementation against — most defects are a stage doing another
+stage's job, and they are easiest to see side by side.
+
+> ⚠ **Read this as a TARGET, not as a description of the average turn.**
+> This paragraph used to end *"everything below is implemented and ratcheted;
+> nothing here is aspirational."* Each stage does exist, but in the reference
+> host, measured 2026-09-15 over 1,854 turns (30 days): grounding has **3**
+> production call sites, **63.8%** of turns take a code dispatch, **31** sites
+> may terminate a turn above the cognition anchor, and **0** turns carry a
+> field recording that they crossed grounding — because no such field exists
+> yet. The pipeline drawn here is a **line**; the measured shape is a
+> **diamond** with a second lane that reaches delivery without grounding.
+>
+> The retracted sentence is kept visible on purpose. A session read
+> "implemented and ratcheted", trusted the grounding stage, and spent a day
+> re-deriving an incident that had been diagnosed two months earlier. A
+> contract that overstates its own enforcement costs its readers more than an
+> honest gap does.
 
 **The worked example** is the request that took eight conversations to answer:
 
@@ -256,7 +385,35 @@ utterance "can you rename Selectoin / INtent to Intention Recorded"
 11. **A semantic act is not automatically an operational act.** `CONTINUES`
  without a named reader, typed slots, grounded refs, and take-once claim
  is a hollow act.
-12. **Graphs own navigation; Control owns admissibility; Execution owns
+12. **Cognition may be DETERMINISTIC under stated conditions; grounding and
+    authority may not be skipped.** Cognition always runs — only its ENGINE
+    varies, and every engine emits the same envelope. A declared act enters
+    the lookup engine, not the delivery stage. An evidence grade is an ENTRY
+    grade for one decision; it does not license an exit from the pipeline.
+    *(First written as "cognition may be skipped" and corrected the same day —
+    that phrasing is the exact licence a bypass takes.)*
+13. **Failure to establish an executable act is not permission to generate a
+    conversational answer.** At an armed gate, not-executable means ASK and
+    re-show the choice.
+14. **A chip carries an act, not a sentence.** Serialising a typed UI act to
+    prose so downstream can re-interpret it destroys information and makes a
+    click indistinguishable from a keystroke. Corollary: **a token the
+    product emitted is never sent to a model to be corrected** — a typo pass
+    turned `use recommended domain` into `use the recommended domain`, and
+    every acceptor downstream compared exact tokens. One inserted article
+    unmade the click.
+15. **Precedence is resolved once, in cognition** (law 2), and **downstream
+    may not reinterpret the act** (law 6).
+16. **An ungrounded work turn cannot be DELIVERED** — not merely should not
+    be. See `GroundedDeclaration` (§16.3) for the construction that makes this
+    enforceable rather than aspirational.
+17. **A consumer must be able to express every value its registry produces.**
+    The sharper sibling of 8: that law catches a declaration with *no* reader;
+    this one catches a reader that agrees and **cannot say so** — an enum
+    branch, a return type or a status field that has no room for a value the
+    registry legitimately returns. It fails silently, in the default arm, and
+    no amount of convergence upstream prevents it.
+18. **Graphs own navigation; Control owns admissibility; Execution owns
  mutation.** `next_act` is not a central switch in the control plane.
 
 #### The telemetry a healthy turn emits
