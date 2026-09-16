@@ -345,10 +345,12 @@ when chat still looks fine and ledger law is wrong.
 ## Contract at a glance
 
 **Spec (lookup):** [docs/conversation-control-plane-sdk.md](docs/conversation-control-plane-sdk.md)  
+**The act pipeline + the ten control laws:** [SDK — the same pipeline, as an architecture](docs/conversation-control-plane-sdk.md#the-same-pipeline-as-an-architecture) — evidence asserts but never executes · precedence resolves once, in cognition · one canonical act envelope from either engine · **one grounding boundary, crossed exactly once** · downstream may ASK/REJECT/DEFER but never reinterpret the act · no failure falls through into conversational invention · no feature opens a second door.  
 **Golden turn + checklist:** [SDK — the golden turn](docs/conversation-control-plane-sdk.md#the-golden-turn--one-correct-turn-end-to-end) · [docs/turn-capability-lifecycle-checklist.md](docs/turn-capability-lifecycle-checklist.md)  
 **Lifecycle diagram:** [docs/conversation-turn-lifecycle-diagram.md](docs/conversation-turn-lifecycle-diagram.md)  
 **Host laws:** [docs/host-transition-discipline.md](docs/host-transition-discipline.md)  
 **Authority diagnostics:** [docs/conversational-authority-diagnostic-taxonomy.md](docs/conversational-authority-diagnostic-taxonomy.md)  
+**Worked domain application:** [An agent control plane for BSS, OSS, and the network](docs/agent-control-plane-reference-architecture-github.md) — the same separation carried into carrier systems, where a retry can shut a port, duplicate a work order, or race a technician on the same circuit. L1–L6, declared actions, SoT vs SoR, and the assist-to-autonomous evidence gate. *Cognition may propose. Agent Control may own. Execution may authorize. Action alone may mutate.*  
 **Optional multi-turn proof:** [Conjecture Behaviour Runner](https://github.com/walidnegm/conjecture-behaviour-runner) (sibling)  
 Operating sheet: **ladder** (causal) vs **triage** (investigation order). Roots **M/E/S/D**
 parallel (D = delivery *authority* leakage). Quality stack = CAQ/purity · named **ratchet**
@@ -541,7 +543,7 @@ cannot own every proof surface without becoming a product host. Split deliberate
 
 | Public package | Value you get |
 |----------------|---------------|
-| **This package** (control plane) | Turn ownership SoR · `decide_turn` · sole writer · multi-turn stream · A1–A19 · **cognitive seat** (hydrate…adjudicate…deliver) |
+| **This package** (control plane) | Turn ownership SoR · `decide_turn` · sole writer · multi-turn stream · A1–A20 · **cognitive seat** (hydrate…adjudicate…deliver) |
 | **[Conjecture Behaviour Runner](https://github.com/walidnegm/conjecture-behaviour-runner)** | **Named failure modes** · planted FAIL · multi-turn freezes · **Quality Console** (`conjecture ui`) — cockpit for laws · seals · proof debt |
 
 | Need | Use |
