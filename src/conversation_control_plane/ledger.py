@@ -223,15 +223,6 @@ def set_pending_switch_source_message_id(
     )
 
 
-def _revision_fence_sql(expected_version: Optional[int]) -> str:
-    """Optional WHERE clause fragment for optimistic concurrency (Model A)."""
-    if expected_version is None:
-        return ""
-    return (
-        " AND COALESCE((context->>'_control_revision')::int, 0) = :expected_version"
-    )
-
-
 def _raise_if_stale_update(
     db: Session,
     *,
@@ -293,31 +284,34 @@ def _clear_context_keys(
         return
     # Bump _control_revision in the same statement: any control-key clear is a
     # control mutation, and the monotonic revision is what the decision envelope
-    # validates against (epic §8.2). Optional expected_version is Model A fencing.
-    fence = _revision_fence_sql(expected_version)
+    # validates against (epic §8.2). Optional expected_version is Model A
+    # fencing: bound as NULL when absent, which leaves the update unfenced —
+    # the statement itself never changes shape (B-201 SS-10).
     result = db.execute(
         text(
-            f"""
+            """
             UPDATE conversations
                SET context = jsonb_set(
-                       COALESCE(context, '{{}}'::jsonb) - CAST(:keys AS text[]),
+                       COALESCE(context, '{}'::jsonb) - CAST(:keys AS text[]),
                        ARRAY['_control_revision']::text[],
                        to_jsonb(COALESCE((context->>'_control_revision')::int, 0) + 1),
                        true
                    ),
                    updated_at = now()
              WHERE conversation_id = :cid AND tenant_id = :tid
-             {fence}
+               AND (
+                     CAST(:expected_version AS int) IS NULL
+                     OR COALESCE((context->>'_control_revision')::int, 0)
+                        = :expected_version
+                   )
             """
         ),
         {
             "keys": list(keys),
             "cid": conversation_id,
             "tid": tenant_id,
-            **(
-                {"expected_version": int(expected_version)}
-                if expected_version is not None
-                else {}
+            "expected_version": (
+                int(expected_version) if expected_version is not None else None
             ),
         },
     )
@@ -353,14 +347,14 @@ def _set_jsonb_key(
     # Set the control key AND bump _control_revision atomically in one UPDATE.
     # control_revision is monotonic metadata about control coherence (epic §8.2),
     # not rich content — it stays consistent with the lightweight-ledger model.
-    fence = _revision_fence_sql(expected_version)
+    # Optional Model A fence: NULL ``expected_version`` leaves it unfenced.
     result = db.execute(
         text(
-            f"""
+            """
             UPDATE conversations
                SET context = jsonb_set(
                        jsonb_set(
-                           COALESCE(context, '{{}}'::jsonb),
+                           COALESCE(context, '{}'::jsonb),
                            ARRAY[:key]::text[],
                            CAST(:value AS jsonb),
                            true
@@ -371,7 +365,11 @@ def _set_jsonb_key(
                    ),
                    updated_at = now()
              WHERE conversation_id = :cid AND tenant_id = :tid
-             {fence}
+               AND (
+                     CAST(:expected_version AS int) IS NULL
+                     OR COALESCE((context->>'_control_revision')::int, 0)
+                        = :expected_version
+                   )
             """
         ),
         {
@@ -379,10 +377,8 @@ def _set_jsonb_key(
             "value": json.dumps(value),
             "cid": conversation_id,
             "tid": tenant_id,
-            **(
-                {"expected_version": int(expected_version)}
-                if expected_version is not None
-                else {}
+            "expected_version": (
+                int(expected_version) if expected_version is not None else None
             ),
         },
     )
@@ -470,8 +466,7 @@ def get_control_revision(
     return int(row[0]) if row and row[0] is not None else 0
 
 
-# S5: unified handoff primitive (single ledger-SDK entry for all handoffs:
-# silent, accepted, catalog, envelope). Replaces scattered logic.
+# S5: unified handoff primitive (silent, accepted, decide_turn, drafting, editor).
 def handoff(
     db: Session,
     tenant_id: str,
@@ -480,25 +475,109 @@ def handoff(
     target_agent: str,
     task_text: Optional[str] = None,
     reason: Optional[str] = None,
+    current_agent: Optional[str] = None,
+    pending_switch: Optional[dict[str, Any]] = None,
+    begin_phase: str = "active",
+    begin_awaiting: str = "handoff",
+    begin_pending_ref: Optional[str] = None,
+    begin_kind: Optional[str] = None,
+    begin_payload: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Single entry for handoff. Sets pending or begins task.
-    Called from decide_turn / dispatch for coherence.
+    """Single ledger entry for agent transfer.
+
+    Pending switch → atomic ``accept_switch``. Otherwise suspend a foreign
+    active task and ``begin_task`` the target. ``decide_turn`` keeps the
+    default phase/awaiting; silent/accepted chat passes ready/task_request.
+    Callers that need a fat payload (drafting) pass ``begin_payload`` —
+    they must not ``begin_task`` again after this returns.
     """
     from conversation_control_plane.contract import ledger_kind_for_agent
 
-    kind = ledger_kind_for_agent(target_agent) or "handoff"
+    target = _canonical_agent(target_agent)
+    kind = begin_kind or ledger_kind_for_agent(target) or "handoff"
+    payload = (
+        dict(begin_payload)
+        if isinstance(begin_payload, dict)
+        else {"task_text": task_text, "reason": reason or ""}
+    )
+    cid = conversation_id
+    # decide_turn calls without current_agent — begin-only, do not accept a
+    # leftover pending_switch. Chat silent/accepted always pass current_agent.
+    if current_agent is None and pending_switch is None:
+        try:
+            begun = begin_task(
+                db, tenant_id, cid,
+                agent=target,
+                phase=begin_phase,
+                awaiting=begin_awaiting,
+                pending_ref=begin_pending_ref,
+                kind=kind,
+                payload=payload,
+            )
+            return begun if isinstance(begun, dict) else _handoff_result("bot0", target)
+        except Exception:  # noqa: BLE001
+            return {}
+    pending = pending_switch
+    cur = _canonical_agent(current_agent) if current_agent else ""
+    if not cur:
+        try:
+            st = get_control_state(db, tenant_id, cid) or {}
+        except Exception:  # noqa: BLE001
+            st = {}
+        at = st.get("active_task") if isinstance(st, dict) else None
+        cur = _canonical_agent(
+            (at or {}).get("agent") if isinstance(at, dict) else None,
+        ) or "bot0"
+    has_pending = isinstance(pending, dict) and bool(pending.get("to_agent"))
+    if has_pending:
+        try:
+            accept_switch(
+                db, tenant_id, cid,
+                begin_phase=begin_phase,
+                begin_awaiting=begin_awaiting,
+                begin_pending_ref=begin_pending_ref or f"handoff:{target}:{cid}",
+                begin_kind=kind,
+                begin_payload=payload,
+                skip_begin=(target == "bot0"),
+            )
+            return _handoff_result(cur, target)
+        except Exception:  # noqa: BLE001
+            logger.debug("handoff accept_switch failed; transfer", exc_info=True)
+    if cur and cur not in (target, "bot0"):
+        try:
+            suspend_active(db, tenant_id, cid, reason=reason or "handoff")
+        except Exception:  # noqa: BLE001
+            logger.debug("handoff suspend skipped", exc_info=True)
     try:
-        return begin_task(
-            db, tenant_id, conversation_id,
-            agent=target_agent,
-            phase="active",
-            awaiting="handoff",
-            pending_ref=None,
-            kind=kind,
-            payload={"task_text": task_text, "reason": reason or ""},
+        resolve_switch(
+            db, tenant_id=tenant_id, conversation_id=cid, accepted=True,
         )
     except Exception:  # noqa: BLE001
-        return {}
+        logger.debug("handoff resolve_switch skipped", exc_info=True)
+    if target != "bot0":
+        try:
+            begin_task(
+                db, tenant_id, cid,
+                agent=target,
+                phase=begin_phase,
+                awaiting=begin_awaiting,
+                pending_ref=begin_pending_ref,
+                kind=kind,
+                payload=payload,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("handoff begin_task skipped", exc_info=True)
+            return {}
+    return _handoff_result(cur, target)
+
+
+def _handoff_result(cur: str, target: str) -> dict[str, Any]:
+    return {
+        "agent_type": None if target == "bot0" else target,
+        "_handoff_silent": True,
+        "_handoff_from_agent": cur,
+        "_handoff_to_agent": target,
+    }
 
 
 def propose_switch(
@@ -806,6 +885,24 @@ def set_pending_question(
 
     ``purpose`` isolates ordinals across multi-turn streams (cost vs inventory vs
     scorecards) — see ``task_pin_contract.PURPOSE_*``.
+
+    ARMING A QUESTION IS MOVING THE PLANE. Until now ``mark_plane_moved`` had
+    exactly one caller — the journal — so a turn that asked the user something
+    and recorded the question was still reported as "answered without
+    beginning, advancing or completing a task… the next turn will have nothing
+    to continue."
+
+    That is false, and measurably so. conv_25f2def2 delivered the discovery
+    path picker, armed `intent_clarify` / `clarify_path` with candidates, and
+    was reported unmoved anyway — the warning even listed `intent_clarify` in
+    its own `extra=` field while not counting it. `discovery_detour` is the
+    top entry in `turn_plane_unmoved` at 443 events, and this inflates it.
+
+    It matters because the genuine cases hide behind the noise: conv_d262d344,
+    where the turn fell through to the Bot0 Assistant blurb, armed NOTHING and
+    is the one that made the user repeat themselves. A warning that fires on
+    both is an instrument that does not exist — which is what the plane
+    contract's own docstring says about warnings nobody reads.
     """
     from conversation_control_plane.pending_question import build_pending_question
 
@@ -855,6 +952,16 @@ def set_pending_question(
             "candidate_count": len(payload.get("candidates") or []),
         },
     )
+    # One line, and it is the whole fix: the question is recorded, so the next
+    # turn HAS something to continue. Kept here rather than at the call sites
+    # so every future arming path inherits it — the picker, the clarifier, and
+    # whatever asks next.
+    try:
+        from conversation_control_plane.plane_movement import mark_plane_moved
+
+        mark_plane_moved("pending_question")
+    except Exception:  # noqa: BLE001 — telemetry never breaks a turn
+        pass
     return payload
 
 
@@ -1072,10 +1179,12 @@ def begin_task(
     _prev_payload: dict[str, Any] | None = None
     _prev_task_id: str | None = None
     _prev_pending_ref: str | None = None
+    _prev_source: str | None = None
     try:
         _prev_state = get_control_state(db, tenant_id, conversation_id) or {}
         _prev_at = _prev_state.get("active_task")
         if isinstance(_prev_at, dict):
+            _prev_source = str(_prev_at.get("source_message_hash") or "").strip() or None
             _prev_kind = str(_prev_at.get("kind") or "").strip() or None
             _prev_agent = str(_prev_at.get("agent") or "").strip() or None
             _prev_task_id = str(_prev_at.get("task_id") or "").strip() or None
@@ -1145,6 +1254,16 @@ def begin_task(
     }
     if effective_kind is not None:
         task["kind"] = effective_kind
+    # B-240: which message opened this task. Re-beginning the same logical
+    # task keeps the message that opened it.
+    try:
+        from conversation_control_plane.admission_contract import turn_source_hash
+
+        _src = (_prev_source if _same_logical_task else None) or turn_source_hash()
+    except Exception:  # noqa: BLE001
+        _src = None
+    if _src:
+        task["source_message_hash"] = _src
     # Re-beginning the SAME task carries its payload forward. active_task is
     # replaced wholesale here, so a begin with payload=None used to erase what
     # the task was carrying. conv_a800255e: the drafting -> workflow_builder
@@ -1239,6 +1358,34 @@ def begin_task(
         details["kind"] = effective_kind
     # Fail-closed journal (same TX as projection) — do not swallow.
     rev = get_control_revision(db, tenant_id, conversation_id)
+    # Displacing a DIFFERENT live task is a supersede, and the begin event has
+    # to say so. `active_task` is replaced wholesale below, so a displaced task
+    # otherwise just stops existing: no completion, no supersede, nothing to
+    # read afterwards except a begin that never ended.
+    #
+    # conv_899cbab7 (staging), one turn, twice:
+    #   seq 26 task_began outcome_value_setup / collecting
+    #   seq 27 task_began workflow_build      / operational_data   (same ms)
+    # Eight begins in that conversation, zero completions. Two owners
+    # ping-ponging one turn looks identical to healthy progress from the event
+    # stream, which is why it ran unnoticed until a user hit the loop.
+    #
+    # This rides ON the task_began payload rather than being its own event.
+    # `append_control_event` is version-as-sequence — `seq = control_revision`
+    # when a revision is given, one event per revision — so a second append in
+    # this same revision collided on `uq_cce_tenant_conv_seq` and every
+    # kind-switching begin raised IntegrityError. Recording the displacement as
+    # fields on the begin keeps it queryable, keeps one event per revision, and
+    # cannot collide.
+    _superseded: dict[str, Any] = {}
+    if _prev_task_id and not _same_logical_task:
+        _superseded = {
+            "superseded_task_id": _prev_task_id,
+            "superseded_kind": _prev_kind,
+            "superseded_agent": _prev_agent,
+            "superseded_reason": "displaced_by_begin",
+        }
+        details.update(_superseded)
     append_control_event(
         db,
         tenant_id=tenant_id,
@@ -1250,7 +1397,12 @@ def begin_task(
         kind=effective_kind if isinstance(effective_kind, str) else None,
         control_revision_before=rev_before,
         control_revision_after=rev,
-        payload={"phase": phase, "awaiting": awaiting, "pending_ref": pending_ref},
+        payload={
+            "phase": phase,
+            "awaiting": awaiting,
+            "pending_ref": pending_ref,
+            **_superseded,
+        },
     )
     _emit(
         db,
@@ -1398,6 +1550,72 @@ def _prune_redundant_suspended_for_active_authoring(
     return kept
 
 
+def expire_stale_suspended_tasks(
+    db: Session,
+    tenant_id: str,
+    conversation_id: str,
+    *,
+    now: Optional[dt.datetime] = None,
+) -> int:
+    """Expire suspended tasks past ``control_suspended_task_ttl_hours``.
+
+    B-240: an expiry is a disposition, so each one is journaled
+    (``task_expired``, one event per revision). Before this the TTL drop
+    emitted telemetry only, and only on that conversation's next turn — so
+    121 of 128 local suspended entries sat past the horizon in conversations
+    nobody reopened. ``sweep_stale_suspended_tasks`` applies the same rule
+    to every conversation on the worker's cleanup cadence.
+    """
+    from conversation_control_plane.ledger_journal import append_control_event
+
+    now = now or dt.datetime.now(dt.timezone.utc)
+    ttl = _suspended_task_ttl_minutes(db)
+    expired = 0
+    while True:
+        db.execute(
+            text(
+                "SELECT 1 FROM conversations WHERE conversation_id = :cid AND tenant_id = :tid FOR UPDATE"
+            ),
+            {"cid": conversation_id, "tid": tenant_id},
+        )
+        suspended = list(get_control_state(db, tenant_id, conversation_id).get("suspended_tasks") or [])
+        stale = next(
+            (
+                i for i, t in enumerate(suspended)
+                if isinstance(t, dict)
+                and (lambda a: a is not None and a > ttl)(
+                    _pending_switch_age_minutes({"requested_at": t.get("suspended_at")}, now=now)
+                )
+            ),
+            None,
+        )
+        if stale is None:
+            return expired
+        t = suspended.pop(stale)
+        rev_before = get_control_revision(db, tenant_id, conversation_id)
+        _set_jsonb_key(db, conversation_id=conversation_id, tenant_id=tenant_id, key="suspended_tasks", value=suspended)
+        append_control_event(
+            db,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            event_type="task_expired",
+            task_id=t.get("task_id") if isinstance(t.get("task_id"), str) else None,
+            agent=t.get("agent"),
+            kind=(str(t.get("kind") or "").strip() or None),
+            control_revision_before=rev_before,
+            control_revision_after=get_control_revision(db, tenant_id, conversation_id),
+            payload={
+                "reason": "suspended_ttl",
+                "suspended_at": t.get("suspended_at"),
+                "suspend_reason": t.get("suspend_reason"),
+                "pending_ref": t.get("pending_ref"),
+            },
+        )
+        _emit(db, tenant_id=tenant_id, conversation_id=conversation_id, event="task_resume_stale",
+              details={"agent": t.get("agent"), "reason": "suspended_ttl"})
+        expired += 1
+
+
 def prune_stale_ledger_state(db: Session, tenant_id: str, conversation_id: str) -> None:
     """TTL sweeps and stale pruning per the epic (pending_switch 10m, suspended 24h, CONSULTING weak TTL).
 
@@ -1425,19 +1643,50 @@ def prune_stale_ledger_state(db: Session, tenant_id: str, conversation_id: str) 
         _clear_context_keys(db, conversation_id=conversation_id, tenant_id=tenant_id, keys=("pending_switch",))
         _emit(db, tenant_id=tenant_id, conversation_id=conversation_id, event="task_resume_stale", details={"reason": "pending_switch_ttl"})
 
-    # suspended tasks >24h horizon -> stale
-    suspended = control.get("suspended_tasks") or []
-    kept = []
+    # suspended tasks past the horizon expire — journaled (B-240).
     now = dt.datetime.now(dt.timezone.utc)
-    for t in suspended:
-        if isinstance(t, dict):
-            age_min = _pending_switch_age_minutes({"requested_at": t.get("suspended_at")}, now=now)  # reuse age fn
-            if age_min is not None and age_min > _suspended_task_ttl_minutes(db):
-                _emit(db, tenant_id=tenant_id, conversation_id=conversation_id, event="task_resume_stale", details={"agent": t.get("agent"), "reason": "suspended_ttl"})
-            else:
-                kept.append(t)
-    if len(kept) != len(suspended):
-        _set_jsonb_key(db, conversation_id=conversation_id, tenant_id=tenant_id, key="suspended_tasks", value=kept)
+    expire_stale_suspended_tasks(db, tenant_id, conversation_id, now=now)
+
+    # #1e S1 — AN ACTIVE TASK PAST THE SAME HORIZON EXPIRES.
+    #
+    # This function is named for the sweep and swept everything EXCEPT the one
+    # thing that pins a conversation. Measured 2026-09-16: 317 live
+    # `active_task` rows, **278 of them older than the declared 24h TTL**, and
+    # in the journal 1,408 of the open tasks are more than a week old. Nothing
+    # ever ended them, so every one competes with the next turn for ownership
+    # — the mechanism behind B-10's "about 5h ago" Resume card.
+    #
+    # THREE THINGS ARE DELIBERATELY NOT INVENTED HERE:
+    #
+    # * **The horizon** is `control_suspended_task_ttl_hours`, the one this
+    #   function already applies to suspended tasks. `session_staleness` says
+    #   it outright — "do not invent silent different cutoffs" — and a fourth
+    #   number would be exactly that.
+    # * **The reason** is `expired`, which `complete_task` has mapped to
+    #   `task_expired` all along and which has been journaled **zero** times.
+    #   Not `abandon`: that is a business outcome meaning the user gave up, and
+    #   reporting 278 tasks as user decisions would be a lie in the ledger.
+    #   Expired says we stopped waiting, which is what happened.
+    # * **A bulk migration.** This is lazy and per-conversation: a stale task
+    #   ends on that conversation's next read. Nothing sweeps history.
+    #
+    # A task with no `started_at` (26 of the 317) is left alone. It cannot be
+    # dated, and expiring what you cannot date is guessing.
+    active = control.get("active_task")
+    if isinstance(active, dict) and active.get("agent"):
+        started = active.get("started_at")
+        age_min = _pending_switch_age_minutes({"requested_at": started}, now=now)
+        if age_min is not None and age_min > _suspended_task_ttl_minutes(db):
+            try:
+                complete_task(
+                    db,
+                    tenant_id,
+                    conversation_id,
+                    agent=str(active.get("agent")),
+                    reason="expired",
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("active task expiry skipped", exc_info=True)
 
 
 def update_phase(
@@ -1527,8 +1776,15 @@ def suspend_active(
     conversation_id: str,
     *,
     reason: str,
+    resume_when: Optional[str] = None,
 ) -> None:
-    """Move whatever is in active_task into the suspended_tasks list."""
+    """Move whatever is in active_task into the suspended_tasks list.
+
+    B-240: displacement is a lifecycle disposition, so it is JOURNALED
+    (``task_suspended``) with the condition under which the task may resume.
+    conv_b4bc0ea1's advisor task was suspended by a telemetry line alone —
+    the journal said it began and never said it stopped.
+    """
     # Lock for concurrency safety (invariant 7) on the list-valued suspended_tasks key.
     db.execute(
         text(
@@ -1569,7 +1825,16 @@ def suspend_active(
             )
         )
     ]
-    suspended.append({**active, "suspended_at": dt.datetime.now(dt.timezone.utc).isoformat(), "suspend_reason": reason})
+    _resume_when = (resume_when or "").strip() or f"user_continues:{_agent or 'unknown'}"
+    suspended.append({
+        **active,
+        "suspended_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "suspend_reason": reason,
+        "resume_when": _resume_when,
+    })
+    from conversation_control_plane.ledger_journal import append_control_event
+
+    rev_before = get_control_revision(db, tenant_id, conversation_id)
     _set_jsonb_key(db, conversation_id=conversation_id, tenant_id=tenant_id, key="suspended_tasks", value=suspended)
     _clear_context_keys(db, conversation_id=conversation_id, tenant_id=tenant_id, keys=("active_task",))
     # T2: with no active task the front door owns the conversation. A
@@ -1577,12 +1842,29 @@ def suspend_active(
     _sync_agent_type_column(
         db, conversation_id=conversation_id, tenant_id=tenant_id, agent="bot0",
     )
+    # Fail-closed journal (same TX as projection) — do not swallow.
+    append_control_event(
+        db,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        event_type="task_suspended",
+        task_id=active.get("task_id") if isinstance(active.get("task_id"), str) else None,
+        agent=_agent,
+        kind=_kind or None,
+        control_revision_before=rev_before,
+        control_revision_after=get_control_revision(db, tenant_id, conversation_id),
+        payload={
+            "reason": reason,
+            "resume_when": _resume_when,
+            "pending_ref": _ref,
+        },
+    )
     _emit(
         db,
         tenant_id=tenant_id,
         conversation_id=conversation_id,
         event="task_suspended",
-        details={"agent": active.get("agent"), "reason": reason},
+        details={"agent": active.get("agent"), "reason": reason, "resume_when": _resume_when},
     )
 
 
@@ -1703,6 +1985,132 @@ def drop_suspended_task(
     return target
 
 
+#: **I6 / B-15 — the reason vocabulary was open in practice.**
+#:
+#: ``complete_task``'s docstring declares five reasons (complete · abandon ·
+#: failed · expired · superseded) and the map read
+#: ``.get(reason, "task_completed")``. An unguarded default over a closed
+#: vocabulary, so ANY unknown string silently became a COMPLETION — a real
+#: choice, which is exactly what I6 forbids terminal fallthrough from
+#: returning.
+#:
+#: Measured in the journal 2026-09-16, three undeclared reasons had been
+#: writing completions all along:
+#:
+#: ===========================  =====  ==========================
+#: reason                       count  kind
+#: ===========================  =====  ==========================
+#: ``simulation_run_complete``     13  pattern_midflight · recommendation_setup
+#: ``gather_ready_launch``          9  pattern_midflight · recommendation_setup
+#: ``goal_seek_solve_started``      1  recommendation_setup
+#: ===========================  =====  ==========================
+#:
+#: The last one is the argument in one line: a reason whose own name says
+#: something **started** was journaled as the task **completing**. Nothing
+#: downstream could tell that apart from a real completion.
+#:
+#: These are DECLARED here rather than renamed at their call sites, because
+#: they are legitimate product outcomes that do end their task — the point of
+#: I6 is that a vocabulary is stated once and referenced, not that callers may
+#: not have their own words. What is no longer allowed is an UNDECLARED one
+#: passing silently.
+COMPLETION_REASON_EVENTS: dict[str, str] = {
+    "complete": "task_completed",
+    "abandon": "task_abandoned",
+    "failed": "task_failed",
+    "expired": "task_expired",
+    "superseded": "task_superseded",
+    # Declared product aliases. Each ends its task; each already appears in
+    # the journal, so naming them here changes no behaviour and stops them
+    # being indistinguishable from a typo.
+    "simulation_run_complete": "task_completed",
+    "gather_ready_launch": "task_completed",
+    "cost_profile_saved": "task_completed",
+    #: QUESTIONED, not endorsed. Journaled once, by
+    #: ``goal_seek`` on ``recommendation_setup``. Setup finishing as the solve
+    #: begins is plausible — but the NAME says started, and a reason that
+    #: reads as a beginning while writing an ending is the exact confusion
+    #: this table exists to remove. Left declared so the ratchet stays at
+    #: zero; worth renaming at its call site to what it means.
+    "goal_seek_solve_started": "task_completed",
+    #: The obligation is discharged in authoritative state. A genuine
+    #: COMPLETION, not an abandonment: the thing the task existed to obtain
+    #: exists. See `task_completion_predicates.py`.
+    #:
+    #: WHY THE OBLIGATION ENDED and HOW WE FOUND OUT are separate facts. An
+    #: earlier draft folded them into one reason, `satisfied_out_of_band`,
+    #: which goes blunt the moment there is a second discovery path — so the
+    #: reason stays `satisfied` and the trigger is recorded beside it.
+    "satisfied": "task_completed",
+}
+
+#: HOW the completion was discovered. Orthogonal to WHY it completed.
+#:
+#: Walid, 2026-09-17: "Did the objective get satisfied? Yes. Why didn't the
+#: owning flow close it itself? Because reconciliation discovered it later."
+#: Two different operational questions, and one field cannot answer both.
+#:
+#: THE RATCHET: `read_reconciliation` or `sweeper_reconciliation` rising means
+#: some producer is satisfying objectives without maintaining task lifecycle.
+#: That is the number to watch — not the raw count of completions.
+COMPLETION_TRIGGERS: frozenset[str] = frozenset({
+    #: The flow that owns the task closed it. The healthy path.
+    "owning_flow",
+    #: A write to the authoritative resource reconciled tasks referencing it.
+    #: Prevents divergence rather than healing it.
+    "resource_mutation",
+    #: Found stale when the task was about to steer a turn. A backstop: it
+    #: only ever fires for a conversation somebody came back to.
+    "read_reconciliation",
+    #: Found by the audit pass over tasks nobody will read again. Without it,
+    #: an abandoned conversation stays in_progress forever and the
+    #: operational counts lie.
+    "sweeper_reconciliation",
+})
+
+DEFAULT_COMPLETION_TRIGGER = "owning_flow"
+
+
+def _completion_event_type(
+    reason: str,
+    *,
+    conversation_id: str = "",
+    kind: Optional[str] = None,
+) -> str:
+    """Journal event for a completion reason. Unknown is LOUD, not silent.
+
+    Still completes — refusing to close a task because its reason is unnamed
+    would strand the conversation, which is worse than a mislabelled event.
+    But it is recorded the same way ``complete_task refused`` is, so an
+    undeclared reason is visible instead of arriving as an anonymous
+    completion.
+    """
+    known = COMPLETION_REASON_EVENTS.get(reason)
+    if known is not None:
+        return known
+    logger.warning(
+        "complete_task undeclared reason=%s kind=%s conv=%s — journaled as "
+        "task_completed; declare it in COMPLETION_REASON_EVENTS",
+        reason, kind, conversation_id,
+    )
+    try:
+        from api.services.event_logger import log_platform_event_bg
+
+        log_platform_event_bg(
+            "ledger_undeclared_completion_reason",
+            "warning",
+            "complete_task called with a reason that is not declared",
+            details={
+                "conversation_id": conversation_id or "",
+                "reason": reason,
+                "kind": str(kind or ""),
+            },
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("undeclared completion reason not logged", exc_info=True)
+    return "task_completed"
+
+
 def complete_task(
     db: Session,
     tenant_id: str,
@@ -1713,11 +2121,17 @@ def complete_task(
     task_id: Optional[str] = None,
     command_id: Optional[str] = None,
     expected_version: Optional[int] = None,
+    trigger: str = DEFAULT_COMPLETION_TRIGGER,
 ) -> None:
     """Task is done. Clear active_task + pending_switch + all legacy sticky signals.
 
     ``reason`` must distinguish business outcomes:
-      complete | abandon | failed | expired | superseded
+      complete | abandon | failed | expired | superseded | satisfied
+
+    ``trigger`` says HOW the completion was discovered, which is a different
+    question from why it completed — see ``COMPLETION_TRIGGERS``. It defaults
+    to ``owning_flow`` so every existing call site keeps describing itself
+    correctly without being edited.
 
     Journal event types: task_completed | task_abandoned | task_failed | …
     Projection clear is shared; event identity is not.
@@ -1730,13 +2144,6 @@ def complete_task(
     )
 
     reason = (reason or "complete").strip().lower() or "complete"
-    event_type = {
-        "complete": "task_completed",
-        "abandon": "task_abandoned",
-        "failed": "task_failed",
-        "expired": "task_expired",
-        "superseded": "task_superseded",
-    }.get(reason, "task_completed")
     cmd = (command_id or new_command_id()).strip()
 
     # Use a single FOR UPDATE transaction for the multi-key clear (invariant 7 for concurrency;
@@ -1764,7 +2171,69 @@ def complete_task(
     active = state.get("active_task") if isinstance(state.get("active_task"), dict) else {}
     resolved_task_id = task_id or (active or {}).get("task_id")
     kind = (active or {}).get("kind")
+    # Resolved HERE, not where the old inline map sat: that map was a pure
+    # lookup, this one reports the kind alongside an undeclared reason, so it
+    # has to run after `kind` is read. Placing it at the old site referenced
+    # `kind` before assignment (UnboundLocalError, caught by
+    # test_ledger_kind_owner_complete).
+    event_type = _completion_event_type(
+        reason,
+        conversation_id=conversation_id,
+        kind=kind if isinstance(kind, str) else None,
+    )
     rev_before = int(state.get("control_revision") or 0)
+
+    # KindSpec owns who may complete. recommendation_setup owner=bot0 was
+    # completed by workflow_builder (stolen Rec 2.0 / restart loop) because
+    # this write never consulted the registry.
+    try:
+        try:
+            from conversation_control_plane.kind_spec import get_kind_spec
+        except ImportError:  # public extract
+            from conversation_control_plane.kind_spec import get_kind_spec
+
+        spec = get_kind_spec(kind if isinstance(kind, str) else None)
+        owner = str(getattr(spec, "owner_agent", "") or "").strip() if spec else ""
+        caller = str(agent or "").strip()
+        if (
+            spec is not None
+            and owner
+            and caller
+            and caller != owner
+            and caller != "bot0"
+        ):
+            logger.warning(
+                "complete_task refused: kind=%s owner=%s caller=%s reason=%s conv=%s",
+                kind, owner, caller, reason, conversation_id,
+            )
+            # A warning nobody reads is an instrument that does not exist. This
+            # is the write that produced 43 stolen completions across 23
+            # conversations, so it lands in the durable log beside the
+            # ledger_agent_type_conflict rows it belongs with — filterable in
+            # admin → monitoring, and joinable to the conversation.
+            try:
+                from api.services.event_logger import log_platform_event_bg
+
+                log_platform_event_bg(
+                    "ledger_agent_type_conflict",
+                    "warning",
+                    "complete_task refused — caller does not own this kind",
+                    details={
+                        "conversation_id": conversation_id or "",
+                        "kind": str(kind or ""),
+                        "owner_agent": owner,
+                        "requested_agent_type": caller,
+                        "reason": str(reason or ""),
+                        "source": "ledger.complete_task",
+                    },
+                    tenant_id=tenant_id,
+                    reference_id=conversation_id or None,
+                )
+            except Exception:  # noqa: BLE001 - telemetry never breaks a write
+                logger.debug("refusal event emit skipped", exc_info=True)
+            return
+    except Exception:  # noqa: BLE001 — owner check must not break a legal complete
+        logger.debug("complete_task kind_spec owner check skipped", exc_info=True)
 
     # Clear the control keys we own.
     keys_to_clear = ["active_task", "pending_switch"]
@@ -1797,8 +2266,18 @@ def complete_task(
         kind=kind if isinstance(kind, str) else None,
         control_revision_before=rev_before,
         control_revision_after=rev,
-        payload={"reason": reason},
+        # WHY it ended and HOW we found out, side by side. An undeclared
+        # trigger is recorded as given rather than coerced — the same
+        # treatment an undeclared reason gets, so a typo is visible instead
+        # of silently becoming the default.
+        payload={"reason": reason, "trigger": trigger or DEFAULT_COMPLETION_TRIGGER},
     )
+    if trigger and trigger not in COMPLETION_TRIGGERS:
+        logger.warning(
+            "complete_task undeclared trigger=%s reason=%s kind=%s conv=%s — "
+            "declare it in COMPLETION_TRIGGERS",
+            trigger, reason, kind, conversation_id,
+        )
 
     _emit(
         db,
@@ -1999,6 +2478,110 @@ def apply_transition_request(
 #   with a warning rather than blocking chat.
 
 _TURN_CLAIM_KEY = "_turn_claim"
+_TURN_CANCEL_KEY = "_turn_cancel"
+
+
+def request_turn_cancel(
+    db: Session,
+    *,
+    tenant_id: str,
+    conversation_id: str,
+    turn_id: str,
+) -> bool:
+    """Durably request cancellation of one exact conversation turn.
+
+    The marker is turn-scoped so a late Stop from an old tab cannot cancel a
+    newer turn. The caller owns the transaction; explicit commit is required.
+    """
+    if not tenant_id or not conversation_id or not turn_id:
+        return False
+    result = db.execute(
+        text(
+            """
+            UPDATE conversations
+               SET context = jsonb_set(
+                       COALESCE(context, '{}'::jsonb),
+                       ARRAY[:cancel_key]::text[],
+                       jsonb_build_object(
+                           'turn_id', CAST(:turn_id AS text),
+                           'requested_at', now()
+                       ),
+                       true
+                   ),
+                   updated_at = now()
+             WHERE conversation_id = :cid AND tenant_id = :tid
+            """
+        ),
+        {
+            "cancel_key": _TURN_CANCEL_KEY,
+            "turn_id": turn_id,
+            "cid": conversation_id,
+            "tid": tenant_id,
+        },
+    )
+    return int(result.rowcount or 0) == 1
+
+
+def turn_cancel_is_requested(
+    db: Session,
+    *,
+    tenant_id: str,
+    conversation_id: str,
+    turn_id: str,
+) -> bool:
+    """True when Stop has been recorded for this exact turn and not consumed."""
+    if not tenant_id or not conversation_id or not turn_id:
+        return False
+    row = db.execute(
+        text(
+            """
+            SELECT context->:cancel_key->>'turn_id' AS cancel_turn_id
+              FROM conversations
+             WHERE conversation_id = :cid AND tenant_id = :tid
+            """
+        ),
+        {
+            "cancel_key": _TURN_CANCEL_KEY,
+            "cid": conversation_id,
+            "tid": tenant_id,
+        },
+    ).mappings().first()
+    return str((row or {}).get("cancel_turn_id") or "") == turn_id
+
+
+def consume_turn_cancel(
+    db: Session,
+    *,
+    tenant_id: str,
+    conversation_id: str,
+    turn_id: str,
+) -> bool:
+    """Consume the cancellation marker for ``turn_id`` exactly once.
+
+    This is the handoff between the HTTP Stop act and whichever execution
+    phase currently owns the turn: pre-job stream, post-enqueue stream, or
+    detached completion after the client connection closes.
+    """
+    if not tenant_id or not conversation_id or not turn_id:
+        return False
+    result = db.execute(
+        text(
+            """
+            UPDATE conversations
+               SET context = context - :cancel_key,
+                   updated_at = now()
+             WHERE conversation_id = :cid AND tenant_id = :tid
+               AND context->:cancel_key->>'turn_id' = :turn_id
+            """
+        ),
+        {
+            "cancel_key": _TURN_CANCEL_KEY,
+            "turn_id": turn_id,
+            "cid": conversation_id,
+            "tid": tenant_id,
+        },
+    )
+    return int(result.rowcount or 0) == 1
 
 
 def _turn_claim_ttl_seconds(db: Session | None = None) -> float:

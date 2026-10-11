@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-from typing import Any
+from typing import Any, Mapping
 
 from conversation_control_plane.contract import canonical_agent
 
@@ -78,7 +78,11 @@ _AWAITING_LABEL: dict[str, str] = {
 }
 
 
-def product_voice_awaiting_label(awaiting: str | None) -> str | None:
+def product_voice_awaiting_label(
+    awaiting: str | None,
+    *,
+    plan: Mapping[str, Any] | None = None,
+) -> str | None:
     """Map ledger awaiting tokens to product voice (or omit unsafe internals).
 
     Returns a short user-facing phrase, or ``None`` when the token must not
@@ -98,10 +102,12 @@ def product_voice_awaiting_label(awaiting: str | None) -> str | None:
     try:
         from conversation_control_plane.engagement_pack_contract import (
             _STEP_LABELS,
+            step_label,
         )
 
         if key in _STEP_LABELS:
-            return str(_STEP_LABELS[key])
+            # Names the world the document contains (B-232), given the plan.
+            return str(step_label(key, plan))
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).debug(
             "pack step label lookup skipped",
@@ -118,9 +124,13 @@ def product_voice_awaiting_label(awaiting: str | None) -> str | None:
     return raw
 
 
-def resume_session_product_lead(*, awaiting: str | None = None) -> str:
+def resume_session_product_lead(
+    *,
+    awaiting: str | None = None,
+    plan: Mapping[str, Any] | None = None,
+) -> str:
     """Code-owned Resume lead — no internal awaiting tokens in prose."""
-    label = product_voice_awaiting_label(awaiting)
+    label = product_voice_awaiting_label(awaiting, plan=plan)
     if label and label not in ("in-progress work", "where you left off"):
         return (
             f"Picking up where you left off — **{label}**."
@@ -132,6 +142,7 @@ def transport_resume_product_lead(
     *,
     kind: str | None = None,
     awaiting: str | None = None,
+    plan: Mapping[str, Any] | None = None,
 ) -> str:
     """Lead after FE transport recovery when no idle reorient card was pending.
 
@@ -139,7 +150,7 @@ def transport_resume_product_lead(
     Still names the live product stream when known — never generic
     \"re-tap Apply this plan\" laundry (Draft IR thrash after brief disconnect).
     """
-    step = product_voice_awaiting_label(awaiting)
+    step = product_voice_awaiting_label(awaiting, plan=plan)
     kind_key = str(kind or "").strip()
     stream = _KIND_LABEL.get(kind_key) if kind_key else None
     if step and step not in ("in-progress work", "where you left off"):
@@ -172,6 +183,18 @@ def _humanize_age(minutes: float) -> str:
 
 SESSION_REORIENTATION_RESUME_ACTION = "resume_current_session"
 SESSION_REORIENTATION_START_FRESH_ACTION = "start_fresh"
+#: Parked inbound ask while Resume/Start Fresh is showing (conv_f182593a).
+SESSION_REORIENTATION_PARKED_QUERY = "session_reorientation_parked_query"
+_PARKED_QUERY_MAX = 500
+# Chip grammar this module (and the status card) already emits — not NL.
+_SESSION_REORIENT_NON_PARKABLE = frozenset({
+    SESSION_REORIENTATION_RESUME_ACTION,
+    SESSION_REORIENTATION_START_FRESH_ACTION,
+    "resume",
+    "start fresh",
+    "continue",  # retired concept_thread send_text (conv_f182593a)
+    "yes",
+})
 # Start Fresh success — same copy on the idle card *and* a minted fresh pane
 # (conv_f4fdae70: no pause card on the new thread).
 START_FRESH_LEAD = "Starting fresh. What would you like to work on next?"
@@ -344,6 +367,17 @@ def needs_session_reorientation_surface(
             "staff_provisional",
         }:
             return False
+        try:
+            from conversation_control_plane.rec20_continue_yield_contract import (
+                rec20_continue_must_yield,
+            )
+
+            if rec20_continue_must_yield(query):
+                # conv_5b220aa2: idle Confirm: run opened Resume/Start Fresh
+                # instead of running. Exact sim chips are not stale-gap talk.
+                return False
+        except Exception:  # noqa: BLE001
+            pass
         from conversation_control_plane.workflow_name_contract import (
             save_name_token_owns_turn,
         )
@@ -374,10 +408,99 @@ def needs_session_reorientation_surface(
     return should_reorient_before_acting(db, context=ctx, query=query)
 
 
+def query_is_parkable_on_reorient(query: str) -> bool:
+    """True when the inbound turn is work to replay after Resume.
+
+    Finite chips and the Resume/Start Fresh labels are not parked — those
+    are the stale-confirm case this gate exists for. A real question is.
+    conv_f182593a: the return ask was dropped, then Continue was unarmed.
+    """
+    q = (query or "").strip()
+    if not q:
+        return False
+    if q.casefold() in _SESSION_REORIENT_NON_PARKABLE:
+        return False
+    try:
+        from conversation_control_plane.pending_question import (
+            is_ui_chip_send_text,
+        )
+
+        if is_ui_chip_send_text(q):
+            return False
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from conversation_control_plane.finite_ir_chip_exclusive_contract import (
+            classify_finite_act,
+        )
+
+        act = classify_finite_act(q)
+        if act and act != "none":
+            return False
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
+def parked_query_from_context(context: dict[str, Any] | None) -> str:
+    raw = (context or {}).get(SESSION_REORIENTATION_PARKED_QUERY)
+    return str(raw or "").strip()[:_PARKED_QUERY_MAX]
+
+
+def try_package_parked_reorient_query(
+    db: Any,
+    tenant_id: str,
+    *,
+    query: str,
+    context: dict[str, Any] | None,
+    kind: str,
+) -> dict[str, Any] | None:
+    """Answer the parked inbound on Resume when the open stream is a concept thread.
+
+    Other kinds still reopen their leaf; the parked ask becomes the chip
+    send_text there. conv_f182593a: Resume recapped 'questions about the
+    product' and never answered the return question.
+    """
+    q = (query or "").strip()
+    if not q or str(kind or "").strip() != "concept_thread":
+        return None
+    try:
+        from api.services.bot0_product_knowledge import (
+            retrieve_concept_grounding,
+            search_product_knowledge,
+        )
+        from api.services.glossary_concept import package_glossary_concept_answer
+
+        grounded = retrieve_concept_grounding(db, q, tenant_id=tenant_id)
+        passages: list = []
+        if isinstance(grounded, dict) and grounded.get("grounded"):
+            passages = list(grounded.get("passages") or [])
+        if not passages:
+            passages = list(
+                search_product_knowledge(db, q, tenant_id=tenant_id) or []
+            )
+        packaged = package_glossary_concept_answer(
+            db,
+            tenant_id,
+            user_query=q,
+            passages=passages,
+            context=context if isinstance(context, dict) else None,
+        )
+        if isinstance(packaged, dict) and packaged.get("blocks"):
+            return packaged
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).debug(
+            "parked reorient query package skipped",
+            exc_info=True,
+        )
+    return None
+
+
 def build_session_staleness_reorientation(
     *,
     context: dict[str, Any] | None,
     db: Any,
+    query: str = "",
 ) -> dict[str, Any]:
     """Code-owned re-orientation reply + context marker."""
     del db  # threshold already applied by caller; kept for API symmetry
@@ -388,7 +511,11 @@ def build_session_staleness_reorientation(
     kind = str(active.get("kind") or "").strip()
     stream = _KIND_LABEL.get(kind) or label
     raw_awaiting = str(active.get("awaiting") or "").strip()
-    awaiting_voice = product_voice_awaiting_label(raw_awaiting) or "in-progress work"
+    _payload = active.get("payload") if isinstance(active.get("payload"), dict) else {}
+    awaiting_voice = (
+        product_voice_awaiting_label(raw_awaiting, plan=_payload.get("plan"))
+        or "in-progress work"
+    )
     gap = _gap_minutes_since_last_turn(ctx) or 0.0
     # _humanize_age already ends with "ago" / "just now" — do not append another.
     age = _humanize_age(gap)
@@ -413,6 +540,21 @@ def build_session_staleness_reorientation(
             f"We were mid-**{stream}** about **{age}**. "
             "Choose whether to pick up where we left off or start fresh before I act."
         )
+    parked = ""
+    if query_is_parkable_on_reorient(query):
+        parked = (query or "").strip()[:_PARKED_QUERY_MAX]
+        text = (
+            f"{text} I'll answer what you just asked if you Resume."
+        )
+        summary = (
+            f"{summary} Resume answers the question you just asked."
+        )
+    ctx_updates: dict[str, Any] = {
+        "session_reorientation_pending": True,
+        "session_reorientation_shown_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
+    if parked:
+        ctx_updates[SESSION_REORIENTATION_PARKED_QUERY] = parked
     return {
         "action": "answer",
         "route": None,
@@ -431,6 +573,7 @@ def build_session_staleness_reorientation(
                         "awaiting": awaiting_voice,
                         "age_label": age,
                         "kind": kind or None,
+                        "parked_query": parked or None,
                         "actions": [
                             {
                                 "action_id": SESSION_REORIENTATION_RESUME_ACTION,
@@ -447,10 +590,7 @@ def build_session_staleness_reorientation(
                 },
             ],
         },
-        "context_updates": {
-            "session_reorientation_pending": True,
-            "session_reorientation_shown_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        },
+        "context_updates": ctx_updates,
         "response_agent_type": agent,
     }
 
@@ -458,6 +598,10 @@ def build_session_staleness_reorientation(
 __all__ = [
     "build_session_staleness_reorientation",
     "needs_session_reorientation_surface",
+    "parked_query_from_context",
+    "query_is_parkable_on_reorient",
+    "try_package_parked_reorient_query",
+    "SESSION_REORIENTATION_PARKED_QUERY",
     "product_voice_awaiting_label",
     "reorientation_threshold_minutes",
     "resume_session_product_lead",

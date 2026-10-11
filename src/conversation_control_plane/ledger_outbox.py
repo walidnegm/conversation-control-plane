@@ -68,20 +68,18 @@ def claim_export_batch(
     claimers skip locked rows.
     """
     lim = max(1, min(int(limit), 500))
-    params: dict[str, Any] = {"lim": lim}
-    tenant_clause = ""
-    if tenant_id:
-        tenant_clause = "AND tenant_id = :tid"
-        params["tid"] = tenant_id
+    # Optional tenant scope binds NULL when absent (no scope); the statement
+    # never changes shape (B-201 SS-10).
+    params: dict[str, Any] = {"lim": lim, "tid": tenant_id or None}
     rows = db.execute(
         text(
-            f"""
+            """
             SELECT event_id, tenant_id, conversation_id, seq, command_id,
                    event_type, task_id, agent, kind, control_revision_after,
                    payload_json, created_at, export_status
               FROM conversation_control_events
              WHERE export_status = :pending
-               {tenant_clause}
+               AND (CAST(:tid AS text) IS NULL OR tenant_id = :tid)
              ORDER BY created_at ASC, seq ASC
              LIMIT :lim
              FOR UPDATE SKIP LOCKED

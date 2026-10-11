@@ -28,6 +28,16 @@ modules:
   - api/services/conversation_control/ledger.py
   - api/services/conversation_control/ledger_keys.py
   - api/services/conversation_control/ledger_journal.py
+  # ledger_journal hooks this on every journaled event ("every journaled event
+  # IS plane movement"). It was NOT in this list, so the sync shipped the caller
+  # without the callee: the import raised ModuleNotFoundError, the fail-soft
+  # `except Exception: pass` swallowed it, and the SDK's ledger marked nothing
+  # for any adopter. The instrument only ever worked inside the monorepo.
+  - api/services/conversation_control/plane_movement.py
+  # B-240: decide proposes; the host admits at the executing agent's dispatch.
+  - api/services/conversation_control/admission_contract.py
+  # TC-L: a claimed turn must complete (hollow = spoke + neither plane moved).
+  - api/services/conversation_control/claimed_turn_complete_contract.py
   - api/services/conversation_control/ledger_outbox.py
   - api/services/conversation_control/control_payload.py
   - api/services/conversation_control/kind_spec.py
@@ -80,6 +90,22 @@ public_bundle:
   # - conversation-control-plane-loop-playbook.md  → SDK §3.1
   # - conversation-control-plane-trace-export.md   → SDK §11.1
   # - conversation-control-plane-scale-smoke.md    → SDK §3.1 Q1
+
+# Agentic Power of Action (B-181 S14) — hand-maintained under extract/.../docs.
+# The two schemas MUST stay byte-equal to frontend/public/schemas/poa/1.2/
+# (the published copies at https://bot0.ai/schemas/poa/1.2/); a regression
+# pins it. The app stays in the monorepo; only the schema and the approach
+# are public.
+agentic_poa:
+  readme_section: "## Agentic Power of Action (PoA)"
+  docs:
+    - agentic-poa-spec-1.2.md
+    - agentic-poa-authority-type.md
+  schemas:
+    - schemas/poa/1.2/grant.schema.json
+    - schemas/poa/1.2/authority.schema.json
+    - schemas/poa/1.2/test-vectors.json
+  schema_source: frontend/public/schemas/poa/1.2/
 
 examples:
   - extract/conversation-control-plane/examples/README.md

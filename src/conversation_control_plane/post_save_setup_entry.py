@@ -299,6 +299,17 @@ def post_save_setup_owns_turn(
     q = (query or "").strip()
     if not q or not db or not tenant_id:
         return False, None
+    try:
+        from agent.workflow_builder.post_commit_setup_followup import (
+            is_skip_post_save_setup_token as _skip_setup,
+        )
+
+        if _skip_setup(q):
+            wid = resolve_post_save_workflow_id(context, messages)
+            if wid:
+                return True, wid
+    except Exception:  # noqa: BLE001
+        pass
 
     active = (context or {}).get("active_task") if isinstance(context, dict) else None
     if isinstance(active, dict) and (active.get("kind") or "") == "outcome_value_setup":

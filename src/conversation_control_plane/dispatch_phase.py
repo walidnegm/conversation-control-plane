@@ -19,6 +19,7 @@ PHASE_COMMITTED = "committed_graph"
 PHASE_OPERATIONAL_DATA = "operational_data"
 PHASE_IR_REVIEW = "ir_review"
 PHASE_ROLE_PROPOSAL = "role_proposal"
+PHASE_BRIEFS = "briefs"
 PHASE_DOMAIN_PICKER = "domain_picker"
 PHASE_COMMIT_PLAN = "commit_plan"
 PHASE_EXTRACTING = "extracting"
@@ -30,6 +31,7 @@ PHASE_REVIEWING = "reviewing"
 _AUTHORING_GATE_PHASES = frozenset({
     PHASE_IR_REVIEW,
     PHASE_ROLE_PROPOSAL,
+    PHASE_BRIEFS,
     PHASE_DOMAIN_PICKER,
     PHASE_COMMIT_PLAN,
     PHASE_OPERATIONAL_DATA,
@@ -41,6 +43,7 @@ _PHASE_DISPLAY = {
     PHASE_GATHERING: "Extracting",
     PHASE_IR_REVIEW: "Awaiting confirmation",
     PHASE_ROLE_PROPOSAL: "Role proposal",
+    PHASE_BRIEFS: "Agent briefs",
     PHASE_DOMAIN_PICKER: "Domain picker",
     PHASE_OPERATIONAL_DATA: "Operational data",
     PHASE_COMMIT_PLAN: "Commit plan",
@@ -140,6 +143,8 @@ def project_fine_authoring_phase(pending: dict[str, Any] | None) -> str | None:
     pending = reconcile_authoring_gate_flags(pending) or pending
     if pending.get("_awaiting_post_commit_clarification"):
         return PHASE_EDITING
+    if pending.get("_awaiting_agents_review"):
+        return PHASE_BRIEFS
     # Live IR gate beats post-save committed stamp. Dual to-be re-open after
     # commit left _committed=true + _awaiting_ir_confirmation=true; projecting
     # COMMITTED first made invent/New plan miss the gate and freestyle
@@ -163,6 +168,8 @@ def project_fine_authoring_phase(pending: dict[str, Any] | None) -> str | None:
             leaf = next_pre_save_leaf(pending)
             if leaf == "build_fix":
                 return PHASE_REVIEWING
+            if leaf == "agents":
+                return PHASE_BRIEFS
             if leaf == "compile":
                 return PHASE_BUILDING
             if leaf == "commit":
@@ -232,6 +239,7 @@ def ledger_phase_awaiting_from_pending(
     # Ledger awaiting tokens (must match bot0 authoring-gate heal + pre_decide).
     awaiting_map = {
         PHASE_ROLE_PROPOSAL: "role_proposal_review",
+        PHASE_BRIEFS: "agents_review",
         PHASE_IR_REVIEW: "ir_confirmation",
         PHASE_DOMAIN_PICKER: "domain",
         PHASE_COMMIT_PLAN: "commit_confirmation",
@@ -241,6 +249,52 @@ def ledger_phase_awaiting_from_pending(
     # Staffed gate historically used coarse phase=active with awaiting set.
     phase = "active" if fine == PHASE_ROLE_PROPOSAL else fine
     return phase, awaiting
+
+
+# Shipped fat leaf → ledger position. Same awaiting tokens as
+# ``ledger_phase_awaiting_from_pending``. Continue-to-staffing that
+# answered without pending flags still owes this stamp (conv_4ac10b7c
+# TC-L / plane unmoved).
+_FAT_LEAF_LEDGER: dict[str, tuple[str, str]] = {
+    "workflow_role_proposal": (PHASE_ROLE_PROPOSAL, "role_proposal_review"),
+    "role_proposal_review": (PHASE_ROLE_PROPOSAL, "role_proposal_review"),
+    "workflow_ir_review": (PHASE_IR_REVIEW, "ir_confirmation"),
+    "workflow_domain_picker": (PHASE_DOMAIN_PICKER, "domain"),
+    "workflow_domain_create": (PHASE_DOMAIN_PICKER, "domain"),
+    "workflow_commit_plan": (PHASE_COMMIT_PLAN, "commit_confirmation"),
+    "workflow_ops_kpi_intake": (PHASE_OPERATIONAL_DATA, "operational_data"),
+    # B-227 S3a (measured 10-08): the Formations card had NO row here and rode
+    # the Draft IR awaiting by accident. It sits inside the IR review (its
+    # submit resumes the exit the person chose), so it declares that position
+    # explicitly — the card on screen arms the next turn (invariant 6) — with
+    # no new awaiting token (19 sites switch on "ir_confirmation").
+    "formation_card": (PHASE_IR_REVIEW, "ir_confirmation"),
+    "team_briefs": (PHASE_BRIEFS, "agents_review"),
+}
+
+
+def ledger_phase_awaiting_from_blocks(
+    blocks: Any,
+) -> tuple[str | None, str | None]:
+    """Fat leaf on the answer is the ledger position when pending lagged.
+
+    conv_4ac10b7c: Continue to staffing answered; ledger stayed
+    ``awaiting=None`` / was treated as session reorientation because
+    ``transition=continue`` was collapsed into reorient. The card the
+    user saw is who owns the next turn.
+    """
+    if not isinstance(blocks, (list, tuple)):
+        return None, None
+    for b in blocks:
+        if not isinstance(b, dict):
+            continue
+        mapped = _FAT_LEAF_LEDGER.get(str(b.get("type") or "").strip())
+        if not mapped:
+            continue
+        fine, awaiting = mapped
+        phase = "active" if fine == PHASE_ROLE_PROPOSAL else fine
+        return phase, awaiting
+    return None, None
 
 
 def _workflow_name_and_task_count(pending: dict[str, Any]) -> tuple[str, int]:
@@ -374,16 +428,6 @@ def authoring_resume_in_progress(pending: dict[str, Any] | None) -> bool:
     )
 
 
-def _unified_signals_authoring_resume(signal: object) -> bool:
-    """True when the unified router labeled a status-orientation turn (not gate proceed)."""
-    if signal is None:
-        return False
-    dk = str(getattr(signal, "discovery_kind", None) or "").strip().lower()
-    of = str(getattr(signal, "orientation_focus", None) or "").strip().lower()
-    ca = str(getattr(signal, "control_act", None) or "").strip().lower()
-    return (dk == "orientation" and of == "status") or ca == "resume"
-
-
 def authoring_snapshot_ledger_payload(
     pending: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
@@ -414,6 +458,61 @@ def authoring_snapshot_ledger_payload(
     }
 
 
+def _establish_authoring_task_from_pending(
+    db: Any,
+    tenant_id: str,
+    conversation_id: str,
+    *,
+    ctx: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Re-open the ledger's authoring task from the builder's durable pending.
+
+    Only when the builder is REALLY mid-flight: `ledger_phase_awaiting_from_
+    pending` must name a phase AND an awaiting. That pair exists exactly for
+    the gated states — ir_review, role_proposal, domain_picker, commit_plan,
+    operational_data — so a finished or never-started build establishes
+    nothing, and a conversation with no builder work is untouched.
+
+    Deliberately NOT a guess about the current turn. It says what the builder
+    already durably is; the router still decides who answers.
+    """
+    pending = load_builder_pending_state(db, tenant_id, conversation_id)
+    if not pending:
+        return None
+    phase, awaiting = ledger_phase_awaiting_from_pending(pending)
+    if not phase or not awaiting:
+        # No open gate — nothing to re-open. A build that is running but not
+        # waiting on the user needs no ledger question.
+        return None
+    payload = authoring_snapshot_ledger_payload(pending)
+    try:
+        from conversation_control_plane.ledger import begin_task
+
+        task = begin_task(
+            db,
+            tenant_id,
+            conversation_id,
+            agent="workflow_builder",
+            phase=phase,
+            awaiting=awaiting,
+            kind="workflow_build",
+            payload=payload or None,
+        )
+        if isinstance(task, dict):
+            ctx["active_task"] = task
+        logger.warning(
+            "LEDGER_AUTHORING_REESTABLISHED conv=%s phase=%s awaiting=%s — the "
+            "ledger had no authoring task while the builder was gated. The "
+            "control plane was blind until this ran; the reason it went blank "
+            "is upstream of here and is not fixed by this.",
+            conversation_id, phase, awaiting,
+        )
+    except Exception:  # noqa: BLE001 — projection must never block routing
+        logger.debug("authoring task re-establish failed", exc_info=True)
+        return None
+    return payload
+
+
 def sync_authoring_snapshot_to_ledger(
     db: Any,
     tenant_id: str,
@@ -427,7 +526,33 @@ def sync_authoring_snapshot_to_ledger(
     ctx = context if isinstance(context, dict) else {}
     active = ctx.get("active_task")
     if not isinstance(active, dict) or not workflow_authoring_active(ctx):
-        return None
+        # THE SYNC COULD ONLY UPDATE, NEVER ESTABLISH — and that made the hole
+        # self-locking.
+        #
+        # conv_84821069, measured 2026-09-18. The ledger journal stops at
+        # 17:16:10 with `task_began workflow_build awaiting=role_proposal_
+        # review`, and the live projection ends EMPTY: active_task null,
+        # suspended_tasks empty, agent_type "bot0" — after 36 control
+        # revisions, while the builder held a staffed IR mid-flight. The
+        # conversation then ran another 105 seconds against a control plane
+        # that believed nothing was happening.
+        #
+        # `turn_plane_unmoved` fired at 17:17:34 and its own message predicted
+        # the rest: "The next turn will have nothing to continue." Sixteen
+        # seconds later a domain pick was read as a brand-new idea.
+        #
+        # Once the ledger lost the task, THIS function — the one whose whole
+        # job is keeping the ledger level with the builder — returned at its
+        # first line forever, because it required the very thing that had gone
+        # missing. Nothing else re-establishes it.
+        #
+        # So: when the ledger has no authoring task and the builder pending
+        # says authoring is genuinely in flight, begin one. The builder's
+        # durable pending is the source of truth for authoring state; this is
+        # a projection catching up, not a new claim about the turn.
+        return _establish_authoring_task_from_pending(
+            db, tenant_id, conversation_id, ctx=ctx,
+        )
     payload = authoring_snapshot_ledger_payload(
         load_builder_pending_state(db, tenant_id, conversation_id),
     )
@@ -480,11 +605,17 @@ def resume_authoring_owns_turn(
     conversation_id: str | None,
     query: str,
     context: object = None,
-    unified_signal: object = None,
     messages: list | None = None,
 ) -> bool:
-    """True when an active builder session should answer with orientation/status."""
+    """True when an active builder session should answer with orientation/status.
+
+    B-248: reads the turn's one decision; the ``unified_signal`` parameter
+    is gone.
+    """
     from conversation_control_plane.authoring_gate_turn import (
+        _decision_orients_status,
+        _decision_resumes_authoring,
+        _turn_decision,
         resume_authoring_owns_turn as _contract_resume_authoring_owns_turn,
     )
 
@@ -506,7 +637,33 @@ def resume_authoring_owns_turn(
     pending = load_builder_pending_state(db, tenant_id, conversation_id)
     if not authoring_resume_in_progress(pending):
         return False
-    if _unified_signals_authoring_resume(unified_signal):
+    # A CARD CHIP IS AN ACT, NOT A QUESTION ABOUT WHERE YOU ARE.
+    #
+    # conv_1583c15e: the user clicked **Use recommended** on the armed domain
+    # card. The unified router read the chip as free text, returned
+    # `discovery_kind: orientation`, and this predicate handed the turn to the
+    # resume checkpoint — which re-drew the same card. The deterministic domain
+    # dispatch sits ~12,000 lines further down in `chat()` and was never asked.
+    #
+    # Three earlier fixes made the chip recognisable, claimable and resolvable
+    # and none of them changed what the user saw, because all three ran AFTER
+    # this point. The product emitted the token itself, for the gate that is
+    # armed right now: there is nothing to classify, so no classifier's opinion
+    # may outrank it.
+    #
+    # Deliberately BEFORE the decision branch, so the LLM verdict is not
+    # consulted at all rather than consulted and then overridden.
+    try:
+        from conversation_control_plane.card_chip_gate_contract import (
+            chip_answers_an_open_gate,
+        )
+
+        if chip_answers_an_open_gate(query, pending):
+            return False
+    except Exception:  # noqa: BLE001 — a missing contract never steals a chip
+        logger.debug("card chip resume yield skipped", exc_info=True)
+    d = _turn_decision()
+    if _decision_resumes_authoring(d):
         try:
             from agent.workflow_builder.staffed_leave_continuum_contract import (
                 post_staff_continue_is_compile_not_status as _staff_acc_compile,
@@ -534,29 +691,16 @@ def resume_authoring_owns_turn(
             # conv_31b4880d: composed orientation at a gate is a *thin*
             # host answer (lifecycle + next act), not a worker recap of
             # the previous card. Proceed still wins — it runs first in chat().
-            dk = str(
-                getattr(unified_signal, "discovery_kind", None) or "",
-            ).strip().lower()
-            if dk == "orientation":
-                return True
-            return False
-        try:
-            from conversation_control_plane.orientation import (
-                classify_orientation_request,
-            )
-
-            return classify_orientation_request(
-                db, tenant_id, query, messages=messages,
-            )
-        except Exception:  # noqa: BLE001
-            return True
+            return _decision_orients_status(d)
+        # G5 S7: the decision already named the act. Do not fire a second
+        # orientation hop. (A bare resume is not a status answer.)
+        return _decision_orients_status(d)
     return _contract_resume_authoring_owns_turn(
         db,
         tenant_id=tenant_id,
         conversation_id=conversation_id,
         query=query,
         context=context,
-        unified_signal=unified_signal,
         messages=messages,
     )
 
@@ -580,7 +724,6 @@ def surface_read_detour_suppressed(
     authoring_phase: str | None,
     *,
     context: object = None,
-    task_intent: str | None = None,
 ) -> bool:
     """True when the workflow-surface read detour must not run.
 
@@ -606,11 +749,9 @@ def surface_read_detour_suppressed(
         if isinstance(context, dict):
             cand = context.get("active_task")
             active = cand if isinstance(cand, dict) else None
-            if task_intent is None:
-                task_intent = str(context.get("task_intent") or "continue")
-        if sole_continue_suppresses_surface_read(
-            active, task_intent=task_intent,
-        ):
+        # B-248: no legacy ``task_intent`` is passed — the helper no longer
+        # reads it (2026-08-12, always label), and the decision owns the act.
+        if sole_continue_suppresses_surface_read(active):
             return True
     except Exception:  # noqa: BLE001 — never break routing on suppress helper
         import logging
@@ -630,7 +771,6 @@ def active_agent_task_blocks_detour(
     query: str = "",
     context: object = None,
     authoring_phase: str | None = None,
-    task_intent: str | None = None,
 ) -> bool:
     """Single facade: active authoring task owns the turn — block competing detours.
 
@@ -639,9 +779,7 @@ def active_agent_task_blocks_detour(
     ``discovery`` / ``orientation`` — front-door cognition must not steal gate replies.
     """
     if detour_kind == "surface_read":
-        return surface_read_detour_suppressed(
-            authoring_phase, context=context, task_intent=task_intent,
-        )
+        return surface_read_detour_suppressed(authoring_phase, context=context)
     if detour_kind in ("discovery", "orientation"):
         return discovery_cognition_suppressed(
             db, tenant_id, conversation_id, query, context=context,
@@ -779,13 +917,13 @@ def outcome_value_setup_orientation_suppressed(
     *,
     context: object = None,
     messages: list | None = None,
-    unified_task_intent: str | None = None,
 ) -> bool:
     """True when the user is resuming business scorecard collection.
 
     Discovery orientation (improvement menu / status card) must not steal
     "go back to what we were doing" while ``kind=outcome_value_setup`` is
-    still active on the ledger.
+    still active on the ledger. B-248: reads the turn's decision — a
+    ``continue`` or ``resume`` act.
     """
     ctx = context if isinstance(context, dict) else {}
     active = ctx.get("active_task") or {}
@@ -793,10 +931,15 @@ def outcome_value_setup_orientation_suppressed(
         return False
     if not (query or "").strip() or db is None or not tenant_id:
         return False
-    intent = (unified_task_intent or "").strip().lower()
-    if intent in ("continue", "resume"):
-        return True
-    return False
+    try:
+        from conversation_control_plane.turn_decision_contract import (
+            get_turn_decision,
+        )
+
+        d = get_turn_decision()
+    except Exception:  # noqa: BLE001
+        return False
+    return d is not None and d.act in ("continue", "resume")
 
 
 def discovery_orientation_suppressed(
@@ -837,39 +980,13 @@ def discovery_orientation_suppressed(
     return False
 
 
-def router_supersedes_discovery(route: object | None) -> bool:
-    """Discovery/orientation are informative detours — only when the intent router stays on bot0.
-
-    The L3 intent router (plus its L1/L2 accelerators that still LLM-arbitrate) owns
-    build/edit/handoff routing. When it names a specialist or ambiguous clarifier path,
-    skip discovery so we do not stack a second NL classifier with edge-case guards.
-
-    Latency (epic #1e / CAQ-1c Pillar 3, pre-S4): also skip discovery when the router
-    already resolved a bot0 turn via a cheap layer or a structured detour signal — the
-    orchestrator or a code-owned detour owns the answer; discovery would be redundant.
-    """
-    if route is None:
-        return False
-    intent = str(getattr(route, "intent", None) or "bot0").strip().lower()
-    if intent != "bot0":
-        return True
-    if getattr(route, "workflow_draft_request", False):
-        return True
-    if getattr(route, "catalog_role_request", False):
-        return True
-    if getattr(route, "attachment_capability_request", False):
-        return True
-    if getattr(route, "cost_estimate_request", False):
-        return True
-    layer = str(getattr(route, "layer", None) or "").strip().lower()
-    if layer in {"l2_trivial", "gate_continue"}:
-        return True
-    return False
+# B-248: ``router_supersedes_discovery(route)`` deleted — a second decider
+# between the router's route and discovery. The turn's one decision owns it:
+# discovery answers only an ``orient`` / ``choose_path`` act.
 
 
 def read_intent_cognition_needed(
     *,
-    route: object | None,
     read_detour_active: bool,
     workflow_surface_context_ready: bool,
 ) -> bool:
@@ -947,17 +1064,19 @@ def operational_data_gate_owns_provision_turn(
 def discovery_detour_supersedes_active_flow(
     *,
     discovery: dict[str, str] | None = None,
-    unified_signal: object | None = None,
     plan: object | None = None,
 ) -> bool:
-    """True when a router-owned front-door detour must beat an active guided flow."""
+    """True when a router-owned front-door detour must beat an active guided flow.
+
+    B-248: no ``unified_signal`` pass-through — the delivery-order contract
+    reads the turn's decision itself.
+    """
     from conversation_control_plane.delivery_order_contract import (
         front_door_detour_supersedes_active_flow,
     )
 
     return front_door_detour_supersedes_active_flow(
         discovery=discovery,
-        unified_signal=unified_signal,
         plan=plan,
     )
 
@@ -1028,10 +1147,12 @@ def authoring_gate_proceed_owns_turn(
     conversation_id: str | None,
     query: str,
     context: object = None,
-    unified_signal: object = None,
     messages: list | None = None,
 ) -> bool:
-    """True when an open authoring gate should advance via workflow_builder."""
+    """True when an open authoring gate should advance via workflow_builder.
+
+    B-248: the contract reads the turn's decision; no ``unified_signal``.
+    """
     from conversation_control_plane.authoring_gate_turn import (
         authoring_gate_proceed_owns_turn as _contract_gate_proceed_owns_turn,
     )
@@ -1042,7 +1163,6 @@ def authoring_gate_proceed_owns_turn(
         conversation_id=conversation_id,
         query=query,
         context=context,
-        unified_signal=unified_signal,
         messages=messages,
     )
 
@@ -1352,23 +1472,26 @@ def turn_names_orthogonal_read() -> bool:
     IR review — was correctly classified a detour and handed to the workflow
     builder anyway, for 62.8 s.
 
-    Read from the turn signal, which exists by the time this runs (the router is
-    upstream of the gate-continue synthesis). No phrase matching: cognition
-    names the surface, the declared table says whether it is orthogonal.
+    Read from the turn's decision, which exists by the time this runs (the
+    boundary is upstream of the gate-continue synthesis). No phrase matching:
+    cognition names the surface, the declared table says whether it is
+    orthogonal. B-248: the surface is the act's own slot — ``read`` →
+    ``read_kind``, ``orient`` → ``focus``, ``explain`` → ``concept_kind``.
     """
     try:
-        from conversation_control_plane.hop_budget_contract import (
-            get_turn_unified_signal,
-        )
         from conversation_control_plane.ledger_conflict_adjudication_contract import (
             SCOPE_ORTHOGONAL_READS,
         )
+        from conversation_control_plane.turn_decision_contract import (
+            get_turn_decision,
+        )
 
-        signal = get_turn_unified_signal()
-        if signal is None:
+        d = get_turn_decision()
+        if d is None:
             return False
-        for field in ("read_kind", "discovery_kind", "product_concept_kind"):
-            named = str(getattr(signal, field, "") or "").strip().lower()
+        slot = {"read": "read_kind", "orient": "focus", "explain": "concept_kind"}.get(d.act)
+        if slot:
+            named = str((d.slots or {}).get(slot) or "").strip().lower()
             if named and named in SCOPE_ORTHOGONAL_READS:
                 return True
     except Exception:  # noqa: BLE001 — never break routing on the check
@@ -1484,6 +1607,7 @@ def strip_authoring_save_fabrication(
 
 
 __all__ = [
+    "PHASE_BRIEFS",
     "PHASE_BUILDING",
     "PHASE_COMMIT_PLAN",
     "PHASE_COMMITTED",
@@ -1517,7 +1641,6 @@ __all__ = [
     "authoring_gate_proceed_owns_turn",
     "resume_authoring_owns_turn",
     "sync_authoring_snapshot_to_ledger",
-    "router_supersedes_discovery",
     "synthesize_gate_continue_route",
     "domain_gate_owns_authoring_turn",
     "domain_gate_owns_pick_turn",
@@ -1535,6 +1658,7 @@ __all__ = [
     "strip_authoring_save_fabrication",
     "project_fine_authoring_phase",
     "ledger_phase_awaiting_from_pending",
+    "ledger_phase_awaiting_from_blocks",
     "surface_read_detour_suppressed",
     "workflow_authoring_active",
     "DetourKind",

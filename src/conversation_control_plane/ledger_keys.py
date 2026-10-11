@@ -24,6 +24,7 @@ LEDGER_CONTROL_KEYS: frozenset[str] = frozenset({
     "create_flow_state",
     # Turn serialization + coherence (ledger-only writers)
     "_turn_claim",
+    "_turn_cancel",
     "_last_completed_turn",
     "_control_revision",
 })

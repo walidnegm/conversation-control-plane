@@ -405,7 +405,10 @@ def rebuild_projection_hints(
                 "awaiting": payload.get("awaiting"),
                 "pending_ref": payload.get("pending_ref"),
             }
-        elif et in ("task_completed", "task_abandoned", "task_failed", "task_superseded", "task_expired"):
+        elif et in (
+            "task_completed", "task_abandoned", "task_failed", "task_superseded",
+            "task_expired", "task_suspended",
+        ):
             active = None
         elif et == "switch_accepted":
             last_switch = {

@@ -369,6 +369,9 @@ def sanitize_control_payload(
                         for k in (
                             "goal_summary", "process_description", "pack_chars",
                             "dual_world_detected", "findings_count",
+                            # The pin that says the fat fields are in the cold
+                            # store — without it nothing re-hydrates them.
+                            "cold",
                         )
                         if de.get(k) is not None
                     }

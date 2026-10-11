@@ -64,7 +64,7 @@ typed proposal + policy) before choosing a target node. This package’s
 
 Named authority modes + Conjecture seeds live in the sibling public package
 **[conjecture-behaviour-runner](https://github.com/walidnegm/conjecture-behaviour-runner)**
-(`incidents/registry.yaml`). This SDK owns **anti-patterns A1–A19** and the diagnostic
+(`incidents/registry.yaml`). This SDK owns **anti-patterns A1–A21** and the diagnostic
 ladder; CBR owns **mode slugs + runnable proofs**.
 
 | Need | Where |

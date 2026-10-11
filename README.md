@@ -342,6 +342,58 @@ when chat still looks fine and ledger law is wrong.
 
 ---
 
+## Agentic Power of Action (PoA)
+
+Your AI agent may already be connected to your email, calendar, files, Slack, browser, shopping accounts, work systems, and perhaps your money. Those connections tell it what it can **reach** and what its tools can technically **do**.
+
+They do not tell it what it is allowed to do **for you**.
+
+**Agentic Power of Action (PoA)** is an open framework for expressing, carrying, and verifying delegated authority for AI agents.
+
+It separates four things that are often confused:
+
+**access** — what systems the agent can reach
+**capability** — what those systems and tools can do
+**authority** — what you have actually delegated for a particular kind of work
+**commit** — whether a specific proposed effect may become real
+
+PoA starts with the work, not the tool. An agent may have Gmail, Slack, browser, filesystem, MCP tools, shared memory, or other capabilities, but authority is defined around the acts it may perform, the people or systems involved, the information it may rely on, the limits that apply, and what requires approval before becoming official.
+
+Answer six questions to define that authority. PoA compiles the answers into:
+
+- a **Letter of Authority** you can read,
+- a **Grant** a machine can verify,
+- a **Review** showing what is allowed, forbidden, or requires approval,
+- and an **agent briefing** you can paste into the agent as guidance.
+
+The Grant is the source of truth. The briefing is not.
+
+A verifier can sit between an agent and its tools and answer one deterministic question before a consequential action commits:
+
+**May this agent, acting for this principal, under this grant, perform this particular effect, against this target, using this evidence, with these arguments, right now?**
+
+The agent proposing the action never decides its own authority.
+
+Grants are compiled locally in the browser and sealed with a cryptographic fingerprint so changes are detectable. They can also be carried as signed machine-readable credentials for runtime enforcement, delegation, audit, and revocation.
+
+**Access is not authority. Capability is not delegation. Proposal is not commitment.**
+
+What is published here: the normative specification
+([docs/agentic-poa-spec-1.2.md](docs/agentic-poa-spec-1.2.md), with the 1.3
+addendum — a sealed grounding plan and clause classes —
+[docs/agentic-poa-spec-1.3.md](docs/agentic-poa-spec-1.3.md) and
+[docs/schemas/poa/1.3/](docs/schemas/poa/1.3/)), the JSON
+Schema 2020-12 for the Grant and for one authority
+([docs/schemas/poa/1.2/](docs/schemas/poa/1.2/)), and the RFC 9396
+authorization-detail type
+([docs/agentic-poa-authority-type.md](docs/agentic-poa-authority-type.md)).
+The consumer app that compiles Grants runs at https://bot0.ai/power-of-action;
+its verifier is the reference reading of §7 of the spec. It sits beside
+the control plane, not inside it: the plane decides who owns a turn; PoA
+decides what an agent may make real.
+
+---
+
 ## Contract at a glance
 
 **Spec (lookup):** [docs/conversation-control-plane-sdk.md](docs/conversation-control-plane-sdk.md)  
@@ -543,7 +595,7 @@ cannot own every proof surface without becoming a product host. Split deliberate
 
 | Public package | Value you get |
 |----------------|---------------|
-| **This package** (control plane) | Turn ownership SoR · `decide_turn` · sole writer · multi-turn stream · A1–A20 · **cognitive seat** (hydrate…adjudicate…deliver) |
+| **This package** (control plane) | Turn ownership SoR · `decide_turn` · sole writer · multi-turn stream · A1–A21 · **cognitive seat** (hydrate…adjudicate…deliver) |
 | **[Conjecture Behaviour Runner](https://github.com/walidnegm/conjecture-behaviour-runner)** | **Named failure modes** · planted FAIL · multi-turn freezes · **Quality Console** (`conjecture ui`) — cockpit for laws · seals · proof debt |
 
 | Need | Use |

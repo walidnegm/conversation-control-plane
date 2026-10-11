@@ -30,7 +30,7 @@ that every mode slug is industry-generic.
 | Role | Document |
 |------|----------|
 | **This doc** | Operating sheet + registry governance (diagnose → seal) |
-| Anti-patterns A1–A19 | [SDK §1.6](conversation-control-plane-sdk.md#16-adoption-anti-patterns-engineering-doctrine--do-not-generate-these) |
+| Anti-patterns A1–A21 | [SDK §1.6](conversation-control-plane-sdk.md#16-adoption-anti-patterns-engineering-doctrine--do-not-generate-these) |
 | Cognitive seat (where burns sit in a turn) | [SDK §0.0.2](conversation-control-plane-sdk.md#authority-adjudication-pipeline-sdk-seat) · [authority adjudication note](conversational-routing-authority-adjudication.md) |
 | Failure modes (portable slugs + proofs) | Sibling **[Conjecture Behaviour Runner](https://github.com/walidnegm/conjecture-behaviour-runner)** — `incidents/registry.yaml` · Quality Console |
 | Host mode extensions | Optional host YAML / CAQ package (keep stable ids; do not rename portable slugs) |
@@ -143,7 +143,7 @@ User hit
 |----|--------|
 | Classify before a PR | Jump to keyword patches |
 | Structural fix + **named ratchet** | Phrase laundry only |
-| Reuse A# / mode if cousin | Invent A20 on first burn |
+| Reuse A# / mode if cousin | Invent A21 on first burn |
 | Ratchets on ledger / blocks / enums | Golden full-string assistant prose |
 
 ### 2.4 Coding-agent patching note (mandatory on every diagnostic)
@@ -325,7 +325,7 @@ A failure class is **sealed** only when:
 
 ## 8. Anti-pattern ↔ failure mode matrix
 
-Do **not** invent A20 or new slugs until the matrix shows a re-burning gap.
+Do **not** invent A21 or new slugs until the matrix shows a re-burning gap.
 
 | Id | Title (portable) | Root | Typical modes | Plane | Smell you might see in *any* host |
 |----|------------------|------|---------------|-------|-----------------------------------|
@@ -348,6 +348,8 @@ Do **not** invent A20 or new slugs until the matrix shows a re-burning gap.
 | **A17** | Fail-soft option laundry | D | cousin `fall_through_fabrication`; **under-render** = unregistered candidate | delivery | “Reply accept/skip/use X…” walls of text |
 | **A18** | Dispatch-order laundry | S+D | `wrong_delivery_leaf`, `owner_steal` | delivery | Cascading “if leaf X open, skip Y” piles |
 | **A19** | Soft existence / unsealed transition | E+S | `soft_existence_claim`, `false_save_claim` | substrate | “We already have Project X” with no id |
+| **A20** | Undeclared delivery leaf | D | `wrong_delivery_leaf`, `hollow_open` (cousin) | delivery | Answer site names no leaf; two labels reach two handlers |
+| **A21** | Absorbed continue meaning | D | `wrong_delivery_leaf` (a continue the leaf never reads), `hollow_open` (cousin) | stream / delivery | `kind_spec.KindSpec.continue_meanings` · boundary asks about an undeclared meaning |
 
 **Unregistered candidates** (not indexed until law + ratchet): e.g. **under-render** —
 code owns finite acts but only unmarked markdown shows them.

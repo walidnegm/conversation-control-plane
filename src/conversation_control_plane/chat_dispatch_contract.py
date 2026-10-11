@@ -24,12 +24,18 @@ class ChatDispatchContractError(Exception):
 
 # S7 — deterministic pre-decide KEEP paths (must match ``dispatch=`` in bot0.chat).
 PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
+    # B-229 (conv_988b90b8): the person's own message tripped the input guard;
+    # the turn is refused by name above cognition. Universal — no owner may
+    # take a turn no model is allowed to see.
+    "input_guard_refusal",
     # "What do you mean?" mid-intake is answered from the clarity card's own
     # reason, before the concept gate can hand back a foreign glossary card
     # (conv_9fe86149: Draft IR graph repair, then ledger "kind" names).
     "drafting_clarity_reason",
     "pending_question_pick",
     "pending_workflow_pick",
+    # Finite ``select workflow: Name`` — pending not required (conv_9c63dd49).
+    "inventory_select_act",
     "pending_entity_pick",
     "inventory_dual_stream_clarify",
     # Workspace/list ordinal + "existing simulations for N" → list_project_runs
@@ -99,14 +105,16 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     # Pattern-scoped sim confirm (pre-intent; run only, never create).
     "input_state_run_confirm",
     "input_state_confirm_guard",
+    # Rec 2.0 Rewire confirm defers to the worker (conv_9c63dd49 class).
+    "rec20_rewire_deferred",
+    # ISS sole-continue leaf (Edit inputs under Rec 2.0).
+    "input_state_setup",
     # Engine 2.0 recommendation setup sole-continue + gather chips
     "recommendation_setup_continue",
     "recommendation_gather_chip",
     "recommendation_gather_create_project",
     "recommendation_gather",
     "recommendation_not_ready",
-    # Cost-out Stay/Leave when recommend grammar mid pricing
-    "cost_out_recommend_fork",
     "cost_pin_refine",
     # Catalog / grounding / SOP chat short-circuits
     "catalog_plan_guard",
@@ -136,11 +144,13 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     "goal_seek_band_compare",
     "goal_seek_band_history",
     "goal_seek_chat_solve",
-    "goal_seek_intensity_preview",
+    "goal_seek_config",
     "goal_seek_project_workflow_pick",
     "goal_seek_results",
     "input_state_goal_seek_bridge",
     "list_cost_catalog",
+    # B-248: read_kind=list_domains, served by the early surface read.
+    "list_domains",
     "list_realization_plans",
     "get_realization_plan",
     "pending_entity_pick_input_state_setup",
@@ -168,6 +178,9 @@ PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
 
 # S4 collapse — post-decide deliveries (decide_turn runs first).
 POST_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
+    # B-248: no handler answered the decided act; the orchestrator refuses to
+    # freestyle and the turn says so (never a brochure fallback).
+    "handler_miss",
     "discovery_detour",
     "orientation_detour",
     "surface_read_detour",
@@ -183,6 +196,9 @@ POST_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
     # seal working as intended.
     "recommendation_catalogue",
     "workflow_surface_read",
+    # Corpus / grounding inventory — post-decide surface read (bot0.py
+    # list_grounding_inventory, pre_decide_short_circuit=False).
+    "list_grounding_inventory",
     # Pattern midflight free-text continue (router labels → stay/ask/abandon).
     "pattern_midflight_continue",
     "post_save_status",

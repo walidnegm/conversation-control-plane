@@ -62,6 +62,65 @@ NON_TERMINAL_SIGNALS: frozenset[str] = frozenset({"reorient", "continue", "begin
 #: A block type whose presence means the turn rendered the idle/staleness card.
 REORIENTATION_BLOCK_TYPE = "session_reorientation"
 
+#: **B-10.** Dispatches that DELIVER a product-concept answer and therefore end
+#: their unit of work.
+#:
+#: Measured 2026-09-15 across the local ledger: **99 `concept_thread` tasks
+#: began, 24 were superseded by a later turn, and exactly ONE completed.** The
+#: cause was a registration gap rather than a broken handler —
+#: `kind_spec` declares `terminal=frozenset({"complete"})` for
+#: `concept_thread`, and no path emitted it. `ANSWER_DELIVERED` existed but was
+#: declared as `advisor_graph.py`'s, a different owner.
+#:
+#: What the survivors cost: `package_drafting_orientation` claims any turn with
+#: an active_task, so one abandoned concept task hands every LATER question in
+#: that conversation to the where-you-are coach and the concept gate never
+#: runs. conv_12a87447 is the worked case — two turns asking how to build a
+#: workflow answered with "Where you are: questions about the product" and
+#: prose, `hops=4`, `path=unlabeled`, neither the binder nor the composer
+#: called at all.
+CONCEPT_ANSWER_DISPATCHES: frozenset[str] = frozenset({
+    "concept_gate",
+    "product_concept",
+})
+
+
+def delivered_concept_answer(result: Mapping[str, Any] | None) -> bool:
+    """True when this turn DELIVERED a product-concept answer.
+
+    Read off the routing the concept sites already stamp, not off the prose:
+    `_code_owned_dispatch_routing(dispatch="concept_gate", ...)` is the common
+    factory behind every one of them, so this needs no edit at six return
+    sites and cannot drift from what they actually emit.
+
+    An EMPTY answer is not a delivery. The concept path returns
+    `{"answer": "", "blocks": []}` when packaging declines, and completing a
+    task on a refusal would close work the user never got.
+    """
+    if not isinstance(result, Mapping):
+        return False
+    routing = result.get("routing")
+    if not isinstance(routing, Mapping):
+        return False
+    # TWO SPELLINGS, BOTH REAL. `_code_owned_dispatch_routing(dispatch=…)`
+    # takes a `dispatch` argument but emits it as `layer="code_dispatch:<name>"`
+    # — the `dispatch` key only survives on the internal turn result, not on
+    # what persistence receives. Reading only the key cost a live re-test:
+    # the card was delivered, the predicate said no, and the task stayed open.
+    dispatch = str(routing.get("dispatch") or "").strip().lower()
+    if not dispatch:
+        layer = str(routing.get("layer") or "").strip().lower()
+        if layer.startswith("code_dispatch:"):
+            dispatch = layer.split(":", 1)[1].strip()
+    if dispatch not in CONCEPT_ANSWER_DISPATCHES:
+        return False
+    answer = result.get("answer")
+    if not isinstance(answer, Mapping):
+        return False
+    spoken = str(answer.get("answer") or "").strip()
+    blocks = answer.get("blocks")
+    return bool(spoken) or bool(isinstance(blocks, (list, tuple)) and blocks)
+
 
 class TerminalKind(str, Enum):
     """The four outcomes the epic requires to close their task."""
@@ -70,6 +129,12 @@ class TerminalKind(str, Enum):
     PROJECT_CREATE = "project_create"
     ANSWER_DELIVERED = "answer_delivered"
     BUILD_FAILURE_RECOVERY = "build_failure_recovery"
+    #: B-10, 2026-09-15. A delivered glossary/product-concept answer. The
+    #: fifth outcome, and the one nobody had registered.
+    CONCEPT_ANSWER = "concept_answer_delivered"
+    #: #1e S1, 2026-09-16. A cost profile published to the simulator. The
+    #: sixth, found the same way as the fifth: 21 tasks began, 0 completed.
+    COST_PROFILE_PUBLISHED = "cost_profile_published"
 
 
 @dataclass(frozen=True)
@@ -88,6 +153,16 @@ class TerminalPath:
 #: never a missing emitter — it was the sinks disagreeing about what an emitter
 #: means. Add a row when a new terminal outcome ships.
 TERMINAL_PATHS: tuple[TerminalPath, ...] = (
+    TerminalPath(
+        TerminalKind.CONCEPT_ANSWER,
+        "api/services/conversation_control/terminal_completion_contract.py",
+        "complete",
+        "B-10: a concept_gate / product_concept dispatch that delivered a "
+        "non-empty answer. Recognised HERE rather than emitted at the six "
+        "concept return sites in bot0.py — they share one routing factory, so "
+        "one reading cannot drift from six copies. 99 began / 1 completed "
+        "before this row existed.",
+    ),
     TerminalPath(
         TerminalKind.WORKFLOW_COMMIT,
         "api/services/bot0.py",
@@ -114,6 +189,17 @@ TERMINAL_PATHS: tuple[TerminalPath, ...] = (
         "complete",
         "advisor phase DONE / create_flow_state=simulated → transition=complete, "
         "awaiting=None: the bounded advisor task delivered its answer",
+    ),
+    TerminalPath(
+        TerminalKind.COST_PROFILE_PUBLISHED,
+        "api/services/agent_cost_pricing_pipeline.py",
+        "complete",
+        "#1e S1: publish_profile_to_sim returned status=published, so the "
+        "pricing task is done. 21 began / 0 completed before this row. The "
+        "site already moved the task to its own declared terminal phase "
+        "(`published`) and stopped there \u2014 KindSpec.terminal_phases is "
+        "declared on all 15 kinds and read by nothing, so reaching a terminal "
+        "phase does not end a task.",
     ),
     TerminalPath(
         TerminalKind.BUILD_FAILURE_RECOVERY,
@@ -247,6 +333,11 @@ def terminal_outcome(
     if isinstance(result, Mapping) and result.get("workflow_created"):
         return "complete"
     if explicit_agent_release(context_updates):
+        return "complete"
+    # B-10: a delivered concept answer ends its unit of work. Last, so an
+    # explicitly declared NON-terminal transition on a concept turn still
+    # wins — a thread that says it is continuing is continuing.
+    if delivered_concept_answer(result):
         return "complete"
     return None
 

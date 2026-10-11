@@ -56,12 +56,106 @@ class KindSpec:
     pending_ref_type: str = "none"
     terminal_phases: frozenset[str] = field(default_factory=frozenset)
     exclusive_owner: Optional[str] = None
+    #: SDK A21 — the ``continue`` meanings this kind's leaf reads (in addition
+    #: to HOST_CONTINUE_MEANINGS, which the host handles for every open kind).
+    continue_meanings: frozenset[str] = field(default_factory=frozenset)
+    #: SDK A21 — ``module:function`` that reads the raw text itself. A kind
+    #: with an interpreter receives every continue meaning.
+    continue_interpreter: str = ""
 
 
 def _base_required(phase: str) -> frozenset[str]:
     return frozenset({"task_id", "phase", "kind", "pending_ref"}) | (
         frozenset({"gate_id"}) if phase else frozenset()
     )
+
+
+# ---------------------------------------------------------------------------
+# SDK A21 — a continue meaning needs a reader.
+# The decision hands the open kind a ``continue`` with a meaning. A kind
+# declares which meanings its leaf reads (or names the interpreter that reads
+# the raw text itself); the boundary passes those and ASKS about any other,
+# so no leaf silently absorbs a meaning it never reads. Add a meaning to a row
+# only in the change that adds its reader (ratchet: test_kind_continue_meanings).
+# ---------------------------------------------------------------------------
+
+#: Meanings the host handles for every open kind, whatever the leaf.
+HOST_CONTINUE_MEANINGS: frozenset[str] = frozenset({
+    # The schema default, and what every leaf does when nothing narrower
+    # applies; a leaf that re-reads the text treats it as its own input.
+    "advance",
+    # Fail-soft: the leaf re-reads the text itself (no host reader exists).
+    "unclear",
+    # Answered by the host's pending-switch handler when a switch is armed.
+    "accept_switch",
+    "decline_switch",
+})
+
+#: Meanings each kind's own leaf reads, beyond HOST_CONTINUE_MEANINGS.
+KIND_CONTINUE_MEANINGS: dict[str, frozenset[str]] = {
+    # Verified 2026-10-10 (B-260/B-261 trace). Readers:
+    # - confirm: agent_cost_profile_save.is_cost_profile_save_confirm →
+    #   finite_confirm_grammar.confirm_at_open_gate (the save gate);
+    # - decline: the save gate persists only on agreement, so a decline
+    #   leaves the estimate unsaved — not persisting IS the answer;
+    # - amend_estimate / reestimate_pin / reprice_catalog / show_profile:
+    #   bot0 _COST_CONTINUE_MEANINGS + cost_out_turn (amend merge);
+    # - question: cost_question_contract (B-260).
+    COST_OUT_KIND: frozenset({
+        "confirm", "decline",
+        "amend_estimate", "reestimate_pin", "reprice_catalog", "show_profile",
+        "question",
+    }),
+}
+
+#: Kinds whose leaf reads the raw text itself (``module:function``). Both
+#: entries compute a parallel continue meaning (their own labels and an
+#: ends-with-"?" rule) — a second decider beside the router, recorded as
+#: B-262 debt. They are declared here as what they ARE, not endorsed: the
+#: retirement is to declare the meanings they need and read the decision.
+KIND_CONTINUE_INTERPRETERS: dict[str, str] = {
+    "recommendation_setup": (
+        "conversation_control_plane.recommendation_setup_continue_meaning_contract"
+        ":resolve_rec20_continue_meaning"
+    ),
+    "pattern_midflight": (
+        "conversation_control_plane.pattern_midflight_contract"
+        ":map_pattern_midflight_continue_meaning"
+    ),
+}
+
+#: Kinds whose leaf has not been traced yet. The boundary does not limit them
+#: (today's behaviour) until a verified row moves them out. SHRINK-ONLY:
+#: B-261 owns the audit; a kind leaves this set with a row or an interpreter.
+KIND_CONTINUE_UNAUDITED: frozenset[str] = frozenset({
+    AGENT_COST_PRICING_KIND,
+    "concept_thread",
+    CYBER_RISK_KIND,
+    DRAFTING_KIND,
+    "engagement_pack_plan",
+    "input_state_setup",
+    OUTCOME_VALUE_KIND,
+    PROJECT_WORKSPACE_KIND,
+    REALIZATION_KIND,
+    RISK_CATALOG_LEARNING_KIND,
+    SCORECARD_INTERROGATE_KIND,
+    WORKFLOW_BUILD_KIND,
+})
+
+
+def accepted_continue_meanings(kind: str | None) -> frozenset[str] | None:
+    """The continue meanings an open ``kind`` may receive, or None for no limit.
+
+    None when the kind is unknown (nothing to enforce) or names an
+    interpreter (it reads every meaning itself). Otherwise the host meanings
+    plus the kind's declared ones; the boundary asks about anything else.
+    """
+    key = str(kind or "").strip()
+    if not key or key not in KIND_CONTINUE_MEANINGS and key not in KIND_CONTINUE_INTERPRETERS:
+        return None
+    if KIND_CONTINUE_INTERPRETERS.get(key):
+        return None
+    return HOST_CONTINUE_MEANINGS | KIND_CONTINUE_MEANINGS.get(key, frozenset())
 
 
 def _spec(
@@ -92,6 +186,8 @@ def _spec(
         pending_ref_type=pending_ref_type,
         terminal_phases=terminal,
         exclusive_owner=exclusive or kind,
+        continue_meanings=KIND_CONTINUE_MEANINGS.get(kind, frozenset()),
+        continue_interpreter=KIND_CONTINUE_INTERPRETERS.get(kind, ""),
     )
 
 
@@ -110,6 +206,12 @@ _WB_GATES = (
         next_phase="domain_picker",
         reopen_from="domain_picker",
         reopen_to="role_proposal",
+    ),
+    GateSpec(
+        gate_id="agents",
+        armed_flags=("_awaiting_agents_review",),
+        satisfied_key="_agents_reviewed",
+        next_phase="briefs",
     ),
     GateSpec(
         gate_id="domain",
@@ -215,8 +317,8 @@ KIND_REGISTRY: dict[str, KindSpec] = {
         owner="workflow_builder",
         phases=frozenset({
             "active", "ready", "in_progress", "extracting", "gathering", "reviewing",
-            "building", "editing", "ir_review", "role_proposal", "domain_picker",
-            "operational_data", "commit_plan",
+            "building", "editing", "ir_review", "role_proposal", "briefs",
+            "domain_picker", "operational_data", "commit_plan",
             # Failure terminal. Without one, the ONLY terminal was the success
             # phase (``commit_plan``), so a build that failed mid-``extracting``
             # stayed ACTIVE forever — and ``workflow_build`` is in
@@ -249,10 +351,13 @@ KIND_REGISTRY: dict[str, KindSpec] = {
         exclusive="recommendation_setup",
         phases=frozenset({
             "path", "project", "costs", "scorecard", "target",
-            "placements", "graph", "ready", "abandoned",
+            "placements", "graph", "participants", "boundary",
+            "ready", "abandoned",
         }),
         pending_ref_type="recommendation_route",
-        terminal=frozenset({"ready", "abandoned"}),
+        # `ready` is the costing + green Run card — not a terminal.
+        # Kind ends via finish_active_task after Run, or phase abandoned.
+        terminal=frozenset({"abandoned"}),
     ),
     "engagement_pack_plan": _spec(
         "engagement_pack_plan",
@@ -316,7 +421,12 @@ def missing_kind_specs() -> frozenset[str]:
 
 __all__ = [
     "GateSpec",
+    "HOST_CONTINUE_MEANINGS",
+    "KIND_CONTINUE_INTERPRETERS",
+    "KIND_CONTINUE_MEANINGS",
+    "KIND_CONTINUE_UNAUDITED",
     "KIND_REGISTRY",
+    "accepted_continue_meanings",
     "KindSpec",
     "get_kind_spec",
     "missing_kind_specs",

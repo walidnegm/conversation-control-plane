@@ -1,7 +1,7 @@
 """Delivery-order contract — front-door detours beat active-flow handlers.
 
-Portable invariant (SDK §2.1): when the unified router emits ``discovery_kind``
-for an informative front-door detour, ``decide_turn`` supersedes active guided
+Portable invariant (SDK §2.1): when the turn's decision names an informative
+front-door detour (``orient`` / ``choose_path``), ``decide_turn`` supersedes active guided
 flows and the chat entrypoint delivers that detour **before** ledger-first
 active-flow continuations (realization_intake, outcome_value_setup, authoring
 gates, product-concept how-tos).
@@ -74,7 +74,7 @@ DETOUR_DELIVERY_ORDER_TABLE: tuple[DetourDeliveryRow, ...] = (
     DetourDeliveryRow(
         detour_id="prose_intake_post_router_enqueue",
         timing="pre_decide",
-        runs_after="apply_unified_router_authorities",
+        runs_after="decide_turn_act",
         runs_before=STAGE_DECIDE_TURN,
         suppresses_labels=(
             "workflow_draft_request+draft_help",
@@ -83,7 +83,7 @@ DETOUR_DELIVERY_ORDER_TABLE: tuple[DetourDeliveryRow, ...] = (
             "orchestrator_preamble",
         ),
         authority_module=(
-            "unified_turn_router.workflow_draft_request+"
+            "turn_decision_contract act=draft_work+"
             "input_shape.looks_like_rich_workflow_spec"
         ),
     ),
@@ -91,7 +91,7 @@ DETOUR_DELIVERY_ORDER_TABLE: tuple[DetourDeliveryRow, ...] = (
     DetourDeliveryRow(
         detour_id="prose_intake_early_enqueue",
         timing="pre_decide",
-        runs_after="apply_unified_router_authorities",
+        runs_after="decide_turn_act",
         runs_before=STAGE_DECIDE_TURN,
         suppresses_labels=(
             "workflow_draft_request+draft_help",
@@ -103,7 +103,7 @@ DETOUR_DELIVERY_ORDER_TABLE: tuple[DetourDeliveryRow, ...] = (
     DetourDeliveryRow(
         detour_id="workflow_diagram_authoring",
         timing="pre_decide",
-        runs_after="apply_unified_router_authorities",
+        runs_after="decide_turn_act",
         runs_before=STAGE_DECIDE_TURN,
         suppresses_labels=(
             "attachment_capability_request",
@@ -111,9 +111,7 @@ DETOUR_DELIVERY_ORDER_TABLE: tuple[DetourDeliveryRow, ...] = (
             "sparse_intake_copy",
             "product_concept_kind",
         ),
-        authority_module=(
-            "unified_turn_router.apply_workflow_diagram_authoring_authority"
-        ),
+        authority_module="turn_decision_contract act=draft_work",
     ),
     DetourDeliveryRow(
         detour_id="attachment_capability",
@@ -126,7 +124,7 @@ DETOUR_DELIVERY_ORDER_TABLE: tuple[DetourDeliveryRow, ...] = (
             "sparse_intake_copy",
             "intake_readiness",
         ),
-        authority_module="unified_turn_router.apply_attachment_capability_authority",
+        authority_module="turn_decision_contract act=attach_capability",
     ),
     # Greenfield multi-turn *starts* only. Must yield when ledger already owns
     # the kind (sole_continue_blocks_greenfield_start) — otherwise verify/save
@@ -191,9 +189,7 @@ DETOUR_DELIVERY_ORDER_TABLE: tuple[DetourDeliveryRow, ...] = (
             "workflow_draft_request",
             "product_concept_kind",
         ),
-        authority_module=(
-            "unified_turn_router.apply_scorecards_discovery_authority"
-        ),
+        authority_module="turn_decision_contract act=orient focus=scorecards",
     ),
     DetourDeliveryRow(
         detour_id="product_concept_howto",
@@ -205,7 +201,7 @@ DETOUR_DELIVERY_ORDER_TABLE: tuple[DetourDeliveryRow, ...] = (
             "discovery_kind",
             "sparse_intake_copy",
         ),
-        authority_module="unified_turn_router.apply_product_concept_authority",
+        authority_module="turn_decision_contract act=explain",
     ),
     DetourDeliveryRow(
         detour_id="prose_intake_turn",
@@ -232,10 +228,32 @@ def is_front_door_detour_kind(kind: str | None) -> bool:
     return (kind or "").strip().lower() in FRONT_DOOR_DETOUR_KINDS
 
 
+def _decision_discovery_kind() -> str:
+    """The front-door kind the turn's decision names, or ``""``.
+
+    ``orient`` names its focus (``orientation`` included); ``choose_path`` is
+    the intent-clarify door. Any other act names none. No decision → ``""``.
+    """
+    try:
+        from conversation_control_plane.turn_decision_contract import (
+            get_turn_decision,
+        )
+
+        d = get_turn_decision()
+    except Exception:  # noqa: BLE001
+        return ""
+    if d is None:
+        return ""
+    if d.act == "orient":
+        return str((d.slots or {}).get("focus") or "orientation")
+    if d.act == "choose_path":
+        return "intent_clarify"
+    return ""
+
+
 def _discovery_kind_candidates(
     *,
     discovery: dict[str, str] | None = None,
-    unified_signal: Any = None,
     plan: Any = None,
 ) -> list[str]:
     out: list[str] = []
@@ -243,14 +261,16 @@ def _discovery_kind_candidates(
         out.append(str(getattr(plan, "discovery_kind", None) or ""))
     if isinstance(discovery, dict):
         out.append(str(discovery.get("kind") or ""))
-    if unified_signal is not None:
-        out.append(str(getattr(unified_signal, "discovery_kind", None) or ""))
+    out.append(_decision_discovery_kind())
     return out
 
 
 # Exclusive post-router owners — at most ONE may deliver a user-visible reply.
-# Priority is load-bearing (first match wins). New multi-turn work streams register
-# here; do not append parallel late handlers in bot0.chat().
+# B-248: the owner is read off the turn's one decision
+# (``turn_owner_from_decision``), so nothing picks from this tuple any more; it
+# is the declared vocabulary of delivery owners (projected by
+# ``turn_composition_registry``). New multi-turn work streams register here; do
+# not append parallel late handlers in bot0.chat().
 EXCLUSIVE_TURN_OWNER_PRIORITY: tuple[str, ...] = (
     "cost_out",
     "draft",
@@ -300,7 +320,7 @@ class ExclusiveTurnOwner:
 
 #: The ``product_concept_kind`` that means "a question about the product",
 #: routed to ``concept_gate`` rather than to a how-to overview. Registered in
-#: ``unified_turn_router._PRODUCT_CONCEPT_KIND_VALUES``.
+#: ``turn_decision_contract.CONCEPT_KINDS``.
 PRODUCT_KNOWLEDGE_KIND = "product_knowledge"
 try:
     from conversation_control_plane.product_knowledge_family_contract import (
@@ -310,470 +330,80 @@ except Exception:  # noqa: BLE001
     _GLOSSARY_PCK = frozenset({PRODUCT_KNOWLEDGE_KIND})
 
 
-def select_exclusive_turn_owner(
-    signal: Any = None,
-    *,
-    query: str = "",
-    packaging_eligible: bool | None = None,
-    active_task: Any = None,
-    context: Any = None,
-) -> ExclusiveTurnOwner:
-    """Pick exactly one delivery owner from a post-authority UnifiedTurnSignal.
+#: B-248: the delivery owner of a decided act. One reading of the decision —
+#: never a second classification of the turn (AGENTS §1 *No second authority*).
+_OWNER_BY_ACT: dict[str, str] = {
+    "draft_work": "draft",
+    "show_example": "draft",
+    "read": "surface_read",
+    "edit_work": "surface_read",
+    "simulate": "surface_read",
+    "set_value_metrics": "surface_read",
+    "export_authority": "surface_read",
+    "realize": "realization",
+    "assess_risk": "cyber_risk",
+    "estimate_cost": "cost_out",
+    "orient": "discovery",
+    "choose_path": "discovery",
+    "create_project": "advisor",
+    "create_catalog_role": "advisor",
+    "engagement_pack": "engagement_pack",
+    "setup_input_state": "input_state_setup",
+}
 
-    Priority (first match wins) — never run concept_gate / intent_clarify /
-    product howto when a higher action owner is set.
 
-    Multi-turn sole-continue: when ledger ``active_task.kind`` is a sole-continue
-    stream (e.g. ``cost_out``) and task_intent is not detour/new_task/abandon,
-    that kind owns delivery even if this turn's labels omitted cost_estimate_request
-    (chat-complete multi-turn contract — follow-up stickiness).
+def turn_owner_from_decision(decision: Any, *, active_task: Any = None) -> ExclusiveTurnOwner:
+    """The turn's delivery owner, read off its one ``ResolvedTurnDecision``.
+
+    ``continue`` belongs to the open task — its kind's owner from
+    ``KIND_TO_EXCLUSIVE_OWNER`` (the same table the sole-continue contract
+    uses). Every other act names its own owner. ``explain`` splits on the
+    decision's concept kind exactly as packaging does: a product question is
+    ``concept_gate``, a how-to overview is ``product_concept``.
     """
-    # A sealed signal already carries the answer. Re-deriving it was the
-    # conv_602a5640 bug: the seal picks the owner and then clears the losing
-    # owners' labels, so asking again reads different evidence than the seal
-    # did and can return a different owner. Honour the stamp.
-    if signal is not None:
-        stamped = str(getattr(signal, "exclusive_owner", "") or "").strip()
-        if stamped:
-            return ExclusiveTurnOwner(stamped, "sealed for this turn")
-
-    # **Exclusivity-contract check.** The router prompt declares the owner
-    # fields mutually exclusive ("ONE OWNER PER TURN"). When more than one is
-    # set the model declined to choose, and everything below is code picking
-    # with less information than cognition had — conv_c767adca returned
-    # product_knowledge *and* platform_catalog, and the earlier branch won.
-    # Logged, never silently absorbed: each hit is a rubric bug to fix.
-    if signal is not None:
+    act = str(getattr(decision, "act", "") or "")
+    slots = dict(getattr(decision, "slots", None) or {})
+    if act == "continue":
+        kind = ""
+        if isinstance(active_task, dict):
+            kind = str(active_task.get("kind") or "").strip()
         try:
-            from conversation_control_plane.turn_owner_precedence_contract import (
-                signal_label_collision,
+            from conversation_control_plane.task_pin_contract import (
+                KIND_TO_EXCLUSIVE_OWNER,
             )
 
-            _collision = signal_label_collision(signal)
-            if _collision:
-                # Not every collision is the same defect, and logging them
-                # identically is why this instrument has never been triaged.
-                # The ontology says whether anyone has DECIDED these two
-                # concepts are different: a declared pair is a remapper doing
-                # its job; an undeclared pair is the actionable hit.
-                from conversation_control_plane.concept_ontology_contract import (
-                    classify_label_collision,
-                )
-
-                _kind = classify_label_collision(_collision["labels"])
-                logger.warning(
-                    "turn_owner_label_collision [%s] — router set %d owner "
-                    "labels: %s · declared=%s undeclared=%s",
-                    _kind["status"],
-                    _collision["count"],
-                    _collision["labels"],
-                    _kind["declared_pairs"] or "-",
-                    _kind["undeclared_pairs"] or "-",
-                )
-        except Exception:  # noqa: BLE001 — observability must not decide turns
-            pass
-
-    # Ledger multi-turn ownership (turns N…N+k) — before label-only races.
-    # Strong action labels still win when they start a different stream.
-    task_intent = (
-        str(getattr(signal, "task_intent", None) or "continue").strip().lower()
-        if signal is not None
-        else "continue"
-    )
-    # Pin refine enum (post-authority) owns cost_out — unless cognition seals
-    # pack reorient (setup agents cost card / initiative resume). Mis-labeled
-    # reestimate_pin must not re-echo freeform TCO over pack attach hop.
-    if signal is not None:
-        try:
-            from conversation_control_plane.cost_pin_refine import (
-                is_amend_estimate_kind as _is_amend_est,
-                is_pin_refine_kind as _is_pin_refine,
-            )
-
-            _ctk = str(getattr(signal, "cost_turn_kind", None) or "none")
-            _pack_reorient = bool(
-                getattr(signal, "engagement_pack_request", False),
-            )
-            if _pack_reorient and (_is_pin_refine(_ctk) or _is_amend_est(_ctk) or _ctk == "none"):
-                return ExclusiveTurnOwner(
-                    "engagement_pack",
-                    "engagement_pack_request supersedes cost pin op (setup reorient)",
-                )
-            if _is_pin_refine(_ctk) or _is_amend_est(_ctk):
-                return ExclusiveTurnOwner(
-                    "cost_out",
-                    f"cost_turn_kind={_ctk}",
-                )
+            owner = KIND_TO_EXCLUSIVE_OWNER.get(kind, "")
         except Exception:  # noqa: BLE001
-            pass
-    try:
-        from conversation_control_plane.task_pin_contract import (
-            exclusive_owner_for_active_kind,
-        )
-
-        ctx = context if isinstance(context, dict) else {}
-        if active_task is not None and isinstance(active_task, dict):
-            ctx = {**ctx, "active_task": active_task}
-        sole_owner = exclusive_owner_for_active_kind(ctx, task_intent=task_intent)
-        # FE risk-catalog open chips mid drafting must yield exclusive draft
-        # owner (staging conv_119bdab7 — refine stole "risks for agents").
-        if sole_owner == "draft" and (query or "").strip():
-            try:
-                from conversation_control_plane.risk_catalog_turn import (
-                    looks_like_risk_catalog_open_request as _risk_open_q,
-                )
-
-                if _risk_open_q(query):
-                    return ExclusiveTurnOwner(
-                        "default",
-                        "risk_catalog_open yields drafting sole-continue",
-                    )
-            except Exception:  # noqa: BLE001
-                pass
-        # New strong action labels may supersede sole-continue (user switched goal).
-        # Without this, task_intent=continue (default under sticky O&V) **always**
-        # keeps sole-continue owner even when cognition stamped a foreign
-        # discovery / product / surface act — zero detour, no disambiguation
-        # (conv_6ffaf54d: every ask re-elicits value metrics or wrong leaf).
-        strong_new = False
-        if signal is not None:
-            # Multi-surface SOW / engagement letter — supersede cost_out sole-continue
-            # only when not mid pin-refine (handled above).
-            if bool(getattr(signal, "engagement_pack_request", False)):
-                if sole_owner in (None, "default", "cost_out", "draft"):
-                    return ExclusiveTurnOwner(
-                        "engagement_pack",
-                        "engagement_pack_request multi-surface intake",
-                    )
-            if bool(getattr(signal, "cost_estimate_request", False)):
-                strong_new = sole_owner != "cost_out"
-            if bool(getattr(signal, "workflow_draft_request", False)):
-                strong_new = True
-            rk_probe = str(getattr(signal, "read_kind", None) or "none").strip().lower()
-            if rk_probe in ("cyber_risk_assessment", "realization_intake"):
-                # Same stream continue is fine; different stream is strong_new.
-                if sole_owner == "cost_out":
-                    strong_new = True
-                elif sole_owner == "cyber_risk" and rk_probe != "cyber_risk_assessment":
-                    strong_new = True
-                elif sole_owner == "realization" and rk_probe != "realization_intake":
-                    strong_new = True
-            # Saved-workflow proposal/improve is a foreign surface start — not
-            # drafting / IR sole-continue (recommend for a named workflow).
-            # Mid **cost_out** is different: proposal_options arms the
-            # Stay/Leave fork under ledger sole-continue (conv_019aae41) —
-            # do **not** strong_new steal to surface_read (pre-decide
-            # cost_out_recommend_fork owns the package).
-            if rk_probe == "proposal_options" and sole_owner in (
-                "draft", "workflow_build",
-            ):
-                strong_new = True
-            # --- Foreign detour labels (user left the sole-continue field) ---
-            # Hard inventory / catalog front-door (not soft goal_guidance — that
-            # steals knowledge packaging under sticky O&V).
-            disc_probe = str(
-                getattr(signal, "discovery_kind", None) or "none",
-            ).strip().lower()
+            owner = ""
+        return ExclusiveTurnOwner(owner or "default", f"decision:continue kind={kind or '-'}")
+    if act == "explain":
+        concept = str(slots.get("concept_kind") or PRODUCT_KNOWLEDGE_KIND)
+        if concept in _GLOSSARY_PCK:
+            return ExclusiveTurnOwner("concept_gate", f"decision:explain {concept}")
+        return ExclusiveTurnOwner("product_concept", f"decision:explain {concept}")
+    if act == "orient":
+        # The focus's owner is declared once, in the discovery packaging table
+        # (orientation is ledger-owned by session_activities, conv_2d889a55).
+        focus = str(slots.get("focus") or "orientation")
+        try:
             from conversation_control_plane.discovery_packaging_authority_contract import (
-                front_door_discovery_kinds as _front_door_kinds,
+                _row as _packaging_row,
             )
 
-            # Foreign labels only supersede sole-continue when:
-            # - owner is O&V (sticky metrics must yield knowledge / inventory /
-            #   surface reads — conv_6ffaf54d), or
-            # - cognition already released the stream (detour/new_task/…).
-            # Cost_out / drafting goldens stamp scorecards / product_concept under
-            # *continue* to prove sole-continue holds (multi-detour steal seal).
-            _stream_released = task_intent in (
-                "detour",
-                "new_task",
-                "abandon",
-                "handoff",
-            )
-            _ovs_owner = sole_owner == "outcome_value"
-            if disc_probe in _front_door_kinds() and (
-                _ovs_owner or _stream_released
-            ):
-                strong_new = True
-            product_probe = str(
-                getattr(signal, "product_concept_kind", None) or "none",
-            ).strip().lower()
-            # Costing howto is orthogonal to Staffed IR / Draft IR (cannot
-            # be the answer to accept-staffing). Yield even on task_intent
-            # continue — conv_2c612bab.
-            if product_probe == "agent_cost_howto":
-                strong_new = True
-            elif product_probe not in ("", "none") and (
-                _ovs_owner or _stream_released
-            ):
-                strong_new = True
-            # Foreign surface read (not same-stream re-entry of this sole-continue)
-            if rk_probe not in ("", "none"):
-                same_stream = False
-                try:
-                    from conversation_control_plane.task_pin_contract import (
-                        KIND_TO_EXCLUSIVE_OWNER,
-                        _READ_KIND_TO_LEDGER_KIND,
-                    )
-
-                    ledger_for_rk = _READ_KIND_TO_LEDGER_KIND.get(rk_probe)
-                    if ledger_for_rk and KIND_TO_EXCLUSIVE_OWNER.get(
-                        ledger_for_rk,
-                    ) == sole_owner:
-                        same_stream = True
-                except Exception:  # noqa: BLE001
-                    same_stream = False
-                if not same_stream and (_ovs_owner or _stream_released):
-                    # simulate / list / graph / inspect under sticky O&V, etc.
-                    strong_new = True
-            # Definitional / knowledge under sticky O&V **or** sticky advisor:
-            # release sole-continue so concept packaging owns this turn
-            # (table: OWNERS_YIELD_TO_CONCEPT_PACKAGING — not phrase laundry).
-            try:
-                from conversation_control_plane.task_pin_contract import (
-                    OWNERS_YIELD_TO_CONCEPT_PACKAGING as _own_yield_pkg,
-                )
-            except Exception:  # noqa: BLE001
-                _own_yield_pkg = frozenset({"outcome_value"})
-            if sole_owner in _own_yield_pkg and (query or "").strip():
-                try:
-                    from api.services.bot0_product_knowledge import (
-                        concept_packaging_query_eligible as _pkg_elig,
-                    )
-
-                    if _pkg_elig(
-                        query,
-                        product_concept_kind=product_probe,
-                        context=(
-                            {**(context or {}), "active_task": active_task}
-                            if isinstance(context, dict) or active_task
-                            else context
-                        ),
-                        task_intent=task_intent,
-                    ):
-                        strong_new = True
-                except Exception:  # noqa: BLE001
-                    pass
-        if sole_owner and not strong_new and task_intent not in (
-            "detour",
-            "new_task",
-            "abandon",
-            "handoff",
-        ):
-            # concept_thread sole-continue: home leaf is packaging — do not
-            # seal as exclusive "default" (blocks concept_gate). Fall through
-            # to packaging eligibility below (conv_bede1f66).
-            _is_concept_thread = False
-            try:
-                from conversation_control_plane.task_pin_contract import (
-                    CONCEPT_THREAD_KIND as _CTK,
-                    active_task_kind as _atk_ct,
-                )
-
-                _pctx_ct = context if isinstance(context, dict) else {}
-                if active_task is not None and isinstance(active_task, dict):
-                    _pctx_ct = {**_pctx_ct, "active_task": active_task}
-                _is_concept_thread = _atk_ct(_pctx_ct) == _CTK
-            except Exception:  # noqa: BLE001
-                _is_concept_thread = False
-            if not _is_concept_thread:
-                return ExclusiveTurnOwner(sole_owner, f"active_task sole-continue kind")
-        # Packaging strong_new under O&V/advisor: claim concept_gate **before**
-        # residual route_intent=advisor re-captures (conv_828ad8d5 glossary half).
-        if (
-            strong_new
-            and sole_owner in _own_yield_pkg
-            and (query or "").strip()
-        ):
-            try:
-                from api.services.bot0_product_knowledge import (
-                    concept_packaging_query_eligible as _pkg_claim,
-                )
-
-                _pctx = context if isinstance(context, dict) else {}
-                if active_task is not None and isinstance(active_task, dict):
-                    _pctx = {**_pctx, "active_task": active_task}
-                if _pkg_claim(
-                    query,
-                    product_concept_kind=str(
-                        getattr(signal, "product_concept_kind", None) or "none",
-                    ),
-                    context=_pctx,
-                    task_intent=task_intent,
-                    unified_signal=signal,
-                ):
-                    return ExclusiveTurnOwner(
-                        "concept_gate",
-                        f"sticky {sole_owner} yield to concept packaging",
-                    )
-            except Exception:  # noqa: BLE001
-                pass
-        # cost_estimate_request while cost_out active → still cost_out
-        if sole_owner == "cost_out" and signal is not None and bool(
-            getattr(signal, "cost_estimate_request", False),
-        ):
-            return ExclusiveTurnOwner("cost_out", "cost_out continue|cost_estimate_request")
-    except Exception:  # noqa: BLE001
-        pass
-
-    if signal is None:
-        return ExclusiveTurnOwner("default", "no signal")
-
-    # Multi-surface SOW / engagement letter — before focused cost or draft.
-    if bool(getattr(signal, "engagement_pack_request", False)):
-        return ExclusiveTurnOwner(
-            "engagement_pack",
-            "engagement_pack_request",
-        )
-
-    # Input State Manager — project sim inputs / assumptions (not agent TCO).
-    if bool(getattr(signal, "input_state_setup_request", False)):
-        return ExclusiveTurnOwner(
-            "input_state_setup",
-            "input_state_setup_request",
-        )
-
-    if bool(getattr(signal, "cost_estimate_request", False)):
-        return ExclusiveTurnOwner("cost_out", "cost_estimate_request")
-
-    builder = str(getattr(signal, "builder_entry", None) or "none").strip().lower()
-    if bool(getattr(signal, "workflow_draft_request", False)) or builder not in (
-        "",
-        "none",
-    ):
-        return ExclusiveTurnOwner("draft", "workflow_draft_request|builder_entry")
-
-    rk = str(getattr(signal, "read_kind", None) or "none").strip().lower()
-    if rk == "cyber_risk_assessment":
-        return ExclusiveTurnOwner("cyber_risk", "read_kind=cyber_risk_assessment")
-    if rk == "realization_intake":
-        return ExclusiveTurnOwner("realization", "read_kind=realization_intake")
-
-    try:
-        from conversation_control_plane.read_intent import (
-            PROJECT_SURFACE_READ_KINDS,
-            REALIZATION_SURFACE_READ_KINDS,
-            WORKFLOW_SURFACE_READ_KINDS,
-            WORKFLOW_SURFACE_SIMULATION_KINDS,
-        )
-
-        surface = (
-            *WORKFLOW_SURFACE_READ_KINDS,
-            *WORKFLOW_SURFACE_SIMULATION_KINDS,
-            *PROJECT_SURFACE_READ_KINDS,
-            *REALIZATION_SURFACE_READ_KINDS,
-        )
-        if rk in surface:
-            return ExclusiveTurnOwner("surface_read", f"read_kind={rk}")
-    except Exception:  # noqa: BLE001
-        if rk not in ("", "none"):
-            return ExclusiveTurnOwner("surface_read", f"read_kind={rk}")
-
-    route = str(getattr(signal, "route_intent", None) or "bot0").strip().lower()
-    if route == "advisor":
-        return ExclusiveTurnOwner("advisor", "route_intent=advisor")
-
-    product = str(getattr(signal, "product_concept_kind", None) or "none").strip().lower()
-    # ``product_knowledge`` is the glossary signal, not a how-to. The other
-    # kinds (agent_cost_howto / agent_realization_howto /
-    # staff_catalog_agent_howto) deliver code-owned procedural overviews and
-    # own the turn here; a plain product question belongs to concept_gate
-    # below, which packages a grounded answer from the corpus.
-    if product not in ("", "none") and product not in _GLOSSARY_PCK:
-        return ExclusiveTurnOwner("product_concept", f"product_concept_kind={product}")
-
-    # Orientation / session ledger **before** definitional packaging.
-    # Free-text "what is the status of this session" is definitional Class-B
-    # shape but router orientation owns session status (conv_2d889a55).
-    disc = str(getattr(signal, "discovery_kind", None) or "none").strip().lower()
-    packaging_ctx: dict = context if isinstance(context, dict) else {}
-    if active_task is not None and isinstance(active_task, dict):
-        packaging_ctx = {**packaging_ctx, "active_task": active_task}
-
-    _concept_open = False
-    try:
-        from conversation_control_plane.concept_thread_pin_contract import (
-            concept_thread_is_open,
-        )
-
-        _concept_open = concept_thread_is_open(packaging_ctx)
-    except Exception:  # noqa: BLE001
-        _concept_open = False
-
-    from conversation_control_plane.discovery_packaging_authority_contract import (
-        lookup_discovery_packaging_owner,
-        soft_discovery_kinds,
-    )
-
-    # Soft / page-affordance rows may need packaging_eligible before lookup.
-    if packaging_eligible is None and disc in soft_discovery_kinds() and (query or "").strip():
-        try:
-            from api.services.bot0_product_knowledge import concept_packaging_query_eligible
-
-            packaging_eligible = concept_packaging_query_eligible(
-                query,
-                product_concept_kind=product,
-                context=packaging_ctx,
-                task_intent=task_intent,
-                unified_signal=signal,
-                discovery_kind=disc,
-            )
+            row = _packaging_row(focus)
         except Exception:  # noqa: BLE001
-            packaging_eligible = False
+            row = None
+        owner = row.owner_when_unyielded if row is not None else "discovery"
+        return ExclusiveTurnOwner(owner, f"decision:orient {focus}")
+    return ExclusiveTurnOwner(_OWNER_BY_ACT.get(act, "default"), f"decision:{act}")
 
-    decided = lookup_discovery_packaging_owner(
-        disc,
-        product_concept_kind=product,
-        packaging_eligible=bool(packaging_eligible),
-        concept_thread_open=_concept_open,
-    )
-    if decided is not None:
-        return ExclusiveTurnOwner(decided[0], decided[1])
 
-    if packaging_eligible is None and (query or "").strip():
-        try:
-            from api.services.bot0_product_knowledge import concept_packaging_query_eligible
-
-            packaging_eligible = concept_packaging_query_eligible(
-                query,
-                product_concept_kind=product,
-                context=packaging_ctx,
-                task_intent=task_intent,
-                unified_signal=signal,
-                discovery_kind=disc,
-            )
-        except Exception:  # noqa: BLE001
-            packaging_eligible = False
-    # Under KINDS_YIELD_TO_CONCEPT_PACKAGING (O&V + sticky advisor workspace),
-    # do not block knowledge packaging. Other sole-continue streams still refuse.
-    _block_pkg = sole_continue_blocks_concept_gate_owner(
-        active_task=active_task,
-        context=packaging_ctx,
-        task_intent=task_intent,
-    )
-    try:
-        from conversation_control_plane.task_pin_contract import (
-            KINDS_YIELD_TO_CONCEPT_PACKAGING,
-            active_task_kind as _atk,
-        )
-
-        if _atk(packaging_ctx) in KINDS_YIELD_TO_CONCEPT_PACKAGING:
-            _block_pkg = False
-    except Exception:  # noqa: BLE001
-        pass
-    if packaging_eligible and _block_pkg:
-        packaging_eligible = False
-    # Concept packaging **before** soft front-door discovery (goal_guidance /
-    # intent_clarify). Otherwise sticky O&V + goal_guidance steals AI-score /
-    # glossary questions into "Design and ground your process" (conv_6ffaf54d).
-    # Orientation / hard inventory already returned above.
-    if packaging_eligible:
-        return ExclusiveTurnOwner("concept_gate", "definitional packaging eligible")
-
-    if disc not in ("", "none") and is_front_door_detour_kind(disc):
-        return ExclusiveTurnOwner("discovery", f"discovery_kind={disc}")
-
-    return ExclusiveTurnOwner("default", "orchestrator/plan default")
+# B-248: ``select_exclusive_turn_owner`` and its unguarded cascade are deleted.
+# They re-picked the delivery owner from legacy router labels and free text
+# (a second decider over a projection of the decision); the owner is read off
+# the decision by ``turn_owner_from_decision``. Their private helpers
+# (``_observe_declared_priority``, ``sole_continue_blocks_concept_gate_owner``)
+# went with them.
 
 
 def exclusive_owner_allows_front_door_discovery(owner: ExclusiveTurnOwner | str) -> bool:
@@ -791,36 +421,6 @@ def exclusive_owner_allows_concept_gate(owner: ExclusiveTurnOwner | str) -> bool
     return oid == "concept_gate"
 
 
-def sole_continue_blocks_concept_gate_owner(
-    *,
-    active_task: Any = None,
-    context: Any = None,
-    task_intent: str | None = None,
-) -> bool:
-    """True when live sole-continue must refuse concept_gate for this turn.
-
-    Portable seal for #10s: sole-continue active + continue intent ⇒ packaging
-    and exclusive concept_gate ownership are both blocked. Detour/new_task
-    releases (classifier-owned).
-    """
-    try:
-        from conversation_control_plane.task_pin_contract import (
-            active_kind_blocks_front_door_leaves,
-        )
-
-        ctx: dict = {}
-        if isinstance(context, dict):
-            ctx = dict(context)
-        if active_task is not None and isinstance(active_task, dict):
-            ctx = {**ctx, "active_task": active_task}
-        intent = (task_intent or str(ctx.get("task_intent") or "continue")).strip().lower()
-        return bool(
-            active_kind_blocks_front_door_leaves(ctx, task_intent=intent or "continue")
-        )
-    except Exception:  # noqa: BLE001
-        return False
-
-
 def exclusive_owner_allows_product_concept(owner: ExclusiveTurnOwner | str) -> bool:
     oid = owner.owner_id if isinstance(owner, ExclusiveTurnOwner) else str(owner)
     return oid == "product_concept"
@@ -829,7 +429,6 @@ def exclusive_owner_allows_product_concept(owner: ExclusiveTurnOwner | str) -> b
 def front_door_detour_supersedes_active_flow(
     *,
     discovery: dict[str, str] | None = None,
-    unified_signal: Any = None,
     plan: Any = None,
 ) -> bool:
     """True when a router-owned front-door detour must beat an active guided flow.
@@ -841,27 +440,35 @@ def front_door_detour_supersedes_active_flow(
     yield: leftover ``intent_clarify`` on a stale discovery dict must not
     steal Realization howto (conv_a4805af5). Only owner ``discovery`` may
     supersede via the front door.
+
+    B-248: the owner is the turn's decision (``turn_owner_from_decision``);
+    the ``unified_signal=`` legacy parameter is gone.
     """
-    if unified_signal is not None:
-        owner = select_exclusive_turn_owner(unified_signal)
-        if owner.owner_id in ACTION_EXCLUSIVE_OWNERS:
+    try:
+        from conversation_control_plane.turn_decision_contract import (
+            get_turn_decision,
+        )
+
+        d = get_turn_decision()
+    except Exception:  # noqa: BLE001
+        d = None
+    if d is not None:
+        owner = turn_owner_from_decision(d)
+        # session_activities owns the orientation read (conv_2d889a55); it is
+        # the front-door orientation detour, not an action that holds a flow.
+        if owner.owner_id in ACTION_EXCLUSIVE_OWNERS and owner.owner_id != "session_activities":
             return False
         if owner.owner_id in ("product_concept", "concept_gate", "default"):
             return False
     return any(
         is_front_door_detour_kind(k)
-        for k in _discovery_kind_candidates(
-            discovery=discovery,
-            unified_signal=unified_signal,
-            plan=plan,
-        )
+        for k in _discovery_kind_candidates(discovery=discovery, plan=plan)
     )
 
 
 def discovery_detour_supersedes_active_flow(
     *,
     discovery: dict[str, str] | None = None,
-    unified_signal: Any = None,
     plan: Any = None,
 ) -> bool:
     """Facade name for execute-layer guards — includes orientation detours.
@@ -871,7 +478,6 @@ def discovery_detour_supersedes_active_flow(
     """
     return front_door_detour_supersedes_active_flow(
         discovery=discovery,
-        unified_signal=unified_signal,
         plan=plan,
     )
 
@@ -889,14 +495,12 @@ def active_flow_handler_must_yield(
     *,
     plan: Any = None,
     discovery: dict[str, str] | None = None,
-    unified_signal: Any = None,
 ) -> bool:
     """Recipe for ledger-first / gate handlers: yield to front-door delivery."""
     return (
         plan_owns_front_door_delivery(plan)
         or front_door_detour_supersedes_active_flow(
             discovery=discovery,
-            unified_signal=unified_signal,
             plan=plan,
         )
     )
@@ -918,12 +522,11 @@ __all__ = [
     "front_door_detour_supersedes_active_flow",
     "is_front_door_detour_kind",
     "plan_owns_front_door_delivery",
-    "select_exclusive_turn_owner",
+    "turn_owner_from_decision",
     "ExclusiveTurnOwner",
     "ACTION_EXCLUSIVE_OWNERS",
     "EXCLUSIVE_TURN_OWNER_PRIORITY",
     "exclusive_owner_allows_concept_gate",
     "exclusive_owner_allows_front_door_discovery",
     "exclusive_owner_allows_product_concept",
-    "sole_continue_blocks_concept_gate_owner",
 ]

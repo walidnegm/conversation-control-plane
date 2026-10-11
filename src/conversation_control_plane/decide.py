@@ -54,6 +54,50 @@ from conversation_control_plane.ledger import (
 logger = logging.getLogger(__name__)
 
 
+#: B-248: decision confidence → the float IntentResult internals compare
+#: against (same mapping the retired projection used).
+_DECISION_CONFIDENCE = {"high": 0.9, "medium": 0.7, "low": 0.4}
+
+
+def _relative_intent_from_decision(decision: Any) -> Any:
+    """The turn's decision, read relative to the open task (B-248).
+
+    decide_turn's internals were written against an ``IntentResult``; this is
+    that shape built from the ONE decision, in decision vocabulary — not a
+    second classification. ``continue`` continues; ``abandon`` / ``reset``
+    abandon; ``resume`` / ``handoff`` name a target; ``unknown`` is unclear.
+    Every other act is read through the decision's own ledger effect
+    (``decision.ledger``, set by the boundary): ``none`` — a read-only act
+    that does not move the open task — is a bounded detour; ``suspend`` /
+    ``begin`` is a new stream. decide_turn writes the ledger, so it executes
+    the effect the boundary decided rather than re-deriving one.
+    """
+    from conversation_control_plane.classifier import IntentResult
+
+    act = str(decision.act or "")
+    slots = dict(decision.slots or {})
+    if act == "continue":
+        intent = "continue"
+    elif act in ("abandon", "reset"):
+        intent = "abandon"
+    elif act in ("resume", "handoff"):
+        intent = act
+    elif act == "unknown":
+        intent = "unclear"
+    elif str(getattr(decision, "ledger", "") or "none") == "none":
+        intent = "detour"
+    else:
+        intent = "new_task"
+    return IntentResult(
+        intent=intent,
+        target_task=(slots.get("target_agent") or None) if act in ("resume", "handoff") else None,
+        task_text=(slots.get("task_text") or None) if act in ("resume", "handoff") else None,
+        confidence=_DECISION_CONFIDENCE.get(str(decision.confidence or ""), 0.7),
+        reason=decision.reason or f"decision:{act}",
+        source="decision",
+    )
+
+
 def _perceive_relative_intent(
     db: Any,
     tenant_id: str,
@@ -62,19 +106,25 @@ def _perceive_relative_intent(
     active_task: Optional[dict] = None,
     suspended_tasks: Optional[list] = None,
     messages: Optional[list] = None,
-    unified_signal: Any = None,
 ) -> Any:
-    """Relative task perception for decide_turn — no duplicate LLM when S4 signal exists."""
-    from conversation_control_plane.classifier import classify_intent, _fast_path
+    """Relative task perception for decide_turn.
 
+    B-248: when the turn has its one decision, perception IS that decision —
+    no text fast path, no second classifier. Without a decision (a direct
+    caller outside a chat turn) the classifier's fast path, then the bounded
+    classifier, perceive it as before.
+    """
+    from conversation_control_plane.classifier import classify_intent, _fast_path
+    from conversation_control_plane.turn_decision_contract import (
+        get_turn_decision,
+    )
+
+    decision = get_turn_decision()
+    if decision is not None:
+        return _relative_intent_from_decision(decision)
     fp = _fast_path(query, active_task)
     if fp is not None:
         return fp
-    if unified_signal is not None:
-        from conversation_control_plane.unified_turn_router import (
-            intent_result_from_unified,
-        )
-        return intent_result_from_unified(unified_signal)
     return classify_intent(
         db, tenant_id, query=query,
         active_task=active_task, suspended_tasks=suspended_tasks,
@@ -94,9 +144,6 @@ def decide_turn(
     pending_switch_from_context: Optional[dict] = None,
     prior_agent_type: Optional[str] = None,
     messages: Optional[list] = None,
-    workflow_draft_request: bool = False,  # _route.workflow_draft_request (produce-a-workflow)
-    live_route: Optional[dict] = None,  # S4: full rich signal for collapse (includes discovery etc)
-    unified_signal: Any = None,  # S4: UnifiedTurnSignal — avoids 2nd conversation_intent_classifier hop
 ) -> TurnPlan:
     """decide_turn — the AUTHORITATIVE control-plane dispatch decision (D1 flip).
 
@@ -113,9 +160,35 @@ def decide_turn(
     THROUGH to the conversations.agent_type summary column — the ledger's
     active_task.agent is the single authority and the column is its
     denormalized summary (the P2a "never touch the column" rule is retired).
+
+    B-248: what the turn IS comes from its one ``ResolvedTurnDecision``
+    (``get_turn_decision()``), read here in decision vocabulary. The legacy
+    ``unified_signal`` / ``live_route`` / ``workflow_draft_request`` parameters
+    (a projection of that decision) are gone. With no decision (a direct
+    caller outside a chat turn) every decision read below is empty and the
+    ledger-only path runs as before.
     """
     def _canonical(a: str) -> str:
         return canonical_agent(a) or a  # single source (contract.canonical_agent)
+
+    # ─── The turn's one decision (B-248) ───
+    from conversation_control_plane.turn_decision_contract import (
+        get_turn_decision,
+    )
+
+    _decision = get_turn_decision()
+    _act = str(_decision.act or "") if _decision is not None else ""
+    _slots: dict[str, Any] = dict(_decision.slots or {}) if _decision is not None else {}
+    _router_evidence: dict[str, Any] = (
+        dict(next((e for e in (_decision.evidence or ()) if e.get("from") == "router"), {}))
+        if _decision is not None
+        else {}
+    )
+    _continue_meaning = (
+        str(_slots.get("continue_meaning") or "advance") if _act == "continue" else ""
+    )
+    #: The draft acts (produce a workflow / show one).
+    _draft_act = _act in ("draft_work", "show_example")
 
     live_route_intent = _canonical(live_route_intent)
     q = (query or "").strip().lower()
@@ -126,20 +199,79 @@ def decide_turn(
 
     control = get_control_state(db, tenant_id, conversation_id)
     current_active = control.get("active_task")
+
+    # ─── A TASK WHOSE WORK GOT DONE ELSEWHERE DOES NOT STEER THE TURN ───
+    #
+    # An active_task's completion condition usually lives in ANOTHER TABLE,
+    # and `complete_task` is only ever called by the flow that owns the task.
+    # Satisfy the condition out of band — a card save, a canvas edit, a second
+    # tab — and the task never finds out. It has no TTL either, unlike
+    # pending_switch and suspended_tasks, so nothing else will ever retire it.
+    #
+    # conv_a7222ad3: `outcome_value_setup` sat `awaiting: in_progress` for two
+    # hours and across a change of subject, asking for a revenue-per-unit that
+    # had been supplied through the value-metrics card minutes earlier. It
+    # still held the pre-answer copy — cost_center, 105,120 — while the
+    # workflow read lead / 10,512 / $657 / revenue_center with NO outstanding
+    # gap.
+    #
+    # THIS IS LAYER 2 OF THREE, and only a backstop. Mutation-time
+    # reconciliation (layer 1) is what prevents the divergence; the sweeper
+    # (layer 3) is what catches tasks nobody ever comes back to. Read-time
+    # repair alone fixes conv_a7222ad3 precisely because someone returned to
+    # it — an abandoned conversation would stay in_progress forever.
+    #
+    # Checked here because this is the single read point: reconcile once,
+    # before anything downstream can act on a task that is already done.
+    # Conservative by construction — a kind with no predicate, a missing
+    # reference or any exception leaves the task exactly as it is.
+    #
+    # LIVENESS ONLY. This establishes that the obligation still exists. It
+    # does NOT establish that a live task is entitled to steer THIS turn —
+    # that is a separate invariant and is not decided here.
+    if isinstance(current_active, dict):
+        from conversation_control_plane.task_completion_predicates import (
+            obligation_discharged,
+        )
+
+        _done, _why = obligation_discharged(db, tenant_id, current_active)
+        if _done:
+            logger.info(
+                "active_task %s (%s) satisfied out of band — closing: %s",
+                current_active.get("task_id"), current_active.get("kind"), _why,
+            )
+            try:
+                complete_task(
+                    db, tenant_id, conversation_id,
+                    agent=current_active.get("agent") or "bot0",
+                    reason="satisfied",
+                    # Layer 2 runs MID-TURN and does not commit — the turn
+                    # owns that, exactly as the `superseded` close below
+                    # does. Committing here would commit whatever else the
+                    # turn has pending.
+                    trigger="read_reconciliation",
+                    task_id=(
+                        current_active.get("task_id")
+                        if isinstance(current_active.get("task_id"), str)
+                        else None
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — never break a turn on cleanup
+                logger.debug("could not close satisfied task", exc_info=True)
+            else:
+                current_active = None
+                control = get_control_state(db, tenant_id, conversation_id)
+
     current_pending = control.get("pending_switch") or pending_switch_from_context
     suspended = control.get("suspended_tasks") or []
     current_plan = control.get("plan")
 
-    cost_estimate_request = False
-    if live_route is not None:
-        if hasattr(live_route, "cost_estimate_request"):
-            cost_estimate_request = bool(getattr(live_route, "cost_estimate_request", False))
-        elif isinstance(live_route, dict):
-            cost_estimate_request = bool(live_route.get("cost_estimate_request"))
-
-    # Live agent cost preview — LLM-owned signal on IntentRoute (not a keyword gate).
+    # Live agent cost preview — the decision's estimate_cost act, or a continue
+    # whose meaning is a cost operation (not a keyword gate).
     # Multi-turn: kind=cost_out continues without clearing; otherwise open cost_out.
-    if cost_estimate_request:
+    if _act == "estimate_cost" or _continue_meaning in (
+        "amend_estimate", "reestimate_pin", "reprice_catalog", "show_profile",
+    ):
         from conversation_control_plane.task_pin_contract import (
             COST_OUT_KIND,
             ensure_cost_out_task,
@@ -187,24 +319,24 @@ def decide_turn(
         return TurnPlan(
             agent="bot0",
             mode="answer",
-            reason="LLM classified live agent cost estimate; opened cost_out task",
+            reason="decision estimate_cost — opened cost_out task",
         )
 
     # S2 coherence epic: demote discovery to ledger task.
-    # Router emits discovery_kind; here we open bot0-owned discovery task
-    # instead of letting early caller short-circuit with answer.
-    # This makes "what do we have setup" a resumable task that consults live ledger.
-    discovery_kind = "none"
-    if live_route:
-        if hasattr(live_route, 'discovery_kind'):
-            discovery_kind = getattr(live_route, 'discovery_kind') or "none"
-        elif isinstance(live_route, dict):
-            discovery_kind = live_route.get('discovery_kind') or "none"
+    # The decision's orient (its focus) / choose_path (intent_clarify) acts name
+    # a front-door kind; here we open a bot0-owned discovery task instead of
+    # letting an early caller short-circuit with an answer. This makes "what do
+    # we have setup" a resumable task that consults the live ledger.
     from conversation_control_plane.delivery_order_contract import (
         is_front_door_detour_kind,
     )
 
-    dk = (discovery_kind or "none").strip().lower()
+    if _act == "orient":
+        dk = str(_slots.get("focus") or "orientation").strip().lower()
+    elif _act == "choose_path":
+        dk = "intent_clarify"
+    else:
+        dk = "none"
     if dk != "none" and is_front_door_detour_kind(dk):
         # DT-name-as-greenfield: open advisor project-create owns free text
         # (e.g. project name "Kinano2") — discovery must not supersede.
@@ -249,86 +381,36 @@ def decide_turn(
                     f"suppress discovery ({dk})"
                 ),
             )
-        # §2c (conv_e130aef4): a live concept thread the user is NARROWING is
-        # not a detour. Cognition carries the verdict — UnifiedTurnSignal.
-        # topicality — and until now nothing on this path read it, so the
-        # "discovery detour supersedes active task" plan below won. Same shape
-        # as the advisor-create suppression above; reads a field, not words.
-        # "unavailable" (prompt not asked) is NOT continues.
-        _concept_continues = False
-        try:
-            from conversation_control_plane.concept_thread_continuation_contract import (
-                suppress_discovery_for_concept_continuation,
-            )
-
-            _concept_continues = suppress_discovery_for_concept_continuation(
-                context if isinstance(context, dict) else {},
-                signal=unified_signal,
-                # The live task is current_active (ledger), NOT context here.
-                active_task=current_active if isinstance(current_active, dict) else None,
-            )
-        except Exception:  # noqa: BLE001
-            _concept_continues = False
-        if _concept_continues and current_active:
-            active_task_obj = ActiveTask(**{
-                k: v for k, v in current_active.items()
-                if k in ("agent", "phase", "awaiting", "pending_ref", "kind", "payload")
-            })
-            return TurnPlan(
-                agent="bot0",
-                mode="continue",
-                task=active_task_obj,
-                reason=(
-                    f"concept_thread continues (topicality=continues) — "
-                    f"suppress discovery detour ({dk})"
-                ),
-            )
+        # §2c (conv_e130aef4) — a live concept thread the user is NARROWING is
+        # not a detour. B-248: that verdict is the decided ``continue`` act, and
+        # a decided continue never reaches this block (only orient /
+        # choose_path name a front-door kind). The branch that weighed a
+        # discovery label against a continuation label on one turn was a
+        # second decider over two fields of one projection — deleted.
         active_task_obj = None
         if current_active:
             active_task_obj = ActiveTask(**{
                 k: v for k, v in current_active.items()
                 if k in ("agent", "phase", "awaiting", "pending_ref", "kind", "payload")
             })
-        else:
-            try:
-                begin_task(
-                    db, tenant_id, conversation_id,
-                    agent="bot0",
-                    kind="discovery",
-                    phase="active",
-                    awaiting=dk,
-                    task_text=f"discovery:{dk}",
-                )
-            except Exception:  # noqa: BLE001
-                pass
+        # B-258: a ``begin_task(kind="discovery")`` stood here from 07-05
+        # (bbb7797ed) and never ran — it passed ``task_text``, which
+        # begin_task does not accept, and a bare except swallowed the
+        # TypeError. Deleted rather than repaired: the decision owns the
+        # ledger effect (B-248), and for orient / choose_path that effect is
+        # "none" — a read-only detour. Opening a task here would be a second
+        # authority over the ledger, and every flow since was built without it.
         return TurnPlan(
             agent="bot0",
             mode="discovery" if not current_active else "detour",
             task=active_task_obj,
             reason=(
-                f"discovery task opened for kind={dk}"
+                f"discovery ({dk}) — read-only, no ledger task"
                 if not current_active
                 else f"discovery detour ({dk}) supersedes active task"
             ),
             discovery_kind=dk,
         )
-
-    # S3: Simulate/optimize on a **pinned workflow** is Rec 2.0 / sim-entry
-    # (Engine 2.0 gather), not transformation_advisor. Advisor handoff here
-    # shipped "Let me hand you off to the Workflow Builder… describe your
-    # process" — hollow transfer after cognition already labeled simulate
-    # (conv_f9f22a6e). Host yields to ``workflow_simulation_entry``.
-    if live_route_intent in ("recommender", "advisor", "transformation_recommender", "transformation_advisor"):
-        wf_ref = (context or {}).get("workflow_id") or (context or {}).get("last_read_workflow_id")
-        if wf_ref:
-            return TurnPlan(
-                agent="bot0",
-                mode="continue",
-                reason=(
-                    f"simulate/optimize on {wf_ref} → rec2/sim_entry "
-                    "(not advisor handoff)"
-                ),
-            )
 
     # P4c: active multi-task orchestrator plan takes precedence for routing.
     # If there is a persisted plan with pending/executing work, return a plan-directed
@@ -392,15 +474,12 @@ def decide_turn(
         _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent, live_route_layer, "command")
         return plan
 
-    # --- Step 2/3: confirmed_intent and pending_switch reply (use passed data + live_route) ---
+    # --- Step 2/3: confirmed_intent and pending_switch reply (server state + the decision) ---
     # These must be resolved from *server* pending_switch state (not just FE field).
-    # Finite switch grammar only: unified ``switch_reply`` already classified
-    # accept/decline. A new question is not an answer to the pending card.
+    # The decision's continue meaning accept_switch / decline_switch answers
+    # the pending card. A new question is not an answer to it.
     if current_pending:
-        _sw = None
-        if unified_signal is not None:
-            _sw = getattr(unified_signal, "switch_reply", None)
-        if _sw in ("accept", "decline"):
+        if _continue_meaning in ("accept_switch", "decline_switch"):
             plan = TurnPlan(
                 agent=_canonical(current_pending.get("to_agent", live_route_intent)),
                 mode="switch_confirm",
@@ -533,7 +612,7 @@ def decide_turn(
             perceived = _perceive_relative_intent(
                 db, tenant_id, query=query,
                 active_task=current_active, suspended_tasks=suspended,
-                messages=messages, unified_signal=unified_signal,
+                messages=messages,
             )
             intent, intent_source = perceived.intent, perceived.source
         except Exception:  # noqa: BLE001 — perception must never explode routing
@@ -577,17 +656,19 @@ def decide_turn(
             )
             return plan
 
-        plan = TurnPlan(
-            agent="bot0",
-            mode="active_task",
-            task=active_task_obj,
-            reason="outcome value setup in progress",
-        )
-        _maybe_log_conflict(
-            db, tenant_id, conversation_id, plan, live_route_intent,
-            live_route_layer, "outcome_value_setup continue",
-        )
-        return plan
+        if intent != "new_task":
+            plan = TurnPlan(
+                agent="bot0",
+                mode="active_task",
+                task=active_task_obj,
+                reason="outcome value setup in progress",
+            )
+            _maybe_log_conflict(
+                db, tenant_id, conversation_id, plan, live_route_intent,
+                live_route_layer, "outcome_value_setup continue",
+            )
+            return plan
+        # new_task: fall through to sticky-kind Switch/Stay (TC-D E4).
 
     # --- Step 3.4b: ledger-tracked realization intake (deploy walkthrough) ---
     if _active_kind == "realization_intake":
@@ -602,7 +683,7 @@ def decide_turn(
             perceived = _perceive_relative_intent(
                 db, tenant_id, query=query,
                 active_task=current_active, suspended_tasks=suspended,
-                messages=messages, unified_signal=unified_signal,
+                messages=messages,
             )
             intent, intent_source = perceived.intent, perceived.source
         except Exception:  # noqa: BLE001
@@ -646,17 +727,19 @@ def decide_turn(
             )
             return plan
 
-        plan = TurnPlan(
-            agent="bot0",
-            mode="active_task",
-            task=active_task_obj,
-            reason="realization intake in progress",
-        )
-        _maybe_log_conflict(
-            db, tenant_id, conversation_id, plan, live_route_intent,
-            live_route_layer, "realization_intake continue",
-        )
-        return plan
+        if intent != "new_task":
+            plan = TurnPlan(
+                agent="bot0",
+                mode="active_task",
+                task=active_task_obj,
+                reason="realization intake in progress",
+            )
+            _maybe_log_conflict(
+                db, tenant_id, conversation_id, plan, live_route_intent,
+                live_route_layer, "realization_intake continue",
+            )
+            return plan
+        # new_task: fall through to sticky-kind Switch/Stay (TC-D E4).
 
     # --- Step 3.4c: ledger-tracked cyber risk assessment ---
     if _active_kind == "cyber_risk_assessment":
@@ -671,7 +754,7 @@ def decide_turn(
             perceived = _perceive_relative_intent(
                 db, tenant_id, query=query,
                 active_task=current_active, suspended_tasks=suspended,
-                messages=messages, unified_signal=unified_signal,
+                messages=messages,
             )
             intent, intent_source = perceived.intent, perceived.source
         except Exception:  # noqa: BLE001
@@ -715,17 +798,79 @@ def decide_turn(
             )
             return plan
 
-        plan = TurnPlan(
-            agent="bot0",
-            mode="active_task",
-            task=active_task_obj,
-            reason="cyber risk assessment in progress",
+        if intent != "new_task":
+            plan = TurnPlan(
+                agent="bot0",
+                mode="active_task",
+                task=active_task_obj,
+                reason="cyber risk assessment in progress",
+            )
+            _maybe_log_conflict(
+                db, tenant_id, conversation_id, plan, live_route_intent,
+                live_route_layer, "cyber_risk_assessment continue",
+            )
+            return plan
+        # new_task: fall through to sticky-kind Switch/Stay (TC-D E4).
+
+    # New/keep ask owns the next turn (open-leaf arming). The token "new" is
+    # grammar for the parked spec, not a greenfield workflow_draft_request
+    # (conv_daf74954). Continue the builder so Step A extracts the park.
+    try:
+        from conversation_control_plane.new_vs_previous_continue_contract import (
+            NEW_VS_PREVIOUS_AWAITING as _NVP_AWAITING,
+            new_vs_previous_gate_owns_turn as _nvp_owns,
         )
-        _maybe_log_conflict(
-            db, tenant_id, conversation_id, plan, live_route_intent,
-            live_route_layer, "cyber_risk_assessment continue",
-        )
-        return plan
+
+        if _nvp_owns(
+            context=context if isinstance(context, dict) else {},
+            history=messages,
+            db=db,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+        ):
+            _nvp_active = current_active if isinstance(current_active, dict) else {}
+            _nvp_kind = str(_nvp_active.get("kind") or "").strip()
+            if _nvp_kind == "drafting":
+                complete_task(
+                    db, tenant_id, conversation_id, agent="bot0",
+                    reason="superseded",
+                    task_id=(
+                        _nvp_active.get("task_id")
+                        if isinstance(_nvp_active.get("task_id"), str)
+                        else None
+                    ),
+                )
+            if _nvp_kind != WORKFLOW_BUILD_KIND:
+                begin_task(
+                    db, tenant_id, conversation_id,
+                    agent="workflow_builder",
+                    phase="active",
+                    awaiting=_NVP_AWAITING,
+                    kind=WORKFLOW_BUILD_KIND,
+                    pending_ref=f"pending_workflow:{conversation_id}",
+                )
+            plan = TurnPlan(
+                agent="workflow_builder",
+                mode="continue",
+                task=ActiveTask(
+                    agent="workflow_builder",
+                    phase="active",
+                    awaiting=_NVP_AWAITING,
+                    kind=WORKFLOW_BUILD_KIND,
+                    pending_ref=f"pending_workflow:{conversation_id}",
+                ),
+                reason=(
+                    "new_vs_previous gate armed — extract parked spec "
+                    "(not greenfield drafting)"
+                ),
+            )
+            _maybe_log_conflict(
+                db, tenant_id, conversation_id, plan, live_route_intent,
+                live_route_layer, "new_vs_previous continue builder",
+            )
+            return plan
+    except Exception:  # noqa: BLE001
+        logger.debug("new_vs_previous continue skipped", exc_info=True)
 
     # --- Step 3.5: ledger-tracked DRAFTING task (CAQ-7) ---
     # A "produce a workflow for me" request (workflow_draft signal) opens a bot0-owned
@@ -805,7 +950,6 @@ def decide_turn(
                     db,
                     tenant_id,
                     query=query,
-                    unified=unified_signal,
                     messages=messages,
                     active_task=current_active,
                     payload=_draft_payload,
@@ -830,41 +974,39 @@ def decide_turn(
                     "drafting interpret fast-path skipped", exc_info=True,
                 )
 
-        # Improvement cognition / deictic apply must not hand off even if
-        # relative-intent later labels handoff/new_task by mistake.
-        try:
-            from conversation_control_plane.draft_improvement_cognition import (
-                resolve_draft_improvement_action as _improve_dec,
-            )
-            from conversation_control_plane.draft_strengtheners_contract import (
-                is_apply_structural_strengtheners_request as _apply_str_dec,
-            )
+        # B-248: this override re-classified the turn (improvement act,
+        # strengtheners, interpret-command text) and forced continue/refine
+        # over cognition. When the turn has its one decision, continue vs
+        # anything else was ruled at the boundary; this runs only without one.
+        if _decision is None:
+            # Improvement cognition / deictic apply must not hand off even if
+            # relative-intent later labels handoff/new_task by mistake.
+            try:
+                from conversation_control_plane.draft_improvement_cognition import (
+                    resolve_draft_improvement_action as _improve_dec,
+                )
+                from conversation_control_plane.draft_strengtheners_contract import (
+                    is_apply_structural_strengtheners_request as _apply_str_dec,
+                )
 
-            _pl_dec = _draft_payload if isinstance(_draft_payload, dict) else None
-            _act_dec = _improve_dec(
-                db,
-                tenant_id,
-                query=query,
-                messages=messages,
-                active_task=current_active,
-                payload=_pl_dec,
-                unified=unified_signal,
-                # Prefer prior resolve_carried path; still allow deictic + free
-                # refine protect if that path labeled handoff incorrectly.
-                skip_llm=True,
-            )
-            _pck = str(
-                getattr(unified_signal, "product_concept_kind", None) or "none",
-            ).strip().lower()
-            _ti_u = str(
-                getattr(unified_signal, "task_intent", None) or "",
-            ).strip().lower()
-            # skip_llm fallback labels every miss as refine — do not let that
-            # clobber a glossary detour the router already named.
-            _glossary_detour = _pck == "product_knowledge" or _ti_u == "detour"
-            if (
-                not _glossary_detour
-                and (
+                _pl_dec = _draft_payload if isinstance(_draft_payload, dict) else None
+                _act_dec = _improve_dec(
+                    db,
+                    tenant_id,
+                    query=query,
+                    messages=messages,
+                    active_task=current_active,
+                    payload=_pl_dec,
+                    # Prefer prior resolve_carried path; still allow deictic + free
+                    # refine protect if that path labeled handoff incorrectly.
+                    skip_llm=True,
+                )
+                # B-248: the glossary-detour / named-new-process guards read
+                # labels only a decided turn carries; this branch runs only
+                # without a decision, so they could never be true — deleted
+                # (conv_4ac10b7c's law holds at the boundary, which decides
+                # draft_work vs continue).
+                if (
                     _act_dec.applies_structural_brief
                     or _act_dec.turn_kind in (
                         "recommend_prioritize",
@@ -873,40 +1015,37 @@ def decide_turn(
                         "refine",
                         "invite_refine",
                     )
-                    or _apply_str_dec(
-                        query, payload=_pl_dec, unified=unified_signal,
+                    or _apply_str_dec(query, payload=_pl_dec)
+                ):
+                    _force_drafting_refine = True
+                    intent = "continue"
+                    target = ""
+                    intent_source = (
+                        f"improvement_{_act_dec.label}"
+                        if _act_dec.confidence >= 0.5
+                        else "apply_structural_strengtheners"
                     )
-                )
-            ):
-                _force_drafting_refine = True
-                intent = "continue"
-                target = ""
-                intent_source = (
-                    f"improvement_{_act_dec.label}"
-                    if _act_dec.confidence >= 0.5
-                    else "apply_structural_strengtheners"
-                )
-                confidence = max(float(confidence or 0.0), 0.9)
-            # draft_improve_to_ir: open NL labeled handoff without finite interpret
-            if intent == "handoff" and not _force_drafting_refine:
-                try:
-                    from agent.workflow_builder.input_shape import (
-                        looks_like_interpret_command_request as _fin_i,
-                    )
-                    from conversation_control_plane.classifier import (
-                        drafting_interpret_gate_reply as _fin_g,
-                    )
+                    confidence = max(float(confidence or 0.0), 0.9)
+                # draft_improve_to_ir: open NL labeled handoff without finite interpret
+                if intent == "handoff" and not _force_drafting_refine:
+                    try:
+                        from agent.workflow_builder.input_shape import (
+                            looks_like_interpret_command_request as _fin_i,
+                        )
+                        from conversation_control_plane.classifier import (
+                            drafting_interpret_gate_reply as _fin_g,
+                        )
 
-                    if not (_fin_g(query) or _fin_i(query)):
-                        _force_drafting_refine = True
-                        intent = "continue"
-                        target = ""
-                        intent_source = "draft_improve_to_ir_seal"
-                        confidence = max(float(confidence or 0.0), 0.9)
-                except Exception:  # noqa: BLE001
-                    pass
-        except Exception:  # noqa: BLE001
-            pass
+                        if not (_fin_g(query) or _fin_i(query)):
+                            _force_drafting_refine = True
+                            intent = "continue"
+                            target = ""
+                            intent_source = "draft_improve_to_ir_seal"
+                            confidence = max(float(confidence or 0.0), 0.9)
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception:  # noqa: BLE001
+                pass
 
         perceived = None
         # Do not let relative-intent steal apply-strengtheners / forced refine
@@ -916,7 +1055,7 @@ def decide_turn(
                 perceived = _perceive_relative_intent(
                     db, tenant_id, query=query,
                     active_task=current_active, suspended_tasks=suspended,
-                    messages=messages, unified_signal=unified_signal,
+                    messages=messages,
                 )
             except Exception:  # noqa: BLE001 — perception must never explode routing
                 logger.debug("drafting intent classifier failed → keep drafting", exc_info=True)
@@ -942,8 +1081,8 @@ def decide_turn(
                                 live_route_layer, "drafting task abandoned")
             return plan
 
-        # Coherence (epic 1e S1/S4): respect new_task from relative classifier (or live router
-        # workflow_draft_request for a substantial query). A "lets work on incident response"
+        # Coherence (epic 1e S1/S4): respect new_task from the decision (or a
+        # draft act for a substantial query). A "lets work on incident response"
         # while a stale drafting task for a different domain must NOT continue as "refine".
         # Complete the prior drafting task and open a fresh empty drafting task so the
         # turn produces a new informative draft (not "Updated draft:").
@@ -955,12 +1094,23 @@ def decide_turn(
         _has_carried_draft_steps = (
             isinstance(_carried_draft, dict) and bool(_carried_draft.get("steps"))
         )
+        _process_seed = False
+        try:
+            from conversation_control_plane.draft_content_strength_contract import (
+                live_query_is_process_seed as _fresh_proc_seed,
+            )
+
+            _process_seed = bool(_fresh_proc_seed(q))
+        except Exception:  # noqa: BLE001
+            _process_seed = False
         _fresh_drafting_domain = (
-            (intent == "new_task" or (workflow_draft_request and len(q) > 10))
+            (intent == "new_task" or (_draft_act and len(q) > 10))
             and not _fork_reply_in_progress(_draft_payload, q)
             and not _has_carried_draft_steps
             # Clarity advance / invent chip is not a new process domain.
             and not _force_drafting_refine
+            # A process body is extract, not an empty drafting fork.
+            and not _process_seed
         )
         # Never park finite control chips as domain authority.
         try:
@@ -980,26 +1130,7 @@ def decide_turn(
                 may_begin_greenfield_drafting as _may_draft,
             )
 
-            _be = str(getattr(unified_signal, "builder_entry", None) or "none")
-            _rk = str(getattr(unified_signal, "read_kind", None) or "none")
-            _ti = str(
-                intent
-                or getattr(unified_signal, "task_intent", None)
-                or ""
-            )
-            if not _may_draft(
-                context=context,
-                workflow_draft_request=bool(workflow_draft_request)
-                or bool(intent == "new_task"),
-                builder_entry=_be,
-                read_kind=_rk,
-                task_intent=_ti if _ti != "new_task" else "new_task",
-                route_intent=str(live_route_intent or ""),
-                query=q,
-                product_concept_kind=str(
-                    getattr(unified_signal, "product_concept_kind", None) or "",
-                ),
-            ):
+            if not _may_draft(context=context, query=q):
                 # Stay on current drafting refinement path (do not fork greenfield)
                 pass
             else:
@@ -1034,7 +1165,7 @@ def decide_turn(
                         payload=dict(_fresh_payload),
                     )
                 plan = TurnPlan(agent="bot0", mode="drafting", task=task_obj,
-                                reason="fresh drafting task (new_task or workflow_draft_request while prior drafting active)")
+                                reason="fresh drafting task (new_task or draft act while prior drafting active)")
                 _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent,
                                     live_route_layer, "fresh drafting after new domain")
                 return plan
@@ -1086,17 +1217,23 @@ def decide_turn(
         # Finite product actions on an open drafting task: interpret / save must
         # NEVER become "drafting detour (retrieval_grounding)" (staging
         # conv_dc75f5f4 / conv_119bdab7 — bare "Interpret" re-drafted forever).
+        # B-248: with a decision, interpret/save is its continue meaning
+        # (drafting_turn_kind, handled above) — not a re-read of the text.
         _interpret_or_save = False
         try:
             from agent.workflow_builder.input_shape import (
                 looks_like_draft_finalize_command_request as _looks_finalize,
                 looks_like_interpret_command_request as _looks_interpret,
             )
-
-            _q_gate = (query or "").strip()
-            _interpret_or_save = bool(
-                _looks_interpret(_q_gate) or _looks_finalize(_q_gate)
+            from conversation_control_plane.turn_decision_contract import (
+                get_turn_decision as _get_decision_ig,
             )
+
+            if _get_decision_ig() is None:
+                _q_gate = (query or "").strip()
+                _interpret_or_save = bool(
+                    _looks_interpret(_q_gate) or _looks_finalize(_q_gate)
+                )
         except Exception:  # noqa: BLE001
             _interpret_or_save = False
 
@@ -1170,8 +1307,13 @@ def decide_turn(
             from conversation_control_plane.risk_catalog_turn import (
                 looks_like_risk_catalog_open_request as _risk_open,
             )
+            from conversation_control_plane.turn_decision_contract import (
+                get_turn_decision as _get_decision_rk,
+            )
 
-            if _risk_open(query):
+            # B-248: with a decision, browsing the risk registry is the explain
+            # act (product_knowledge) — not a text reading inside decide_turn.
+            if _get_decision_rk() is None and _risk_open(query):
                 plan = TurnPlan(
                     agent="bot0",
                     mode="detour",
@@ -1186,62 +1328,84 @@ def decide_turn(
         except Exception:  # noqa: BLE001
             logger.debug("drafting risk-open detour skipped", exc_info=True)
 
-        # **Cognition decides this is a concept question; retrieval only
-        # confirms we can answer it.**
+        # **Cognition decides this is a concept question; retrieval never did.**
         #
-        # This backstop used to fire on retrieval alone, and retrieval grounds
-        # essentially anything — measured 2026-08-11, ``grounded=True`` for
-        # "who am i" (1.0), a real glossary ask (4.75) and a 5.6k workflow
-        # description (11.5). The score is a raw lexical overlap **count**, so
-        # it rises with length: the more the user writes, the more certain the
-        # system became that they were asking a glossary question.
+        # A retrieval backstop used to turn a labelled concept question into a
+        # "drafting detour (retrieval_grounding)" when relative intent had not
+        # already said detour. Retrieval grounds essentially anything — measured
+        # 2026-08-11, ``grounded=True`` for "who am i" (1.0), a real glossary
+        # ask (4.75) and a 5.6k workflow description (11.5) — so it was gated
+        # on cognition's concept label (conv_73cdd4b6: a 5,655-char clinical
+        # process pasted at ``awaiting: intake`` became a glossary detour).
         #
-        # conv_73cdd4b6: the card asked "Add detail in chat", the user pasted a
-        # 5,655-char clinical-trial process, the ledger said
-        # ``awaiting: intake`` — and this turned it into
-        # "drafting detour (retrieval_grounding)", answered with "name a domain
-        # and a few steps … not a free-form essay". Re-sent with an explicit
-        # "create me a workflow" prefix it compiled to a Draft IR, because the
-        # router then set ``workflow_draft_request`` and this never got a vote.
-        #
-        # So the gate is cognition's label, not corpus overlap. A mid-drafting
-        # glossary question still detours — the router marks it
-        # ``product_knowledge`` (published 2026-08-11) — while prose intake,
-        # which carries no concept label, stays intake.
-        _concept_labeled = False
-        try:
-            from conversation_control_plane.turn_owner_precedence_contract import (
-                PRODUCT_KNOWLEDGE_KIND,
-            )
+        # B-248: the decided ``explain`` act IS that label, and it is read-only,
+        # so its ledger effect is ``none`` and relative intent is already
+        # ``detour`` above. The backstop could only fire when the decision had
+        # NOT said detour — i.e. it re-read a turn the boundary decided. Second
+        # decider; deleted. Prose intake (not an explain act) stays intake.
 
-            _pck = str(
-                getattr(unified_signal, "product_concept_kind", None) or "none",
-            ).strip().lower()
-            _concept_labeled = _pck == PRODUCT_KNOWLEDGE_KIND
-        except Exception:  # noqa: BLE001
-            _concept_labeled = False
-
-        if (
-            intent != "detour"
-            and _concept_labeled
-            and not _interpret_or_save
-            and db is not None
-            and tenant_id
-            and (query or "").strip()
-        ):
+        # conv_4ac10b7c: a process body on an open drafting task is the
+        # work, not a glossary detour and not an 80-tool prose draft.
+        # Hand off to the builder so extract runs.
+        # Salvage is for UNNAMED turns (cognition missed the flag). A named
+        # act the open kind does not own is a detour — G5 I8, conv_0f96d344.
+        if not _force_drafting_refine:
             try:
-                from api.services.bot0_product_knowledge import (
-                    retrieval_grounds_concept_query,
+                from conversation_control_plane.draft_content_strength_contract import (
+                    live_query_is_process_seed as _proc_body_draft,
+                )
+                from conversation_control_plane.pre_decide_owner_contract import (
+                    named_acts_are_foreign_to_task_kind as _named_foreign_draft,
                 )
 
-                if retrieval_grounds_concept_query(
-                    db, query, tenant_id=tenant_id, messages=messages,
+                if _named_foreign_draft(
+                    str(current_active.get("kind") or "drafting"),
                 ):
-                    intent = "detour"
-                    confidence = max(confidence, 0.85)
-                    intent_source = "retrieval_grounding"
+                    pass
+                elif _proc_body_draft(query or ""):
+                    complete_task(
+                        db, tenant_id, conversation_id, agent="bot0",
+                        reason="superseded",
+                        task_id=(
+                            current_active.get("task_id")
+                            if isinstance(current_active.get("task_id"), str)
+                            else None
+                        ),
+                    )
+                    from conversation_control_plane.ledger import (
+                        handoff as _proc_handoff,
+                    )
+
+                    _proc_handoff(
+                        db, tenant_id, conversation_id,
+                        target_agent="workflow_builder",
+                        task_text="in_progress",
+                        reason="process body on drafting",
+                    )
+                    plan = TurnPlan(
+                        agent="workflow_builder",
+                        mode="active_task",
+                        task=ActiveTask(
+                            agent="workflow_builder",
+                            phase="active",
+                            awaiting="in_progress",
+                            kind=WORKFLOW_BUILD_KIND,
+                        ),
+                        reason=(
+                            "process body on drafting — builder owns extract "
+                            f"({intent_source})"
+                        ),
+                    )
+                    _maybe_log_conflict(
+                        db, tenant_id, conversation_id, plan,
+                        live_route_intent, live_route_layer,
+                        "process body drafting handoff",
+                    )
+                    return plan
             except Exception:  # noqa: BLE001
-                logger.debug("drafting concept detour backstop skipped", exc_info=True)
+                logger.debug(
+                    "process-body drafting handoff skipped", exc_info=True,
+                )
 
         _detour_conf = float(confidence or 0.0)
         if intent == "detour" and _detour_conf >= 0.5:
@@ -1262,10 +1426,8 @@ def decide_turn(
         _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent,
                             live_route_layer, "drafting task active")
         return plan
-    _prose_workflow_intake = workflow_draft_request or (
-        unified_signal is not None
-        and (getattr(unified_signal, "builder_entry", None) or "") == "content"
-    )
+    # The draft acts (draft_work / show_example) are the prose-intake signal.
+    _prose_workflow_intake = _draft_act
     # Fast path may serve drafting; it may not substitute for D4 when another
     # sole-continue kind is sticky (epic §7.2 · conv_92def296). Cognition
     # already labeled continue / detour / new_task; D4 owns the transition.
@@ -1309,15 +1471,11 @@ def decide_turn(
                         may_begin_greenfield_builder_for_explicit_steps as _may_ep_builder,
                     )
 
-                    _ep_req = bool(
-                        unified_signal is not None
-                        and getattr(
-                            unified_signal, "engagement_pack_request", False,
-                        )
-                    )
+                    # B-248: one act per turn — a draft act is never also
+                    # an engagement_pack request.
                     _pack_ok_builder, _pack_block = _may_ep_builder(
                         context=context if isinstance(context, dict) else None,
-                        engagement_pack_request=_ep_req,
+                        engagement_pack_request=False,
                     )
                 except Exception:  # noqa: BLE001
                     _pack_ok_builder, _pack_block = True, "probe_failed"
@@ -1363,45 +1521,8 @@ def decide_turn(
             may_begin_greenfield_drafting as _may_open_draft,
         )
 
-        _be = (
-            str(getattr(unified_signal, "builder_entry", None) or "none")
-            if unified_signal is not None
-            else "none"
-        )
-        _rk = (
-            str(getattr(unified_signal, "read_kind", None) or "none")
-            if unified_signal is not None
-            else "none"
-        )
-        _ti = (
-            str(getattr(unified_signal, "task_intent", None) or "")
-            if unified_signal is not None
-            else ""
-        )
-        _pck = (
-            str(getattr(unified_signal, "product_concept_kind", None) or "")
-            if unified_signal is not None
-            else ""
-        )
-        if not _may_open_draft(
-            context=context,
-            workflow_draft_request=bool(workflow_draft_request),
-            builder_entry=_be,
-            read_kind=_rk,
-            task_intent=_ti or None,
-            route_intent=str(live_route_intent or ""),
-            query=query,
-            product_concept_kind=_pck,
-        ):
-            _why = _draft_block_reason(
-                context=context,
-                workflow_draft_request=bool(workflow_draft_request),
-                builder_entry=_be,
-                read_kind=_rk,
-                task_intent=_ti or None,
-                query=query,
-                product_concept_kind=_pck,
-            )
+        if not _may_open_draft(context=context, query=query):
+            _why = _draft_block_reason(context=context, query=query)
             logger.info(
                 "decide_turn refused greenfield drafting open: %s",
                 _why or "pin_reentry",
@@ -1425,16 +1546,18 @@ def decide_turn(
                 )
 
                 _open_seed_kind = _safe_seed_kind(
-                    getattr(unified_signal, "workflow_seed_kind", "none"),
+                    _router_evidence.get("seed_kind", "none")
+                    if _act == "draft_work"
+                    else "none",
                 )
                 if _open_seed_kind != "none" and not _seed_kind_can_name(
                     _open_seed_kind,
                 ):
                     _open_domain = None
                 elif _open_seed_kind != "none":
-                    _candidate_topic = str(
-                        getattr(unified_signal, "task_text", "") or _open_q,
-                    ).strip()
+                    # A draft act carries no task_text (only handoff does):
+                    # the topic candidate is the message itself.
+                    _candidate_topic = _open_q
                     _open_domain = (
                         _normalize_open_topic(
                             _candidate_topic,
@@ -1481,21 +1604,10 @@ def decide_turn(
                                 live_route_layer, "drafting task opened")
             return plan
 
-    # --- Step 3.9: IC4 — router ambiguity clarifier before sticky resume ---
-    _clarifier_q = None
-    if live_route is not None:
-        _clarifier_q = getattr(live_route, "clarifier_question", None)
-    if live_route_intent == "ambiguous" or _clarifier_q:
-        plan = TurnPlan(
-            agent="bot0",
-            mode="detour",
-            reason="router_ambiguity_clarifier",
-        )
-        _maybe_log_conflict(
-            db, tenant_id, conversation_id, plan, live_route_intent,
-            live_route_layer, "IC4 clarifier before sticky resume",
-        )
-        return plan
+    # --- Step 3.9 (IC4) retired, B-248: the router-ambiguity clarifier keyed
+    # on ``live_route_intent == "ambiguous"``, which no producer sends now —
+    # chat passes the decided act's agent. Ambiguity is the boundary's
+    # ``choose_path`` act, decided once.
 
     # --- Step 4: active_task awaiting (simple shape match using live as proxy for "does message answer it") ---
     # If there is an active_task with an "awaiting" (e.g. awaiting name, awaiting confirmation),
@@ -1523,7 +1635,61 @@ def decide_turn(
             except Exception:  # noqa: BLE001 — release must never block routing
                 logger.debug("post-commit builder release in decide_turn failed", exc_info=True)
 
+    # S3: simulate/optimize on a pinned workflow is Rec 2.0 / sim-entry.
+    # After confirmed_switch and post-commit release, before sticky continue.
+    # Cognition ``simulate_workflow`` beats leftover builder (conv_b899a066 B).
+    try:
+        from conversation_control_plane.recommender_task_contract import (
+            simulate_on_pinned_workflow as _s3_sim_pin,
+        )
+
+        _s3_wf = _s3_sim_pin(
+            context=context if isinstance(context, dict) else {},
+            live_route_intent=live_route_intent,
+            live_route_layer=live_route_layer,
+        )
+    except Exception:  # noqa: BLE001
+        _s3_wf = ""
+        logger.debug("S3 simulate-on-pin probe skipped", exc_info=True)
+    if _s3_wf:
+        return TurnPlan(
+            agent="bot0",
+            mode="continue",
+            reason=(
+                f"simulate/optimize on {_s3_wf} → rec2/sim_entry "
+                "(not advisor handoff)"
+            ),
+        )
+
     if current_active:
+        # A task with a phase and no awaiting cannot be continued into — the
+        # branch below reads `awaiting` and, finding none, hands the turn to
+        # prose. Recover it from the last card the user was actually shown
+        # before that read happens (conv_40db3389: the domain picker, one
+        # message behind the hollow turn that buried it). Only reaches rows
+        # stranded before `arm_fat_leaf_awaiting` existed; a healthy task
+        # fails the guard and nothing is written.
+        try:
+            from conversation_control_plane.claimed_turn_complete_contract import (
+                heal_stranded_awaiting as _heal_awaiting,
+            )
+
+            _healed = _heal_awaiting(
+                db,
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                active_task=current_active,
+            )
+            if _healed:
+                current_active = {**current_active, "awaiting": _healed}
+                logger.info(
+                    "STRANDED_AWAITING_HEALED conv=%s awaiting=%s — recovered "
+                    "from the last card shown; the turn can continue.",
+                    conversation_id, _healed,
+                )
+        except Exception:  # noqa: BLE001 — a repair never blocks routing
+            logger.debug("stranded awaiting heal skipped", exc_info=True)
+
         awaiting = current_active.get("awaiting")
         agent = _canonical(current_active.get("agent", ""))
         active_task_obj = ActiveTask(**{k: v for k, v in current_active.items()
@@ -1542,7 +1708,7 @@ def decide_turn(
             perceived = _perceive_relative_intent(
                 db, tenant_id, query=query,
                 active_task=current_active, suspended_tasks=suspended,
-                messages=messages, unified_signal=unified_signal,
+                messages=messages,
             )
             intent, intent_source = perceived.intent, perceived.source
         except Exception:  # noqa: BLE001 — perception must never explode routing
@@ -1558,24 +1724,21 @@ def decide_turn(
                 departure_target_agent as _dep_agent,
             )
 
-            _kind_sig = unified_signal
-            if _kind_sig is None:
-                from types import SimpleNamespace as _NS
-
-                _kind_sig = _NS(
-                    task_intent=intent or "",
-                    workflow_draft_request=bool(workflow_draft_request),
-                    builder_entry="none",
-                )
-            _kadj = _adj_kind(current_active, signal=_kind_sig)
+            # B-248: both read the turn's decision themselves; no signal (or
+            # a SimpleNamespace stand-in for one) is threaded through.
+            _kadj = _adj_kind(current_active)
             _cur_agent = _canonical(current_active.get("agent") or "bot0")
-            _to = _dep_agent(_kind_sig, current_active) or "workflow_builder"
-            # Nothing to ask when the target is already in control. The
-            # default target is workflow_builder, so an ASK verdict while the
-            # builder was active proposed a switch to ITSELF and returned a
-            # switch_confirm plan — a Switch/Stay card offering the agent the
-            # user was already on, twice in one turn (conv_debaea7b).
-            if _kadj.verdict is _KindVerdict.ASK and _canonical(_to) != _cur_agent:
+            _to = _dep_agent(current_active)
+            # ASK without a named destination is not a builder switch.
+            # Defaulting empty `_dep_agent` to workflow_builder turned a
+            # glossary detour into "You're still deciding whether to switch
+            # to Workflow Builder" (conv_996b4ec0). conv_debaea7b was the
+            # self-switch cousin of the same default.
+            if (
+                _kadj.verdict is _KindVerdict.ASK
+                and _to
+                and _canonical(_to) != _cur_agent
+            ):
                 propose_switch(
                     db, tenant_id, conversation_id,
                     from_agent=_cur_agent,
@@ -1593,6 +1756,64 @@ def decide_turn(
                     live_route_layer, "sticky kind Switch/Stay",
                 )
                 return plan
+            # conv_4ac10b7c: glossary + named draft leave is not Switch/Stay
+            # and not D4-to-bot0. Complete the concept thread and open the
+            # named owner once. Destination comes from departure_target_agent
+            # (already computed as _to) — do not invent a default agent.
+            if (
+                _kadj.verdict is _KindVerdict.COGNITION_WINS
+                and str(current_active.get("kind") or "") == "concept_thread"
+                and _to
+                and _canonical(_to) != _cur_agent
+            ):
+                try:
+                    from conversation_control_plane.concept_thread_pin_contract import (
+                        concept_thread_leaves_for_draft as _ct_leave,
+                    )
+
+                    if _ct_leave():
+                        complete_task(
+                            db, tenant_id, conversation_id, agent="bot0",
+                            reason="superseded",
+                            task_id=(
+                                current_active.get("task_id")
+                                if isinstance(current_active.get("task_id"), str)
+                                else None
+                            ),
+                        )
+                        _dest = _canonical(_to)
+                        _dest_kind = ledger_kind_for_agent(_dest)
+                        begin_task(
+                            db, tenant_id, conversation_id, agent=_dest,
+                            phase="active", awaiting="in_progress",
+                            kind=_dest_kind,
+                            pending_ref=f"{_dest}:{conversation_id}",
+                        )
+                        plan = TurnPlan(
+                            agent=_dest,
+                            mode="active_task",
+                            task=ActiveTask(
+                                agent=_dest,
+                                phase="active",
+                                awaiting="in_progress",
+                                kind=_dest_kind,
+                            ),
+                            reason=(
+                                "leave concept_thread for named draft "
+                                f"({intent_source})"
+                            ),
+                        )
+                        _maybe_log_conflict(
+                            db, tenant_id, conversation_id, plan,
+                            live_route_intent, live_route_layer,
+                            "concept_thread leave named draft",
+                        )
+                        return plan
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "concept_thread named-draft leave skipped",
+                        exc_info=True,
+                    )
         except Exception:  # noqa: BLE001
             logger.debug("sticky kind change adjudication skipped", exc_info=True)
 
@@ -1643,12 +1864,126 @@ def decide_turn(
             and agent in ("workflow_builder", "workflow_draft")
             and not at_specific_gate
             and len(q) > 10   # substantial new description, not short confirmation
-            and intent in (None, "unclear", "continue", "handoff")
+            # B-240: a perceived CONTINUE resumes (§7 above) — a length check
+            # may not turn cognition's "continue" into a new task.
+            and intent in (None, "unclear", "handoff")
         )
 
         # 1) Explicit new task, OR (mid-flight only) a divergent route claiming one → suspend (resumable)
         # + begin the new one. The conv_2999b108 save — now gated so it can't fire at a confirmation gate.
+        # B-240: a message cannot displace the task it opened. The worker
+        # re-decides the message the main process already admitted; reading
+        # its own task as "previous work" suspended and re-began the builder
+        # inside one turn (conv_b4bc0ea1 replay, conv_10152a62 seq 3→5→6).
+        from conversation_control_plane.admission_contract import (
+            opened_by_this_message as _opened_by_this_message,
+        )
+
+        if _opened_by_this_message(current_active) and (
+            intent == "new_task" or route_claims_new_task or fresh_new_spec
+        ):
+            plan = TurnPlan(
+                agent=agent, mode="active_task", task=active_task_obj,
+                reason=f"task opened by this message continues ({intent_source})",
+            )
+            _maybe_log_conflict(
+                db, tenant_id, conversation_id, plan, live_route_intent,
+                live_route_layer, "same message: own task is not displaced",
+            )
+            return plan
         if intent == "new_task" or route_claims_new_task or fresh_new_spec:
+            # conv_4ac10b7c: a named draft act on an already-open drafting /
+            # workflow_build owner is that task's work, not D4 suspend.
+            try:
+                from conversation_control_plane.pre_decide_owner_contract import (
+                    named_acts_continue_task_kind as _named_own_d4,
+                )
+
+                if _named_own_d4(str(current_active.get("kind") or "")):
+                    plan = TurnPlan(
+                        agent=agent, mode="active_task", task=active_task_obj,
+                        reason=(
+                            "D4 named act is the open owner's work "
+                            f"({intent_source})"
+                        ),
+                    )
+                    _maybe_log_conflict(
+                        db, tenant_id, conversation_id, plan,
+                        live_route_intent, live_route_layer,
+                        "D4 named-act keep owner",
+                    )
+                    return plan
+            except Exception:  # noqa: BLE001
+                logger.debug("D4 named-act keep skipped", exc_info=True)
+            try:
+                from conversation_control_plane.domain_create_intake_contract import (
+                    create_act_keeps_workflow_build as _dom_create_keep,
+                )
+
+                if _dom_create_keep(q) and str(
+                    current_active.get("kind") or ""
+                ) in ("workflow_build", "drafting"):
+                    plan = TurnPlan(
+                        agent=agent, mode="active_task", task=active_task_obj,
+                        reason=(
+                            "D4 domain-create act is the open owner's work "
+                            f"({intent_source})"
+                        ),
+                    )
+                    _maybe_log_conflict(
+                        db, tenant_id, conversation_id, plan,
+                        live_route_intent, live_route_layer,
+                        "D4 domain-create keep owner",
+                    )
+                    return plan
+            except Exception:  # noqa: BLE001
+                logger.debug("D4 domain-create keep skipped", exc_info=True)
+            # Parked new/keep ask owns "new" — it is not D4 new_task
+            # (conv_daf74954). Same shape as advisor project-create suppress.
+            try:
+                from conversation_control_plane.new_vs_previous_continue_contract import (
+                    NEW_VS_PREVIOUS_AWAITING as _NVP_AWAITING_D4,
+                    new_vs_previous_gate_owns_turn as _nvp_owns_d4,
+                )
+
+                if _nvp_owns_d4(
+                    context=context if isinstance(context, dict) else {},
+                    history=messages,
+                    db=db,
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                ):
+                    plan = TurnPlan(
+                        agent="workflow_builder",
+                        mode="continue",
+                        task=ActiveTask(
+                            agent="workflow_builder",
+                            phase=str(current_active.get("phase") or "active")
+                            if isinstance(current_active, dict)
+                            else "active",
+                            awaiting=_NVP_AWAITING_D4,
+                            kind=WORKFLOW_BUILD_KIND,
+                            pending_ref=(
+                                current_active.get("pending_ref")
+                                if isinstance(current_active, dict)
+                                else None
+                            ) or f"pending_workflow:{conversation_id}",
+                        ),
+                        reason=(
+                            "new_vs_previous gate armed — suppress new_task "
+                            f"steal ({intent_source})"
+                        ),
+                    )
+                    _maybe_log_conflict(
+                        db, tenant_id, conversation_id, plan, live_route_intent,
+                        live_route_layer, "D4 new_task suppressed new_vs_previous",
+                    )
+                    return plan
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "new_vs_previous D4 suppress skipped",
+                    exc_info=True,
+                )
             # Open project-create owns free text (re-paste team sizing after name-ask
             # error must not D4-suspend into bot0 ceremony — conv_648143cd).
             # Same table as D4 abandon suppress + discovery suppress.
@@ -1884,7 +2219,10 @@ def decide_turn(
         # 4) CONTINUE / resume the active task — the default; WINS at a gate (the misroute fix): a
         # continue / ambiguous-but-answering / targetless-handoff message resumes; it never switches.
         # Router-broke-to-bot0 is the one detour exception (an explicit "this is a Bot0 question" signal).
-        route_broke_to_bot0 = live_route_intent == "bot0"
+        # B-248: a decided ``continue`` IS the decision to stay on the open task;
+        # the route label for a bot0-owned continue (concept_thread, drafting…)
+        # is just that task's owner, not a break to bot0.
+        route_broke_to_bot0 = live_route_intent == "bot0" and _act != "continue"
         heuristic_answers = bool(awaiting) and (len(q) > 3 or "name" in awaiting.lower())
         # A perceived CONTINUE can resume even when the router broke to bot0, but only at a
         # specific gate where the user is plausibly answering the active task. Mid-flight/no-gate
@@ -2012,6 +2350,31 @@ def decide_turn(
                 )
                 return plan
         if continues:
+            try:
+                from conversation_control_plane.claimed_turn_complete_contract import (
+                    confirm_fails_soft_to_redisplay as _failsoft_pick,
+                )
+
+                if _failsoft_pick(awaiting=awaiting, query=query):
+                    # conv_7eb60d26: "ok" at the domain picker is not a domain.
+                    # Clearing awaiting here sent the turn to the builder LLM
+                    # with nothing to continue — hollow recap, blocks=[].
+                    plan = TurnPlan(
+                        agent=agent,
+                        mode="active_task",
+                        task=active_task_obj,
+                        reason=(
+                            f"failsoft_redisplay fat_leaf awaiting={awaiting}"
+                        ),
+                    )
+                    _maybe_log_conflict(
+                        db, tenant_id, conversation_id, plan,
+                        live_route_intent, live_route_layer,
+                        "failsoft_redisplay fat_leaf",
+                    )
+                    return plan
+            except Exception:  # noqa: BLE001 — fail-soft must never block continue
+                logger.debug("failsoft fat-leaf redisplay skipped", exc_info=True)
             plan = TurnPlan(agent=agent, mode="active_task", task=active_task_obj,
                             reason=f"active_task continue for {awaiting} ({intent_source})")
             _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent,
@@ -2022,7 +2385,7 @@ def decide_turn(
 
         # 4b) Cognition named an act the OPEN TASK owns — that is the task's own
         # work arriving, not a side question. conv_7446cb2a: a process paste
-        # named workflow_draft_request while workflow_build was open, fell
+        # named a draft act (workflow_draft_request) while workflow_build was open, fell
         # through to (5), and dispatched to the 78-tool orchestrator, which
         # picked draft_workflow and minted a prose card the kill-switch had
         # already turned off. The owner was declared the whole time; only the
@@ -2034,7 +2397,6 @@ def decide_turn(
 
             if named_acts_continue_task_kind(
                 str(current_active.get("kind") or ""),
-                classified=unified_signal,
             ):
                 plan = TurnPlan(
                     agent=agent, mode="active_task", task=active_task_obj,
@@ -2051,6 +2413,90 @@ def decide_turn(
                              phase=current_active.get("phase", "active"),
                              awaiting=None)
                 return plan
+            # conv_4ac10b7c retry: cognition missed the flag; the open
+            # owner still owns a process-body turn. Never 80-tool detour
+            # into draft_workflow prose.
+            # A named foreign act is not a missed flag — G5 I8 forbids
+            # reinterpreting it as process body (conv_0f96d344).
+            _open_kind = str(current_active.get("kind") or "")
+            if _open_kind in ("drafting", WORKFLOW_BUILD_KIND):
+                try:
+                    from conversation_control_plane.draft_content_strength_contract import (
+                        live_query_is_process_seed as _proc_body_d4,
+                    )
+                    from conversation_control_plane.pre_decide_owner_contract import (
+                        named_acts_are_foreign_to_task_kind as _named_foreign_d4,
+                    )
+
+                    if _named_foreign_d4(_open_kind):
+                        pass
+                    elif _proc_body_d4(query or ""):
+                        if (
+                            _open_kind == WORKFLOW_BUILD_KIND
+                            or agent == "workflow_builder"
+                        ):
+                            plan = TurnPlan(
+                                agent=agent, mode="active_task",
+                                task=active_task_obj,
+                                reason=(
+                                    "active_task continue: process body on "
+                                    f"open owner ({intent_source})"
+                                ),
+                            )
+                            _maybe_log_conflict(
+                                db, tenant_id, conversation_id, plan,
+                                live_route_intent, live_route_layer,
+                                "active_task continue (process body)",
+                            )
+                            update_phase(
+                                db, tenant_id, conversation_id, agent=agent,
+                                phase=current_active.get("phase", "active"),
+                                awaiting=None,
+                            )
+                            return plan
+                        complete_task(
+                            db, tenant_id, conversation_id, agent="bot0",
+                            reason="superseded",
+                            task_id=(
+                                current_active.get("task_id")
+                                if isinstance(current_active.get("task_id"), str)
+                                else None
+                            ),
+                        )
+                        from conversation_control_plane.ledger import (
+                            handoff as _d4_proc_handoff,
+                        )
+
+                        _d4_proc_handoff(
+                            db, tenant_id, conversation_id,
+                            target_agent="workflow_builder",
+                            task_text="in_progress",
+                            reason="process body on drafting",
+                        )
+                        plan = TurnPlan(
+                            agent="workflow_builder",
+                            mode="active_task",
+                            task=ActiveTask(
+                                agent="workflow_builder",
+                                phase="active",
+                                awaiting="in_progress",
+                                kind=WORKFLOW_BUILD_KIND,
+                            ),
+                            reason=(
+                                "process body on drafting — builder owns "
+                                f"extract ({intent_source})"
+                            ),
+                        )
+                        _maybe_log_conflict(
+                            db, tenant_id, conversation_id, plan,
+                            live_route_intent, live_route_layer,
+                            "D4 process body drafting handoff",
+                        )
+                        return plan
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "process-body owner continue skipped", exc_info=True,
+                    )
         except Exception:  # noqa: BLE001 — a rescue must never break the turn
             logger.debug("named-act continue check skipped", exc_info=True)
 
@@ -2062,14 +2508,14 @@ def decide_turn(
         return plan
 
     # --- Step 5/6/7: detour classification + resume from suspended + default ---
-    # Use live_route as the classification outcome (proxy for L1/L2/L3).
+    # Use the router's proposed agent (live_route_intent) as the outcome.
     # The real implementation will call the (demoted) classifier only for genuine detours.
     # Check for resume from suspended first (step 6): if a suspended task's "awaiting"
     # plausibly matches the message, we resume it (after resolve_pending in real code).
     # When the live router broke to bot0, this turn is a Bot0 question/detour — do
     # NOT auto-resume a suspended heavy task. Resume only when the bounded LLM
     # classifier perceives continue/resume targeting the suspended agent.
-    route_broke_to_bot0 = live_route_intent == "bot0"
+    route_broke_to_bot0 = live_route_intent == "bot0" and _act not in ("continue", "resume")
     for s in suspended:
         s_agent = _canonical(s.get("agent", ""))
         if not s.get("awaiting") or route_broke_to_bot0:
@@ -2079,7 +2525,7 @@ def decide_turn(
             perceived = _perceive_relative_intent(
                 db, tenant_id, query=query,
                 active_task=None, suspended_tasks=suspended,
-                messages=messages, unified_signal=unified_signal,
+                messages=messages,
             )
         except Exception:  # noqa: BLE001 — perception must never explode routing
             logger.debug("suspended resume classifier failed", exc_info=True)
@@ -2124,19 +2570,22 @@ def decide_turn(
         reason=f"Intent router → {target} ({live_route_layer})",
     )
 
-    if live_route_intent in (
-        "workflow_builder", "transformation_advisor", "transformation_recommender",
-        "workflow_editor",
-    ):
-        begin_task(
-            db, tenant_id, conversation_id, agent=live_route_intent,
-            phase="active", awaiting="in_progress",
-            kind=ledger_kind_for_agent(live_route_intent),
-            pending_ref=f"shadow:{live_route_intent}:{conversation_id}",
-        )
+    # B-240: the router's agent is a PROPOSAL. Opening its ledger task here
+    # left admitted work behind whenever a later leaf answered the turn
+    # (conv_b4bc0ea1: an advisor task opened, never ran, then suspended with
+    # no journal row). Admission happens at the agent's dispatch entry —
+    # `admission_contract.admit_at_dispatch` — where it is true.
+    from conversation_control_plane.admission_contract import propose as _propose
+
+    _propose(
+        agent=target,
+        router_intent=live_route_intent,
+        router_layer=live_route_layer,
+        kind=ledger_kind_for_agent(target),
+    )
 
     _maybe_log_conflict(db, tenant_id, conversation_id, plan, live_route_intent, live_route_layer,
-                        "P2a shadow default / classification proxy")
+                        "default: router proposal (admitted at dispatch)")
     return plan
 
 

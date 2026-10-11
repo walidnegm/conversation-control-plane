@@ -28,93 +28,93 @@ cannot go any other way — which is the part an adopter needs, because every
 bypass anyone has shipped was a locally reasonable shortcut.
 
 ```
-        EVIDENCE PROVIDERS
-        classifiers · state · pins · discovery · context · UI signals
-        ASSERT EVIDENCE ONLY — MAY NOT SELECT / DELIVER / EXECUTE
-                              │
-                              ▼
-                 ┌────────────────────────────┐
-                 │         COGNITION          │
-                 │   What does this turn mean?│
-                 │                            │
-                 │  PRECEDENCE RESOLVES HERE  │
-                 │  competing evidence → ONE  │
-                 │                            │
-                 │  deterministic lookup      │
-                 │    chip act id · ordinal   │
-                 │    against an offered list │
-                 │              OR            │
-                 │  LLM interpretation        │
-                 │    ambiguous / free text   │
-                 └─────────────┬──────────────┘
-                               ▼
-                 ┌────────────────────────────┐
-                 │  CANONICAL ACT ENVELOPE    │
-                 │  act + slots + refs        │
-                 │      + evidence            │
-                 │  SEMANTIC COMMIT POINT     │
-                 └─────────────┬──────────────┘
-                               ▼
-         ╔═════════════════════════════════════════════╗
-         ║            GROUNDING BOUNDARY               ║
-         ║                  CHOKE                      ║
-         ║  resolve requirements / entities / parts    ║
-         ║  bind the act to authoritative state        ║
-         ║                                             ║
-         ║  ONCE PER ACTIONABLE TURN                   ║
-         ║  CHEAP · SYNCHRONOUS · NOT A MODEL CALL     ║
-         ║                                             ║
-         ║  DOES NOT: reinterpret the act · arbitrate  ║
-         ║  raw evidence · decide authority · execute  ║
-         ╚═══════════════════╤═════════════════════════╝
-                             │
-              ┌──────────────┴───────────────┐
-        sufficiently grounded          missing / stale / ambiguous
-              │                               │
-              ▼                               ▼
-          ┌────────┐                  ASK · REJECT · REFRESH · DEFER
-          │ LEDGER │                     NEVER IMPROVISE
-          └───┬────┘
-              ▼
-        ┌───────────┐
-        │ AUTHORITY │   May this act be committed?
-        └─────┬─────┘
-              │
-      authorized │ denied → DENY · REQUEST APPROVAL
-              ▼
-        ┌──────────┐      ┌───────────────────────────┐
-        │ DELIVERY │ ───► │ EXECUTION                 │
-        └──────────┘      │ idempotent · observable   │
-                          │ truthful                  │
-                          └───────────────────────────┘
+ EVIDENCE PROVIDERS
+ classifiers · state · pins · discovery · context · UI signals
+ ASSERT EVIDENCE ONLY — MAY NOT SELECT / DELIVER / EXECUTE
+ │
+ ▼
+ ┌────────────────────────────┐
+ │ COGNITION │
+ │ What does this turn mean?│
+ │ │
+ │ PRECEDENCE RESOLVES HERE │
+ │ competing evidence → ONE │
+ │ │
+ │ deterministic lookup │
+ │ chip act id · ordinal │
+ │ against an offered list │
+ │ OR │
+ │ LLM interpretation │
+ │ ambiguous / free text │
+ └─────────────┬──────────────┘
+ ▼
+ ┌────────────────────────────┐
+ │ CANONICAL ACT ENVELOPE │
+ │ act + slots + refs │
+ │ + evidence │
+ │ SEMANTIC COMMIT POINT │
+ └─────────────┬──────────────┘
+ ▼
+ ╔═════════════════════════════════════════════╗
+ ║ GROUNDING BOUNDARY ║
+ ║ CHOKE ║
+ ║ resolve requirements / entities / parts ║
+ ║ bind the act to authoritative state ║
+ ║ ║
+ ║ ONCE PER ACTIONABLE TURN ║
+ ║ CHEAP · SYNCHRONOUS · NOT A MODEL CALL ║
+ ║ ║
+ ║ DOES NOT: reinterpret the act · arbitrate ║
+ ║ raw evidence · decide authority · execute ║
+ ╚═══════════════════╤═════════════════════════╝
+ │
+ ┌──────────────┴───────────────┐
+ sufficiently grounded missing / stale / ambiguous
+ │ │
+ ▼ ▼
+ ┌────────┐ ASK · REJECT · REFRESH · DEFER
+ │ LEDGER │ NEVER IMPROVISE
+ └───┬────┘
+ ▼
+ ┌───────────┐
+ │ AUTHORITY │ May this act be committed?
+ └─────┬─────┘
+ │
+ authorized │ denied → DENY · REQUEST APPROVAL
+ ▼
+ ┌──────────┐ ┌───────────────────────────┐
+ │ DELIVERY │ ───► │ EXECUTION │
+ └──────────┘ │ idempotent · observable │
+ │ truthful │
+ └───────────────────────────┘
 ```
 
 **The control laws.**
 
 1. **Evidence may ASSERT. Evidence may not EXECUTE.**
 2. **Precedence happens once, in cognition.** Conflicting evidence does not
-   travel downstream as competing owners for a later stage to settle by
-   source-line order.
+ travel downstream as competing owners for a later stage to settle by
+ source-line order.
 3. **Cognition produces ONE canonical act.** Deterministic lookup and model
-   interpretation are two implementations of one stage, not two pipelines. A
-   chip is the cheap engine, never a side door.
+ interpretation are two implementations of one stage, not two pipelines. A
+ chip is the cheap engine, never a side door.
 4. **Every actionable turn crosses ONE grounding boundary EXACTLY ONCE.** Not
-   *at least* once: two traversals are two answers to *"what does this refer
-   to"*, and nothing downstream is placed to notice they differ.
+ *at least* once: two traversals are two answers to *"what does this refer
+ to"*, and nothing downstream is placed to notice they differ.
 5. **The architecture is the boundary, not the function that implements it.**
-   Coverage is not more call sites; a second caller is a doctrine change.
+ Coverage is not more call sites; a second caller is a doctrine change.
 6. **Downstream may REFINE, ASK, REJECT, DEFER, DENY or FAIL. It may not
-   reinterpret the canonical act into another act.**
+ reinterpret the canonical act into another act.**
 7. **Grounding ≠ authority.** *"I know what this act refers to"* is not
-   *"I may execute it."*
+ *"I may execute it."*
 8. **No failure falls through into conversational invention.** Unresolved
-   means ASK, REJECT or DEFER — never fabricate a behaviour to fill the gap.
+ means ASK, REJECT or DEFER — never fabricate a behaviour to fill the gap.
 9. **No feature creates another door.** A new capability contributes evidence
-   or an act to this pipeline; it does not open a parallel execution path.
+ or an act to this pipeline; it does not open a parallel execution path.
 10. **System / transport mechanics are not an extensible bypass category.**
-    Anything capable of domain or work behaviour is an actionable turn and
-    crosses the boundary. The test is structural — *can this cause work?* —
-    never a label a caller applies to itself.
+ Anything capable of domain or work behaviour is an actionable turn and
+ crosses the boundary. The test is structural — *can this cause work?* —
+ never a label a caller applies to itself.
 
 **Law 6 is the one adopters under-build**, because it only fails in
 production. A worked failure: a user clicks **Use recommended domain**. The
@@ -177,6 +177,14 @@ plane is `turn_plane_unmoved`.
 > No **control** mutation → the next turn misroutes on stale `active_task`.
 > No **domain** mutation → "Opening…", "you can rename it in the editor".
 
+<a id="sdk-target-claimed-turn-complete"></a>
+**TC-L (claimed turn must complete).** If a claimant takes the turn it owes a
+complete outcome or an explicit refusal. Complete = ledger mutation, **or**
+declared read-only, **or** typed refuse. Fat-leaf answers must arm the matching
+`awaiting`. Host rails: `claimed_turn_complete_contract.finalize_claimed_turn`
+on the chat output rail **and** after the worker ledger mirror (do not report
+unmoved *before* the async handler writes). Incident `conv_4ac10b7c`.
+
 #### Grounding is more than identity
 
 Stage 2 has three jobs, and resolution is one of them:
@@ -226,6 +234,7 @@ in the reference host:
 | **A20** undeclared destination | which leaves exist | 40 of 159 answer sites name no leaf |
 | **unowned voice** | what a leaf says | 88 of 133 composable concepts have no curated presentation, so a model writes the reply |
 | **unbounded composition** | how many things one turn says | 19 sites build a reply by appending to one already in flight — a POINTER, not a ceiling (see below) |
+| **hollow sibling** | one act, two handlers | A *declared* recap (`blocks=[]`, “Still setting up”, numbered “Which path?”) steals the surface the finite act already named. Soaks then mint an intercept per wording. Closed by `FINITE_ACT_DESTINATIONS` + shrink-only recap builders (`delivery_leaf_contract`). conv_9c63dd49 · conv_1560de2c · conv_c6e7b4eb |
 
 The third is worth stating as its own law, because it is invisible in review:
 each contributor appends a reasonable line and **nobody reads the sum**. One
@@ -267,6 +276,33 @@ The remedy is a composer over **declared** fragments — each naming its speech
 act, the facts it states, what it asks for, and the stream it speaks for — so
 duplicate and foreign contributions are dropped by contract rather than by
 review. Never by inference over the fragment's own prose.
+
+#### A continue meaning needs a reader (A21)
+
+The stream seat closes over registered **kinds**, but not over what a
+`continue` on that kind may **mean**. The decision can say *continue — the
+user is asking a question about the open step*, hand the turn to the step,
+and the step can ignore the meaning: it treats every continue as "advance"
+and repaints its surface. Routing was right, the owner was right, and the
+user still got nothing back.
+
+Measured in the reference host (2026-10-10): mid-costing, *"any
+recommendations?"* was decided `continue` / `question` — correctly — and the
+costing step repainted the same card. The boundary already had the guard
+(*a continue meaning the kind does not accept is asked, not executed*); no
+kind declared what it accepts, so the guard could never fire.
+
+**Law.** Every sole-continue kind declares the continue meanings it reads —
+or names the interpreter that reads the raw text itself. The boundary
+executes a declared meaning and **asks** about an undeclared one; it never
+lets a leaf absorb a meaning silently. A kind adds a meaning when a reader
+for it exists, not before. This is the chip rule (*an emitted act needs a
+reader*) one level down: a meaning is a destination too.
+
+Portable surface: `KindSpec.continue_meanings` / `KindSpec.continue_interpreter`
+in `kind_spec`, fed to the decision boundary as the open kind's accepted set. A kind not yet
+verified is listed explicitly (`KIND_CONTINUE_UNAUDITED`, shrink-only) and is
+not limited until it is — adoption without regressing what works today.
 
 #### Admissibility is Control's, not the graph's
 
@@ -386,33 +422,33 @@ utterance "can you rename Selectoin / INtent to Intention Recorded"
  without a named reader, typed slots, grounded refs, and take-once claim
  is a hollow act.
 12. **Cognition may be DETERMINISTIC under stated conditions; grounding and
-    authority may not be skipped.** Cognition always runs — only its ENGINE
-    varies, and every engine emits the same envelope. A declared act enters
-    the lookup engine, not the delivery stage. An evidence grade is an ENTRY
-    grade for one decision; it does not license an exit from the pipeline.
-    *(First written as "cognition may be skipped" and corrected the same day —
-    that phrasing is the exact licence a bypass takes.)*
+ authority may not be skipped.** Cognition always runs — only its ENGINE
+ varies, and every engine emits the same envelope. A declared act enters
+ the lookup engine, not the delivery stage. An evidence grade is an ENTRY
+ grade for one decision; it does not license an exit from the pipeline.
+ *(First written as "cognition may be skipped" and corrected the same day —
+ that phrasing is the exact licence a bypass takes.)*
 13. **Failure to establish an executable act is not permission to generate a
-    conversational answer.** At an armed gate, not-executable means ASK and
-    re-show the choice.
+ conversational answer.** At an armed gate, not-executable means ASK and
+ re-show the choice.
 14. **A chip carries an act, not a sentence.** Serialising a typed UI act to
-    prose so downstream can re-interpret it destroys information and makes a
-    click indistinguishable from a keystroke. Corollary: **a token the
-    product emitted is never sent to a model to be corrected** — a typo pass
-    turned `use recommended domain` into `use the recommended domain`, and
-    every acceptor downstream compared exact tokens. One inserted article
-    unmade the click.
+ prose so downstream can re-interpret it destroys information and makes a
+ click indistinguishable from a keystroke. Corollary: **a token the
+ product emitted is never sent to a model to be corrected** — a typo pass
+ turned `use recommended domain` into `use the recommended domain`, and
+ every acceptor downstream compared exact tokens. One inserted article
+ unmade the click.
 15. **Precedence is resolved once, in cognition** (law 2), and **downstream
-    may not reinterpret the act** (law 6).
+ may not reinterpret the act** (law 6).
 16. **An ungrounded work turn cannot be DELIVERED** — not merely should not
-    be. See `GroundedDeclaration` (§16.3) for the construction that makes this
-    enforceable rather than aspirational.
+ be. See `GroundedDeclaration` (§16.3) for the construction that makes this
+ enforceable rather than aspirational.
 17. **A consumer must be able to express every value its registry produces.**
-    The sharper sibling of 8: that law catches a declaration with *no* reader;
-    this one catches a reader that agrees and **cannot say so** — an enum
-    branch, a return type or a status field that has no room for a value the
-    registry legitimately returns. It fails silently, in the default arm, and
-    no amount of convergence upstream prevents it.
+ The sharper sibling of 8: that law catches a declaration with *no* reader;
+ this one catches a reader that agrees and **cannot say so** — an enum
+ branch, a return type or a status field that has no room for a value the
+ registry legitimately returns. It fails silently, in the default arm, and
+ no amount of convergence upstream prevents it.
 18. **Graphs own navigation; Control owns admissibility; Execution owns
  mutation.** `next_act` is not a central switch in the control plane.
 
@@ -650,7 +686,7 @@ per decision** · **instructions are not enforcement**.
 
 > ### 🧭 Touchstone — before wiring or routing a capability
 >
-> **[Checklist against the target pipeline](docs/turn-capability-lifecycle-checklist.md)**
+> **[Checklist against the target pipeline](turn-capability-lifecycle-checklist.md)**
 > — cognition → validation/grounding → stream/task → authority/ownership →
 > delivery leaf → execution. It invents nothing: at each stage it names the
 > failure we have shipped there, what already owns it, and how to check.
@@ -751,7 +787,7 @@ Read projection + expected_version → (LLM / specialist work off DB)
 
 **Code:** `ledger.py`, `ledger_journal.py`, `ledger_outbox.py`, `ledger_keys.py`, worker tick
 `conversation_control_outbox_export`, migrations `a3b4c5d6e7f8` + `b5c6d7e8f9a0`.
-**Program:** [§ Ledger maturity L1→L2](#ledger-maturity-l1l2--model-a) (monorepo epic: ``).
+**Program:** [§ Ledger maturity L1→L2](#ledger-maturity-l1l2--model-a) (monorepo epic).
 
 ### Production-grade definition {#production-grade-definition}
 
@@ -1923,7 +1959,7 @@ flowchart TB
 
 | Audience | What they get |
 |---|---|
-| **Public / extract package** | This section is **self-contained** — portable terms + A1–A19 table (no link to monorepo lexicon). |
+| **Public / extract package** | This section is **self-contained** — portable terms + A1–A21 table (no link to monorepo lexicon). |
 
 **Portable terms** (also inlined in the extract SDK so public readers need no host lexicon):
 
@@ -1985,6 +2021,7 @@ suppress laundry.
 | A18 | **Dispatch-order laundry** (suppress stacks) | **S**+**D** | O(N²) leaf politics: seal inventory → sim early still steals | KPI “cost per ticket” → Help Desk graph; after inventory seal → `workflow_simulation_entry_early` | **One** `project_pre_decide_owner` + `FOREIGN_PRE_DECIDE_DISPATCHES` allow-list; extend table — **never** `*_blocks_<leaf>_early` | `pre_decide_owner_contract.py` · `test_pre_decide_owner_contract.py` |
 | A19 | **Soft existence / unsealed transition** | **E**+**S** | Dialogue pin treated as registry SoR; model re-confirms or freestyles create instead of code tool | “You already have project Jasmin2” with no `project_id`; name+yes → “Create Jasmin2?” again | **Thin-verify:** LLM proposes intent → code verifies thin state (id / open leaf / pin) → tool or honest refuse; existence = registry id only — **not** dual create FSM / skip-phrase laundry | `advisor_create_continue_contract` · CAQ `soft_existence_claim` · purity v4 **L31** · `test_advisor_create_name_continue_seal.py` |
 | A20 | **Undeclared delivery leaf** | **D** | A behavioural destination that answers users and has no registry row. Seats 1–4 all have closed inventories (enums, refs, ledger kinds, owner tables); **delivery is the only seat where anything can happen and nothing declares it** | Two labels for one situation reach two handlers thousands of lines apart with different quality — one with paths and an armed pick-list, one a hardcoded sentence with `blocks: []`, so the follow-up "1" has no owner. Measured in the reference host: **159 answer-producing return sites, 40 stamping no dispatch at all** | Every answer-producing site declares which leaf it is. Undeclared count is **shrink-only**. Not an eval problem: eval finds instances, a closed delivery inventory makes the class impossible — and it is the pre-condition for any dispatch-keyed instrument to see these sites at all | delivery-leaf inventory · sibling of A18 (order) and the finite-surface owner contract (a surface with no owner; this is an owner with no declaration) |
+| A21 | **Absorbed continue meaning** | **D** | The decision hands an open step a `continue` whose meaning the step never reads — it treats every continue as advance | Routing and ownership are right and the user still gets nothing: mid-costing "any recommendations?" was decided `continue`/`question`, and the step repainted its card (reference host, 2026-10-10). The boundary's accepted-meaning guard existed and never fired because no kind declared what it accepts | Every sole-continue kind declares its continue meanings (`KindSpec.continue_meanings`) or names its text interpreter; the boundary asks about an undeclared meaning. A meaning joins a kind only with a reader | kind registry · sibling of A20 (a leaf nothing declared; this is a meaning no leaf reads) and the finite-act reader rule |
 
 #### ⛔ Soft existence — not thin-verify (A19 · root **E**/**S**)
 
@@ -2151,6 +2188,9 @@ whatever the app ships is **closed, registered, and code-owned** at the authorit
 **Semantic proposal shape (portable — app fills values):**
 
 ```text
+
+> **Host note, B-248 (2026-10-09):** the proposal is never the authority. Bot0 builds this as `TurnProposal` (cognition) → one canonical decision boundary → one immutable `ResolvedTurnDecision` that every consumer executes without reinterpreting. See [one-turn-one-act_specification.md](one-turn-one-act_specification.md).
+
 SemanticProposal {
  operation: <closed enum> // never free-form string authority
  target?: <id | pin key>
@@ -2411,7 +2451,7 @@ Without this contract, each agent invents its own stickiness (flags, ambient `la
 name, wordlists). Failures look different per paint job but share one disease: **continue turns re-enter
 greenfield dispatch**.
 
-##### Four invariants (every turn on a sole-continue stream)
+##### Five invariants (every turn on a sole-continue stream)
 
 | # | Invariant | Means | Forbidden |
 |---|---|---|---|
@@ -2419,6 +2459,7 @@ greenfield dispatch**.
 | **2** | **Pin owns identity** | Authoritative entity ids live only on `active_task.payload` (`workflow_id`, `project_id`, `run_id`, …) | Ambient `last_read_*` as *sole* authority for “which entity they meant this turn” |
 | **3** | **LLM owns continue meaning** | Sizing, verify chips, refine, detour vs continue labels — bounded classifier / assessor with ledger hydration | Regex/wordlist as sole arbiter of what the user meant on a continue turn |
 | **4** | **Finite grammar only when armed** | Bare `1` / `yes` / path digits are code-owned **only** when `pending_question` / ordinal stream / path menu was set this session | Treating every digit as inventory pick while a different stream is live |
+| **5** | **The kind owns its meanings** | Each kind declares the continue meanings it reads (or names its own text interpreter); the boundary passes a declared meaning and asks about an undeclared one | A leaf that treats every continue as "advance" — a question about the open step repaints the surface instead of being answered (A21) |
 
 Escape from sole-continue is **classifier-owned**: `task_intent ∈ {detour, new_task, abandon, handoff}`
 (plus product supersede via exclusive turn owner / delivery-order — §2.1 discovery detour). Code does not
