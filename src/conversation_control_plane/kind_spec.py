@@ -7,7 +7,7 @@ ratchets, and future scaffold generators.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional
 
 from conversation_control_plane.multi_turn_stream_contract import (
     CONTINUE_PHASES_BY_KIND,
@@ -141,6 +141,32 @@ KIND_CONTINUE_UNAUDITED: frozenset[str] = frozenset({
     SCORECARD_INTERROGATE_KIND,
     WORKFLOW_BUILD_KIND,
 })
+
+
+#: SDK A21 + A17 (10-11 audit): a kind whose continue meanings the boundary
+#: ENFORCES must also say how its open card is shown again — when the
+#: boundary asks about a meaning the step does not read, the person stays on
+#: that card instead of losing it to a bare line. Every key of
+#: KIND_CONTINUE_MEANINGS needs a row here ("module:function", taking the
+#: ledger context, returning ContentBlocks).
+KIND_OPEN_CARD: dict[str, str] = {
+    "cost_out": "conversation_control_plane.cost_question_contract:open_card_blocks",
+}
+
+
+def open_card_blocks(kind: str | None, context: Any) -> list[dict[str, Any]]:
+    """The open step's card for ``kind``, or [] when none is declared or available."""
+    ref = KIND_OPEN_CARD.get(str(kind or "").strip())
+    if not ref:
+        return []
+    try:
+        import importlib
+
+        module, _, fn = ref.partition(":")
+        blocks = getattr(importlib.import_module(module), fn)(context)
+        return [b for b in (blocks or []) if isinstance(b, dict)]
+    except Exception:  # noqa: BLE001 — never break the ask
+        return []
 
 
 def accepted_continue_meanings(kind: str | None) -> frozenset[str] | None:
