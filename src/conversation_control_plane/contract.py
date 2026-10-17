@@ -536,6 +536,15 @@ def resolve_conversational_agent(agent_id: str, db: Any, tenant_id: str) -> Any:
                 pending_ref = res.get("pending_ref") or f"pending_workflow:{thread_id or 'no-id'}"
                 _terminal = _terminal_outcome(res, res.get("context_updates"))
                 if _terminal:
+                    # Ledger completion rule (10-17): the builder's kind.
+                    from conversation_control_plane.terminal_completion_contract import (
+                        report_completion_without_next as _report_no_next,
+                    )
+
+                    _report_no_next(
+                        "workflow_build", res, res.get("context_updates"),
+                        tenant_id=tenant_id, conversation_id=thread_id,
+                    )
                     transition = (
                         TaskTransition.ABANDON if _terminal == "abandon"
                         else TaskTransition.COMPLETE

@@ -456,6 +456,7 @@ imperatively (`decide.py` + `ledger.py` in `reference/`) or optionally host as L
 | **Perception** | Bounded classifiers → enums | Classifier **nodes** — same contract either way |
 | **Specialist agents** | `ConversationalAgent` under dispatch | Subgraphs / crews — Layer 1 execution |
 | **Checkpoints** | `control_revision` + routing trace | Mid-agent checkpointer — **orthogonal** (run replay ≠ Switch/Stay) |
+| **Completion** (what follows?) | `KIND_WHAT_FOLLOWS` — an armed continuum edge or a stated end, per kind | The graph's edges are the continuum. Every completion still declares an answer; "end" is one. Not determinism: code records the offer it made, cognition still reads the reply |
 
 Load-bearing rules: (1) one writer of control keys (`decide_turn`); (2) ▨ labels, ▣ transitions
 ([SDK §2.1](conversation-control-plane-sdk.md#21-integration-guardrails-portable-contract)); (3) explicit ledger

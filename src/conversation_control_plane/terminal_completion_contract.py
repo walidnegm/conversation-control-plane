@@ -350,6 +350,141 @@ def is_terminal(
     return terminal_outcome(result, context_updates) is not None
 
 
+# ---------------------------------------------------------------------------
+# What FOLLOWS a completion (10-17, Walid: "make the ledger rule fix — we have
+# to continue to harden our control plane").
+#
+# The half above says what ENDS a unit of work. This half says what comes
+# AFTER it: every ledger kind declares either the continuum edges its
+# completion arms (an offer + the pin that lets "yes please" advance it —
+# `product_continuum_next_step_contract.CONTINUUM_EDGE_TABLE`) or, in words,
+# why nothing follows. "End" is a valid declaration; silence is not.
+#
+# Why: the 10-17 audit found completions that offered nothing although the
+# product had a next step — a saved work system already simulation-ready,
+# value metrics saved on their own (conv_f5aea25d), the cost save that
+# confirms in chat, a published cost profile — and one edge marked sealed
+# whose arm had no production caller. Each was one site that forgot; nothing
+# could see it. The table makes the decision once per kind, the ratchet
+# (`test_every_completion_says_what_follows`) holds it, and the completion
+# sinks report a completion of an edge-declaring kind that armed no next step.
+#
+# Not determinism: code records only the offer it just made. Whether a reply
+# means "yes" stays exact chip grammar or the router's own judgement.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WhatFollows:
+    """What follows one kind's completion: continuum edges, or a stated end."""
+
+    #: Edge ids in CONTINUUM_EDGE_TABLE this kind's completion may arm.
+    edges: tuple[str, ...] = ()
+    #: Why nothing follows, in words — required when ``edges`` is empty.
+    end: str = ""
+
+
+KIND_WHAT_FOLLOWS: dict[str, WhatFollows] = {
+    "workflow_build": WhatFollows(edges=("workflow_save_to_outcome_value", "workflow_save_to_recommend")),
+    "outcome_value_setup": WhatFollows(edges=("ovs_saved_to_create_project",)),
+    "cost_out": WhatFollows(edges=("cost_save_to_recommend",)),
+    "agent_cost_pricing": WhatFollows(edges=("cost_save_to_recommend",)),
+    "input_state_setup": WhatFollows(edges=("iss_done_to_goal_seek", "rec20_edit_inputs_to_iss_and_back")),
+    "project_workspace": WhatFollows(edges=("project_ready_to_goal_seek",)),
+    "cyber_risk_assessment": WhatFollows(end=(
+        "Walid 10-17: nothing comes next after an assessment is saved — the "
+        "report card holds it."
+    )),
+    "recommendation_setup": WhatFollows(end=(
+        "Walid 10-17: no more offers after the result — the run's results "
+        "card links to the full results."
+    )),
+    "engagement_pack_plan": WhatFollows(end=(
+        "The end-of-plan ceremony is the end: it names its destinations "
+        "(designer, project, all workflows) as links."
+    )),
+    "drafting": WhatFollows(end=(
+        "Drafting ends by beginning workflow_build (referential_turn); the "
+        "build card is what follows, not an offer."
+    )),
+    "concept_thread": WhatFollows(end=(
+        "A delivered answer ends it. Where the answer names a simulation "
+        "pattern and a work system is pinned, glossary_pattern_to_sim_run "
+        "arms a run — an answer, not a completion edge."
+    )),
+    "scorecard_interrogate": WhatFollows(end=(
+        "A read stream: it ends when another task supersedes it, with that "
+        "task's own card."
+    )),
+    "risk_catalog_learning": WhatFollows(end=(
+        "A browse stream: it ends when another task supersedes it."
+    )),
+    "realization_intake": WhatFollows(end=(
+        "The generated package is the result; its card links to the "
+        "Realization Studio. Nothing is offered in chat after it."
+    )),
+    "pattern_midflight": WhatFollows(end=(
+        "Results are the end; the card says follow-ups are free text or "
+        "'stop'."
+    )),
+}
+
+
+def completion_without_next(
+    kind: str | None,
+    result: Mapping[str, Any] | None,
+    context_updates: Mapping[str, Any] | None = None,
+) -> Optional[str]:
+    """A finding when a kind that declares edges completed with no next step
+    armed, else None. Read by the completion sinks; it reports, never blocks."""
+    follows = KIND_WHAT_FOLLOWS.get(str(kind or ""))
+    if follows is None or not follows.edges:
+        return None
+    if terminal_outcome(result, context_updates) != "complete":
+        return None
+    cus = [context_updates] if isinstance(context_updates, Mapping) else []
+    if isinstance(result, Mapping) and isinstance(result.get("context_updates"), Mapping):
+        cus.append(result["context_updates"])
+    for cu in cus:
+        # An offer was pinned, or the turn began the next unit of work.
+        if cu.get("pending_continuum_next_step") or cu.get("active_task"):
+            return None
+    return f"{kind} completed without arming any of {', '.join(follows.edges)}"
+
+
+def report_completion_without_next(
+    kind: str | None,
+    result: Mapping[str, Any] | None,
+    context_updates: Mapping[str, Any] | None = None,
+    *,
+    context: Mapping[str, Any] | None = None,
+    tenant_id: str | None = None,
+    conversation_id: str | None = None,
+) -> Optional[str]:
+    """The sinks' one call: the finding, as a platform event (warning).
+
+    ``kind`` None: the result's own ``kind``, else the open task's in
+    ``context`` — the unit of work this turn completed."""
+    if not kind:
+        kind = (result or {}).get("kind") if isinstance(result, Mapping) else None
+    if not kind and isinstance(context, Mapping) and isinstance(context.get("active_task"), Mapping):
+        kind = context["active_task"].get("kind")
+    finding = completion_without_next(kind, result, context_updates)
+    if not finding:
+        return None
+    try:
+        from api.services.event_logger import log_platform_event_bg
+
+        log_platform_event_bg(
+            "continuum_unarmed_completion", "warning", finding,
+            details={"kind": kind, "conversation_id": conversation_id},
+            tenant_id=tenant_id,
+        )
+    except Exception:  # noqa: BLE001 — a report never breaks the turn
+        pass
+    return finding
+
+
 def crawl_completion_sinks(root: Any = None) -> tuple[str, ...]:
     """Sink modules that do not read this contract — a finding per module.
 

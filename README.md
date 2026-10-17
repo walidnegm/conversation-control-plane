@@ -120,6 +120,13 @@ The minimum stations for one new named act, and what breaks if you skip each:
 | Handoff | an `ACT_REGISTRY` row if another agent executes | prose travels as work; the agent says "you can do that in the editor" |
 | Multi-turn | sole-continue kind + spec + status card | pin-resume failure and turn stealing |
 | Tools | a `tool_registry` row | the agent cannot call the tool even when correctly routed |
+| Completion | what follows: the continuum edge the completion arms (the offer + its pin), or a stated end — `KIND_WHAT_FOLLOWS` | the work finishes and the conversation stops; a "yes please" lands nowhere |
+
+The completion station does not make navigation deterministic. Code records
+only the offer it just made; whether a reply means "yes" is still exact chip
+grammar or the router's own judgement. In a host that runs a state graph
+(LangGraph or similar), the graph's edges are the continuum — this asks only
+that every completion has a declared answer, and "end" is one.
 
 Only tool *permission* is DB-dynamic. Conversation routing does not appear
 because a row showed up in Postgres.

@@ -106,6 +106,20 @@ utterance "can you rename Selectoin / INtent to Intention Recorded"
  is a hollow act.
 12. **Graphs own navigation; Control owns admissibility; Execution owns
  mutation.** `next_act` is not a central switch in the control plane.
+13. **A continue meaning needs a reader.** A `continue` reaches the open
+ kind with a meaning (advance, question, amend, …). The kind declares the
+ meanings it reads (`KindSpec.continue_meanings`) or names the interpreter
+ that reads the raw text (`KindSpec.continue_interpreter`); the boundary
+ asks about any other meaning instead of letting the leaf absorb it
+ (SDK A21). A question about the open step answered by repainting the
+ step is this failure.
+14. **A completion says what follows.** When a unit of work completes it
+ either arms a next step that has a reader — a continuum edge: the offer
+ and its pin, so a free-text "yes please" advances it — or it is a
+ declared end, stated in words (`KIND_WHAT_FOLLOWS`). Silence is the
+ failure: the work is done and the conversation stops. In a host that runs
+ a state graph, the graph's edges are the continuum; this asks only that
+ every completion has a declared answer, and "end" is one.
 
 ### The telemetry a healthy turn emits
 
@@ -390,6 +404,15 @@ contained.
  can reach yours.
 
 *Shipped failure:* `engagement_pack_plan` armed 11h → wrong resumption.
+
+- [ ] The kind's row in `terminal_completion_contract.KIND_WHAT_FOLLOWS`
+ names the continuum edge its completion arms — and the completing reply
+ stamps that edge's pin — or states, in words, why nothing follows. The
+ completion sinks report a completion that armed nothing
+ (`continuum_unarmed_completion`).
+
+*Shipped failure:* value metrics saved on their own — a recap, and the
+conversation stopped (invariant 14).
 
 ---
 
