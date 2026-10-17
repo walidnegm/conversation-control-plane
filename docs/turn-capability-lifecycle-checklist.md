@@ -41,7 +41,7 @@ another stage's job, and they are easiest to see side by side.
 | 1 | cognition | LLM (one bounded call) | the ACT (`read_kind` / `discovery_kind` / `product_concept_kind` / act flags), typed SLOTS (`graph_edit`, `target_constraints`), `semantic_resolution` | it never picks an id — it cannot verify one. It stops at the label |
 | 2 | grounding | code | SLOTS → REFS against a CLOSED inventory; the act's `ActRequirement` checked | sufficiency gates precedence: a pin wins by SATISFYING, not by being earlier |
 | 3 | stream / task | ledger | which task this turn belongs to | the ledger is SoR for ownership; context is a projection |
-| 4 | authority | `free_text_claimant_may_run` at the claimant's ENTRY | who may decide this turn | gate the ENTRY, never the call site — doors multiply |
+| 4 | authority | the decision boundary — one immutable decision per turn (reference host: `decide_turn_act` → `ResolvedTurnDecision`, B-248); claimant gates (`free_text_claimant_may_run`) READ it at each claimant's ENTRY | who may decide this turn — one answer, read by every door | read the one decision at the ENTRY, never a second reading at the call site — doors multiply |
 | 5 | delivery leaf | code | the answer, or the question | `may_run` — only an act with everything it needs changes anything |
 | 5b | agent boundary | `handoff_act_contract` | a typed act addressed to its owner | no handoff carries unresolved prose as work |
 | 6 | execution | the owning agent | the proposal / the result | claimed exactly once (`take_`) |
@@ -340,7 +340,7 @@ the value-metrics loop (already-complete branch called nothing).
 
 ## Stage 4 — declared authority + ownership
 
-**Owns:** `decide.py`, `delivery_order_contract`, `task_pin_contract`.
+**Owns:** the decision boundary (`turn_decision_contract` — one `ResolvedTurnDecision`), read by `decide.py`, `delivery_order_contract`, `task_pin_contract` and every claimant gate.
 
 - [ ] Name the **single owner** of this decision. If you cannot, it is a race.
 - [ ] Your entry point's **position** matters: a pre-decide short-circuit runs

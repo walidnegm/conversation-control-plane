@@ -358,7 +358,7 @@ stage's job, and they are easiest to see side by side.
 | 1 | cognition | LLM (one bounded call) | the ACT (`read_kind` / `discovery_kind` / `product_concept_kind` / act flags), typed SLOTS (`graph_edit`, `target_constraints`), `semantic_resolution` | it never picks an id — it cannot verify one. It stops at the label |
 | 2 | grounding | code | SLOTS → REFS against a CLOSED inventory; the act's `ActRequirement` checked | sufficiency gates precedence: a pin wins by SATISFYING, not by being earlier |
 | 3 | stream / task | ledger | which task this turn belongs to | the ledger is SoR for ownership; context is a projection |
-| 4 | authority | `free_text_claimant_may_run` at the claimant's ENTRY | who may decide this turn | gate the ENTRY, never the call site — doors multiply |
+| 4 | authority | the decision boundary — one immutable decision per turn (reference host: `decide_turn_act` → `ResolvedTurnDecision`, B-248); claimant gates (`free_text_claimant_may_run`) READ it at each claimant's ENTRY | who may decide this turn — one answer, read by every door | read the one decision at the ENTRY, never a second reading at the call site — doors multiply |
 | 5 | delivery leaf | code | the answer, or the question | `may_run` — only an act with everything it needs changes anything |
 | 5b | agent boundary | `handoff_act_contract` | a typed act addressed to its owner | no handoff carries unresolved prose as work |
 | 6 | execution | the owning agent | the proposal / the result | claimed exactly once (`take_`) |
@@ -980,11 +980,20 @@ in the sibling package
 
 ##### Essay layer × SDK role × app role
 
+> **Turn-level words.** *Adjudication* and *authority* in this table are about
+> the **turn** — which act it is, who owns it, whether it may be committed now —
+> and there is exactly one owner: the decision boundary's one decision for the turn.
+> They are not the control responsibilities a host may define for the **work**
+> itself (adjudicating a business case, authorizing an act against a
+> participant's permissions, verifying it was fulfilled, settling it in a
+> system of record). This control plane is an execution capability inside
+> that larger frame, not a replacement for it.
+
 | Essay layer | SDK role (implementation) | App role |
 |-------------|---------------------------|----------|
 | **0 Hydration** | Ledger projection / KindSpec / pins = **SoR the View is built from** | Builds the brief (`allowed_operations`, surface map) |
 | **1 Semantic** | Law only: meaning → **closed enums**, never free-text authority | Classifiers, op enum *values*, schemas |
-| **2 Adjudication** | **Core package:** `decide_turn`, sole writer, exclusive owner, A18 allow-list **shape** | Which leaves / EXTRA rows |
+| **2 Adjudication** | **Core package:** the decision boundary (one immutable decision per turn — reference host: `ResolvedTurnDecision`, B-248) and `decide_turn`, the sole ledger writer, which reads it; exclusive owner; A18 allow-list **shape** | Which leaves / EXTRA rows |
 | **3 Policy** | Gates, stickiness, foreign deny as **tables + lifecycle** | Continuum edges, family inventories, incident suppressions |
 | **4 Execute** | `TaskTransition` envelope; **`OperationOutcome`** when execution leaves the turn; strip control keys | LangGraph / tools / SoR / workers / job runtimes |
 | **5 Delivery** | Finite grammar when armed; open-leaf arming; A17 fail-soft ban | Product voice, chips, continuum pin payload |
@@ -1014,7 +1023,7 @@ The **[golden turn](#the-golden-turn--one-correct-turn-end-to-end)** (stages 0�
 | 1 cognition | **1 Semantic** | Closed enums; the model never picks an id |
 | 2 grounding | reads **0 Hydration** SoR | Slots → refs on a closed inventory |
 | 3 stream / task | **2 Adjudication** (kind on the ledger) | Ledger is SoR; context is a projection |
-| 4 authority | **2 Adjudication** + **3 Policy** | `decide_turn`, exclusive owner, gates |
+| 4 authority | **2 Adjudication** + **3 Policy** | the turn's one decision; `decide_turn` writes the ledger from it; exclusive owner and gates read it — none decides again |
 | 5 delivery leaf | **5 Delivery** | Finite grammar when armed; `may_run` |
 | **5b agent boundary** | **4 Execute** (envelope) | Typed handoff; CONTINUES has a named reader; `take_once` |
 | 6 execution | **4 Execute** (runtime) | Your graph / agent / job; mutation lives here |
