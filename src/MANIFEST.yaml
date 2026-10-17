@@ -62,6 +62,10 @@ modules:
   - api/services/conversation_control/turn_timeout.py
   - api/services/conversation_control/turn_session_discipline.py
   - api/services/conversation_control/session_staleness.py
+  # B-266 S2 (D6): the words session_staleness (and the host) show for kinds and
+  # agents. Shipped beside its caller — a caller without its callee is the
+  # plane_movement failure noted above.
+  - api/services/conversation_control/product_voice_terms.py
   # Deferred execution continuity — OperationOutcome.DEFERRED + opaque
   # execution_ref. Not poll/SSE/card UX (host experience plane).
   - api/services/conversation_control/deferred_operation.py

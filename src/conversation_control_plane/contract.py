@@ -425,6 +425,11 @@ _AGENT_ALIASES: dict[str, str] = {
     "transformation recommender": "transformation_recommender",
     "transformation_recommender": "transformation_recommender",
     "workflow builder": "workflow_builder",
+    # B-266 S2 (D6): the name a person now sees. Every AGENT_WORDS name must
+    # resolve back here (test_kind_labels_say_work_system); the old names
+    # stay so stored messages and cards still resolve.
+    "work system builder": "workflow_builder",
+    "work system editor": "workflow_editor",
     "workflow_builder": "workflow_builder",
     "workflow editor": "workflow_editor",
     "workflow_editor": "workflow_editor",

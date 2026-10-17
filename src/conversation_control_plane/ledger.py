@@ -880,6 +880,7 @@ def set_pending_question(
     original_query: str = "",
     source_message_id: Optional[str] = None,
     purpose: str = "",
+    asked: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Record a bot0 detour disambiguation that owns the next pick reply.
 
@@ -915,6 +916,7 @@ def set_pending_question(
         original_query=original_query,
         source_message_id=source_message_id,
         purpose=purpose,
+        asked=asked,
     )
     _set_jsonb_key(
         db,

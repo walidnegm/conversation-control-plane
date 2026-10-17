@@ -360,19 +360,48 @@ def next_step_for_authoring_phase(phase: str | None, pending: dict[str, Any] | N
                 "Session graph is not ready — say **interpret** to rebuild, or "
                 "**start over** for a clean session."
             )
-        return "Reply **yes** to save the workflow, or edit any details first."
+        return "Reply **yes** to save the work system, or edit any details first."
     if phase == PHASE_REVIEWING:
-        return "Reply **yes** to build the workflow into a graph."
+        # B-309 (b): "reviewing" spans several open steps; a fixed line here
+        # promised a "yes" no step reads (conv_7066ce0e: "Reply yes to build
+        # the workflow into a graph" while the agent briefs were the open
+        # step). The live open step is the pre-save ladder's — the same one
+        # Resume and the card packager use.
+        return _next_step_for_open_leaf(pending)
     if phase == PHASE_BUILDING:
-        return "Review the graph, then save the workflow."
+        return "Review the graph, then save the work system."
     if phase == PHASE_COMMITTED:
         return (
-            "This workflow is already saved. Next: model AI on it, "
+            "This work system is already saved. Next: model AI on it, "
             "simulate, or open it in the Designer."
         )
     if phase == PHASE_EXTRACTING or phase == PHASE_GATHERING:
-        return "I'm interpreting your workflow — hang tight."
+        return "I'm reading your description — hang tight."
     return ""
+
+
+#: The next step, by the ladder's open leaf — what the person does next.
+_OPEN_LEAF_NEXT_STEP: dict[str, str] = {
+    "structure": "Review the structure on the card, then continue to staffing or save it as it is.",
+    "staff": "Review the staffing on the card — accept it, or change a role.",
+    "agents": "The **agent briefs** are open — accept or skip them on the card, then I'll compile the work system.",
+    "domain": "Pick the industry domain on the card, then I'll compile and save the work system.",
+    "compile": "Staffing is set — reply **yes** to compile the work system.",
+    "build_fix": "The compile found a problem in the structure — review it on the card.",
+    "ops_kpi": "Add one headline metric with a number, or skip it.",
+    "commit": "Reply **yes** to save the work system, or edit any details first.",
+    "done": "This work system is already saved.",
+}
+
+
+def _next_step_for_open_leaf(pending: dict[str, Any] | None) -> str:
+    try:
+        from conversation_control_plane.pre_save_ladder_contract import next_pre_save_leaf
+
+        leaf = str(next_pre_save_leaf(pending) or "")
+    except Exception:  # noqa: BLE001
+        leaf = ""
+    return _OPEN_LEAF_NEXT_STEP.get(leaf, "Carry on from the card above.")
 
 
 def project_authoring_snapshot(pending: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1599,9 +1628,9 @@ def strip_authoring_save_fabrication(
     from agent.workflow_builder.operational_data_prompt import TOP_LINE_KPI_STATUS_HINT
 
     return (
-        "Your workflow **isn't saved yet** — the in-progress build is still open.\n\n"
+        "Your work system **isn't saved yet** — the in-progress build is still open.\n\n"
         f"To continue: {TOP_LINE_KPI_STATUS_HINT}, then reply **yes** on the "
-        "commit plan. You'll see **✅ Workflow saved** with an ID when it actually "
+        "commit plan. You'll see **✅ Work system saved** with an ID when it actually "
         "commits."
     )
 

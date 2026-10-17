@@ -24,6 +24,11 @@ class ChatDispatchContractError(Exception):
 
 # S7 — deterministic pre-decide KEEP paths (must match ``dispatch=`` in bot0.chat).
 PRE_DECIDE_DISPATCHES: FrozenSet[str] = frozenset({
+    # 10-14 (5a5f42fb6): a pasted team added to a saved work system as a new
+    # formation — the preview is staged under ``pending_add_formation`` and
+    # its exact Add / Cancel chips resolve above cognition. Registered 10-15;
+    # it shipped dispatching without a row (multi-detour steal seal).
+    "add_formation",
     # B-229 (conv_988b90b8): the person's own message tripped the input guard;
     # the turn is refused by name above cognition. Universal — no owner may
     # take a turn no model is allowed to see.

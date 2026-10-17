@@ -24,33 +24,13 @@ import logging
 from typing import Any, Mapping
 
 from conversation_control_plane.contract import canonical_agent
+from conversation_control_plane.product_voice_terms import AGENT_WORDS, KIND_WORDS, kind_phrase
 
-_AGENT_LABEL = {
-    "workflow_builder": "Workflow Builder",
-    "workflow_editor": "Workflow Editor",
-    "transformation_advisor": "Transformation Advisor",
-    "transformation_recommender": "Transformation Recommender",
-    "advisor": "Transformation Advisor",
-    "recommender": "Transformation Recommender",
-    "bot0": "Bot0 Assistant",
-}
+# B-266 S2 (D6): the one table of agent and kind words (product_voice_terms).
+_AGENT_LABEL = AGENT_WORDS
 
-# Kind → user-facing stream label (sole-continue paints)
-_KIND_LABEL = {
-    "cost_out": "agent / workflow cost-out",
-    "cyber_risk_assessment": "cyber risk assessment",
-    "realization_intake": "realization / deploy plan",
-    "outcome_value_setup": "outcome & value setup",
-    "drafting": "workflow drafting",
-    "project_workspace": "project workspace",
-    "scorecard_interrogate": "scorecard / run review",
-    "risk_catalog_learning": "risk catalog exploration",
-    "workflow_build": "workflow build",
-    # F12a — engagement pack conductor (not a BOT0_AGENTS agent)
-    "engagement_pack_plan": "initiative plan",
-    # ISS — simulation input state (AI Involvement / staffing / value drivers)
-    "input_state_setup": "simulation inputs",
-}
+# Kind → user-facing stream label (sole-continue paints).
+_KIND_LABEL = {k: w.title for k, w in KIND_WORDS.items()}
 
 # Mid-flight markers that used to skip reorient (bug: silent continue after hours).
 _MIDFLIGHT_AWAITING = frozenset({"", "in_progress", "none", "null"})
@@ -509,7 +489,8 @@ def build_session_staleness_reorientation(
     agent = canonical_agent(active.get("agent")) or active.get("agent") or "bot0"
     label = _AGENT_LABEL.get(str(agent), str(agent))
     kind = str(active.get("kind") or "").strip()
-    stream = _KIND_LABEL.get(kind) or label
+    _ws_name = str(((active.get("payload") or {}) if isinstance(active.get("payload"), dict) else {}).get("workflow_name") or "").strip()
+    stream = kind_phrase(kind, work_system_name=_ws_name) or (f"work with the {label}" if label else "your work")
     raw_awaiting = str(active.get("awaiting") or "").strip()
     _payload = active.get("payload") if isinstance(active.get("payload"), dict) else {}
     awaiting_voice = (
@@ -520,34 +501,20 @@ def build_session_staleness_reorientation(
     # _humanize_age already ends with "ago" / "just now" — do not append another.
     age = _humanize_age(gap)
     # Product voice: stream + optional stage — never raw plan_act / snake_case.
-    if awaiting_voice and awaiting_voice != "in-progress work":
-        summary = (
-            f"We were mid-{stream} ({awaiting_voice}) about {age}. "
-            "Choose whether to continue that session or reset before I act "
-            "on the next message."
-        )
-        text = (
-            f"We were mid-**{stream}** ({awaiting_voice}) about **{age}**. "
-            "Choose whether to pick up where we left off or start fresh before I act."
-        )
-    else:
-        summary = (
-            f"We were mid-{stream} about {age}. "
-            "Choose whether to continue that session or reset before I act "
-            "on the next message."
-        )
-        text = (
-            f"We were mid-**{stream}** about **{age}**. "
-            "Choose whether to pick up where we left off or start fresh before I act."
-        )
+    # Said ONCE (B-266 S2): the prose carries the message; the card keeps its
+    # title and the Resume / Start Fresh buttons (an empty summary is not
+    # drawn). "mid-workflow build" was internal phrasing (D6).
+    stage = f" — at {awaiting_voice}" if awaiting_voice and awaiting_voice != "in-progress work" else ""
+    text = (
+        f"We were in the middle of {stream}{stage}, about **{age}**. "
+        "Pick up where we left off, or start fresh?"
+    )
+    summary = ""
     parked = ""
     if query_is_parkable_on_reorient(query):
         parked = (query or "").strip()[:_PARKED_QUERY_MAX]
         text = (
             f"{text} I'll answer what you just asked if you Resume."
-        )
-        summary = (
-            f"{summary} Resume answers the question you just asked."
         )
     ctx_updates: dict[str, Any] = {
         "session_reorientation_pending": True,
